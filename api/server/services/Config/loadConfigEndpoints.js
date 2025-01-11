@@ -65,6 +65,7 @@ async function loadConfigEndpoints(req) {
       endpointsConfig[name] = {
         type: EModelEndpoint.bedrockAgent,
         userProvide: false,
+        userProvideURL: false,
         modelDisplayLabel,
         iconURL,
         region,

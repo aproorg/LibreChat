@@ -16,11 +16,30 @@ class BedrockAgentClient extends BaseClient {
     this.shouldSummarize = this.contextStrategy === 'summarize';
     
     // Initialize AWS Bedrock Agent client
+    const region = options.region || process.env.AWS_REGION || 'eu-central-1';
+    const accessKeyId = options.accessKeyId || process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = options.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY;
+
+    const safeOptions = {
+      region,
+      agentId: options.agentId,
+      agentAliasId: options.agentAliasId,
+      modelDisplayLabel: options.modelDisplayLabel,
+      endpoint: options.endpoint,
+      model: options.model
+    };
+
+    logger.debug('[BedrockAgentClient] Initializing with config:', {
+      ...safeOptions,
+      hasAccessKey: !!accessKeyId,
+      hasSecretKey: !!secretAccessKey
+    });
+
     this.client = new BedrockAgentRuntimeClient({
-      region: options.region || process.env.AWS_REGION || 'us-east-1',
+      region,
       credentials: {
-        accessKeyId: options.accessKeyId || process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: options.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY,
+        accessKeyId,
+        secretAccessKey,
       },
     });
 
@@ -43,6 +62,7 @@ class BedrockAgentClient extends BaseClient {
       await this.handleStartMethods(message, opts);
 
     try {
+      console.log('[BedrockAgentClient] Starting sendMessage with:', { message, opts });
       const baseInput = {
         agentId: this.agentId,
         agentAliasId: this.agentAliasId,
@@ -72,44 +92,56 @@ class BedrockAgentClient extends BaseClient {
       }
 
       try {
+        logger.debug('[BedrockAgentClient] Sending command:', JSON.stringify(command, null, 2));
+        logger.debug('[BedrockAgentClient] Using AWS credentials:', {
+          region: this.client.config.region,
+          hasAccessKey: !!this.client.config.credentials.accessKeyId,
+          hasSecretKey: !!this.client.config.credentials.secretAccessKey,
+          agentId: this.agentId,
+          agentAliasId: this.agentAliasId
+        });
+        
         const response = await this.client.send(command);
+        logger.debug('[BedrockAgentClient] Raw response:', JSON.stringify(response, null, 2));
+        
         const text = new TextDecoder().decode(response.completion);
+        logger.debug('[BedrockAgentClient] Decoded text response:', { text });
         
         if (typeof opts?.onProgress === 'function') {
-          const baseMessage = {
+          const message = {
             id: responseMessageId,
             role: 'assistant',
+            content: text,
             parentMessageId: userMessage?.messageId,
             conversationId: conversationId,
-          };
-
-          const baseEvent = {
-            type: 'message',
-            created: Date.now(),
+            endpoint: EModelEndpoint.bedrockAgent,
             model: this.modelOptions.model || 'bedrock-agent',
           };
 
-          // Send initial event with empty content
-          opts.onProgress({
-            ...baseEvent,
-            message: { ...baseMessage, content: '' },
-            done: false,
-          });
+          logger.debug('[BedrockAgentClient] Created message:', message);
 
-          // Send content event
-          opts.onProgress({
-            ...baseEvent,
-            message: { ...baseMessage, content: text },
-            done: false,
-          });
+          // Send initial event
+          const initialEvent = {
+            type: 'message',
+            message,
+            created: Date.now(),
+            done: false
+          };
 
-          // Send completion event
-          opts.onProgress({
-            ...baseEvent,
-            message: { ...baseMessage, content: text },
+          logger.debug('[BedrockAgentClient] Sending initial event:', initialEvent);
+          opts.onProgress(initialEvent);
+
+          // Send final event
+          const finalEvent = {
+            type: 'message',
+            message,
+            created: Date.now(),
             done: true,
-            final: true,
-          });
+            final: true
+          };
+
+          logger.debug('[BedrockAgentClient] Sending final event:', finalEvent);
+          opts.onProgress(finalEvent);
           
           return { text, messageId: responseMessageId };
         }
