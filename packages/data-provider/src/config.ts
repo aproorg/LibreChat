@@ -544,22 +544,7 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
-      bedrockAgent: z.array(z.object({
-        name: z.string(),
-        agentId: z.string(),
-        agentAliasId: z.string(),
-        region: z.string(),
-        knowledgeBaseId: z.string().optional(),
-        models: z.object({
-          default: z.array(z.string()),
-          supported: z.array(z.string()),
-        }),
-        iconURL: z.string().optional(),
-        modelDisplayLabel: z.string().optional(),
-        temperature: z.number().optional(),
-        topK: z.number().optional(),
-        topP: z.number().optional(),
-      })).optional(),
+      [EModelEndpoint.bedrockAgent]: z.array(bedrockAgentEndpointSchema).optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
