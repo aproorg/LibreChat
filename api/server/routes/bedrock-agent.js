@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { BedrockAgentRuntimeClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
 const { listBedrockAgentsHandler } = require('../services/Endpoints/bedrockAgent/list');
 const { initializeClient } = require('../services/Endpoints/bedrockAgent/initialize');
 const { logger } = require('../../config');
@@ -18,7 +18,7 @@ router.post('/chat', async (req, res) => {
     }
 
     // Validate agent exists
-    const validationClient = new BedrockAgentRuntimeClient({
+    const validationClient = new BedrockAgentClient({
       region: process.env.AWS_REGION || 'eu-central-1',
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
