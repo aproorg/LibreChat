@@ -49,7 +49,6 @@ async function loadConfigEndpoints(req) {
     const bedrockAgentEndpoints = endpoints[EModelEndpoint.bedrockAgent].filter(
       (endpoint) =>
         endpoint.agentId &&
-        endpoint.agentAliasId &&
         endpoint.region &&
         endpoint.name &&
         endpoint.models?.default,

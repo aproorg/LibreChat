@@ -44,13 +44,17 @@ export const getAvailableEndpoints = (
   const availableEndpoints: EModelEndpoint[] = [];
 
   for (const endpoint in endpointsConfig) {
-    // Check if endpoint is in the filter or its type is in defaultEndpoints
+    // Check if endpoint is in the filter, is bedrockAgent, or its type is in defaultEndpoints
     if (
       filter[endpoint] ||
+      endpoint === 'bedrockAgent' ||
+      endpoint === EModelEndpoint.bedrockAgent ||
       (endpointsConfig[endpoint]?.type &&
-        defaultSet.has(endpointsConfig[endpoint]?.type as EModelEndpoint))
+        (defaultSet.has(endpointsConfig[endpoint]?.type as EModelEndpoint) ||
+         endpointsConfig[endpoint]?.type === EModelEndpoint.bedrockAgent))
     ) {
-      availableEndpoints.push(endpoint as EModelEndpoint);
+      const normalizedEndpoint = endpoint === 'bedrockAgent' ? EModelEndpoint.bedrockAgent : endpoint;
+      availableEndpoints.push(normalizedEndpoint as EModelEndpoint);
     }
   }
 

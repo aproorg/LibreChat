@@ -42,6 +42,30 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.custom,
 ]);
 
+export const defaultEndpoints = [
+  EModelEndpoint.openAI,
+  EModelEndpoint.azureOpenAI,
+  EModelEndpoint.google,
+  EModelEndpoint.anthropic,
+  EModelEndpoint.assistants,
+  EModelEndpoint.agents,
+  EModelEndpoint.custom,
+  EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
+];
+
+export const defaultEndpointSettings = {
+  [EModelEndpoint.openAI]: true,
+  [EModelEndpoint.azureOpenAI]: true,
+  [EModelEndpoint.google]: true,
+  [EModelEndpoint.anthropic]: true,
+  [EModelEndpoint.assistants]: true,
+  [EModelEndpoint.agents]: true,
+  [EModelEndpoint.custom]: true,
+  [EModelEndpoint.bedrock]: true,
+  [EModelEndpoint.bedrockAgent]: true,
+};
+
 export enum BedrockProviders {
   AI21 = 'ai21',
   Amazon = 'amazon',
@@ -105,23 +129,7 @@ export const isParamEndpoint = (
   return false;
 };
 
-export enum ImageDetail {
-  low = 'low',
-  auto = 'auto',
-  high = 'high',
-}
-
-export const imageDetailNumeric = {
-  [ImageDetail.low]: 0,
-  [ImageDetail.auto]: 1,
-  [ImageDetail.high]: 2,
-};
-
-export const imageDetailValue = {
-  0: ImageDetail.low,
-  1: ImageDetail.auto,
-  2: ImageDetail.high,
-};
+import { ImageDetail, imageDetailNumeric, imageDetailValue } from './image-detail';
 
 export const eImageDetailSchema = z.nativeEnum(ImageDetail);
 
@@ -310,47 +318,7 @@ export const anthropicSettings = {
   },
 };
 
-export const agentsSettings = {
-  model: {
-    default: 'gpt-3.5-turbo-test',
-  },
-  temperature: {
-    min: 0,
-    max: 1,
-    step: 0.01,
-    default: 1,
-  },
-  top_p: {
-    min: 0,
-    max: 1,
-    step: 0.01,
-    default: 1,
-  },
-  presence_penalty: {
-    min: 0,
-    max: 2,
-    step: 0.01,
-    default: 0,
-  },
-  frequency_penalty: {
-    min: 0,
-    max: 2,
-    step: 0.01,
-    default: 0,
-  },
-  resendFiles: {
-    default: true,
-  },
-  maxContextTokens: {
-    default: undefined,
-  },
-  max_tokens: {
-    default: undefined,
-  },
-  imageDetail: {
-    default: ImageDetail.auto,
-  },
-};
+import { agentsSettings } from './agent-settings';
 
 export const endpointSettings = {
   [EModelEndpoint.openAI]: openAISettings,
@@ -1200,8 +1168,6 @@ export const compactAgentsSchema = tConversationSchema
   })
   .transform(removeNullishValues)
   .catch(() => ({}));
-
-export * from './schemas/bedrockAgent';
 
 export const bedrockAgentEndpointSchema = tConversationSchema
   .pick({

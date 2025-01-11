@@ -154,12 +154,7 @@ export const defaultAssistantsVersion = {
   [EModelEndpoint.azureAssistants]: 1,
 };
 
-export const baseEndpointSchema = z.object({
-  streamRate: z.number().optional(),
-  baseURL: z.string().optional(),
-  titlePrompt: z.string().optional(),
-  titleModel: z.string().optional(),
-});
+import { baseEndpointSchema } from './settings';
 
 export type TBaseEndpoint = z.infer<typeof baseEndpointSchema>;
 
@@ -169,17 +164,7 @@ export const bedrockEndpointSchema = baseEndpointSchema.merge(
   }),
 );
 
-export const bedrockAgentEndpointSchema = baseEndpointSchema.merge(
-  z.object({
-    agentId: z.string(),
-    agentAliasId: z.string(),
-    region: z.string(),
-    knowledgeBaseId: z.string().optional(),
-    temperature: z.number().optional(),
-    topK: z.number().optional(),
-    topP: z.number().optional(),
-  }),
-);
+import { bedrockAgentEndpointSchema } from './schemas/bedrockAgent';
 
 export const assistantEndpointSchema = baseEndpointSchema.merge(
   z.object({
@@ -632,6 +617,18 @@ export const defaultEndpoints: EModelEndpoint[] = [
   EModelEndpoint.bedrockAgent,
 ];
 
+export const defaultEndpointSettings = {
+  [EModelEndpoint.openAI]: true,
+  [EModelEndpoint.azureOpenAI]: true,
+  [EModelEndpoint.google]: true,
+  [EModelEndpoint.anthropic]: true,
+  [EModelEndpoint.assistants]: true,
+  [EModelEndpoint.agents]: true,
+  [EModelEndpoint.custom]: true,
+  [EModelEndpoint.bedrock]: true,
+  [EModelEndpoint.bedrockAgent]: true,
+};
+
 export const alternateName = {
   [EModelEndpoint.openAI]: 'OpenAI',
   [EModelEndpoint.assistants]: 'Assistants',
@@ -748,13 +745,14 @@ export const defaultModels = {
     'gpt-3.5-turbo-instruct',
   ],
   [EModelEndpoint.bedrock]: bedrockModels,
+  [EModelEndpoint.bedrockAgent]: ['bedrock-agent'],
 };
 
-const fitlerAssistantModels = (str: string) => {
+export const fitlerAssistantModels = (str: string) => {
   return /gpt-4|gpt-3\\.5/i.test(str) && !/vision|instruct/i.test(str);
 };
 
-const openAIModels = defaultModels[EModelEndpoint.openAI];
+export const openAIModels = defaultModels[EModelEndpoint.openAI];
 
 export const initialModelsConfig: TModelsConfig = {
   initial: [],
@@ -796,6 +794,7 @@ export const modularEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.custom,
   EModelEndpoint.agents,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
 ]);
 
 export const supportsBalanceCheck = {

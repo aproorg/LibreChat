@@ -3,16 +3,17 @@ import type { InfiniteData } from '@tanstack/react-query';
 import type {
   TMessage,
   TResPlugin,
-  ImageDetail,
   TSharedLink,
   TConversation,
   EModelEndpoint,
   TConversationTag,
   TBanner,
 } from './schemas';
+import { ImageDetail } from './image-detail';
 export type TOpenAIMessage = OpenAI.Chat.ChatCompletionMessageParam;
 
 export * from './schemas';
+export { ImageDetail };
 
 export type TMessages = TMessage[];
 
@@ -73,7 +74,7 @@ export type TPluginAction = {
   isEntityTool?: boolean;
 };
 
-export type GroupedConversations = [key: string, TConversation[]][];
+export type GroupedConversations = [string, TConversation[]][];
 
 export type TUpdateUserPlugins = {
   isEntityTool?: boolean;

@@ -1,38 +1,55 @@
-const { BedrockAgentRuntimeClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockRuntimeClient } = require('@aws-sdk/client-bedrock-runtime');
 const { logger } = require('~/config');
 
 async function listBedrockAgentsHandler(req, res) {
   try {
-    const client = new BedrockAgentRuntimeClient({
-      region: process.env.AWS_REGION || 'eu-central-1',
+    // Validate required environment variables
+    const agentId = process.env.AWS_BEDROCK_AGENT_ID;
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const region = process.env.AWS_REGION || 'eu-central-1';
+
+    if (!agentId) {
+      logger.error('[BedrockAgent] No agent ID configured');
+      return res.status(400).json({ 
+        error: 'No Bedrock agent configured',
+        details: 'AWS_BEDROCK_AGENT_ID environment variable is not set'
+      });
+    }
+
+    if (!accessKeyId || !secretAccessKey) {
+      logger.error('[BedrockAgent] Missing AWS credentials');
+      return res.status(400).json({ 
+        error: 'AWS credentials not configured',
+        details: 'AWS_ACCESS_KEY_ID and/or AWS_SECRET_ACCESS_KEY environment variables are not set'
+      });
+    }
+
+    // Test AWS credentials by creating a client
+    const client = new BedrockRuntimeClient({
+      region,
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        accessKeyId,
+        secretAccessKey,
       },
     });
 
-    const command = new ListAgentsCommand({});
-    const response = await client.send(command);
-    
-    if (!response.agentSummaries) {
-      return res.json({ agents: [] });
-    }
+    // Return the configured agent
+    const agents = [{
+      id: agentId,
+      name: 'AWS Bedrock Agent',
+      description: 'Configured Bedrock Agent',
+      status: 'Active',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }];
 
-    const agents = response.agentSummaries.map(agent => ({
-      id: agent.agentId,
-      name: agent.agentName,
-      description: agent.agentDescription || '',
-      status: agent.agentStatus,
-      createdAt: agent.creationDateTime,
-      updatedAt: agent.lastUpdatedDateTime,
-    }));
-
-    logger.debug('[BedrockAgent] Successfully fetched agents:', agents);
+    logger.debug('[BedrockAgent] Using configured agent:', agents);
     return res.json({ agents });
   } catch (error) {
-    logger.error('[BedrockAgent] Error fetching agents:', error);
+    logger.error('[BedrockAgent] Error handling agents:', error);
     return res.status(500).json({ 
-      error: 'Failed to fetch Bedrock agents',
+      error: 'Failed to handle Bedrock agents',
       details: String(error)
     });
   }

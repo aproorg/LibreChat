@@ -4,19 +4,15 @@ import type { TBedrockAgent } from '../types/bedrockAgent';
 import { QueryKeys } from '../keys';
 import request from '../request';
 
-export interface BedrockAgentListResponse {
-  agents: TBedrockAgent[];
-}
-
-async function fetchBedrockAgents(): Promise<TBedrockAgent[]> {
+async function fetchBedrockAgents(): Promise<BedrockAgentListResponse> {
   const response = await request.get<BedrockAgentListResponse>('/api/bedrock-agent/list');
-  return response.data.agents || [];
+  return response.data;
 }
 
 export function useListBedrockAgentsQuery(
-  config?: UseQueryOptions<TBedrockAgent[]>,
-): QueryObserverResult<TBedrockAgent[]> {
-  return useQuery<TBedrockAgent[]>(
+  config?: UseQueryOptions<BedrockAgentListResponse>,
+): QueryObserverResult<BedrockAgentListResponse> {
+  return useQuery<BedrockAgentListResponse>(
     [QueryKeys.bedrockAgents],
     fetchBedrockAgents,
     {

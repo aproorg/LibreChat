@@ -15,12 +15,12 @@ class BedrockAgentClient extends BaseClient {
     this.contextStrategy = options.contextStrategy ? options.contextStrategy.toLowerCase() : 'discard';
     this.shouldSummarize = this.contextStrategy === 'summarize';
     
-    // Initialize AWS Bedrock client
+    // Initialize AWS Bedrock Agent client
     this.client = new BedrockAgentRuntimeClient({
-      region: process.env.AWS_REGION || 'us-east-1',
+      region: options.region || process.env.AWS_REGION || 'us-east-1',
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        accessKeyId: options.accessKeyId || process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: options.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY,
       },
     });
 
@@ -71,24 +71,54 @@ class BedrockAgentClient extends BaseClient {
         command = new InvokeAgentCommand(baseInput);
       }
 
-      if (typeof opts?.onProgress === 'function') {
-        // Handle streaming response
-        const response = await this.client.send(command);
-        const chunks = [];
-
-        for await (const chunk of response.completion) {
-          const text = new TextDecoder().decode(chunk.bytes);
-          chunks.push(text);
-          opts.onProgress(text);
-        }
-
-        const fullResponse = chunks.join('');
-        return { response: fullResponse };
-      } else {
-        // Handle non-streaming response
+      try {
         const response = await this.client.send(command);
         const text = new TextDecoder().decode(response.completion);
-        return { response: text };
+        
+        if (typeof opts?.onProgress === 'function') {
+          const baseMessage = {
+            id: responseMessageId,
+            role: 'assistant',
+            parentMessageId: userMessage?.messageId,
+            conversationId: conversationId,
+          };
+
+          const baseEvent = {
+            type: 'message',
+            created: Date.now(),
+            model: this.modelOptions.model || 'bedrock-agent',
+          };
+
+          // Send initial event with empty content
+          opts.onProgress({
+            ...baseEvent,
+            message: { ...baseMessage, content: '' },
+            done: false,
+          });
+
+          // Send content event
+          opts.onProgress({
+            ...baseEvent,
+            message: { ...baseMessage, content: text },
+            done: false,
+          });
+
+          // Send completion event
+          opts.onProgress({
+            ...baseEvent,
+            message: { ...baseMessage, content: text },
+            done: true,
+            final: true,
+          });
+          
+          return { text, messageId: responseMessageId };
+        }
+        
+        // Handle non-streaming response
+        return { text, messageId: responseMessageId };
+      } catch (error) {
+        logger.error('[BedrockAgentClient] Error in sendMessage:', error);
+        throw error;
       }
     } catch (error) {
       logger.error('[BedrockAgentClient] Error in sendMessage:', error);
@@ -119,6 +149,22 @@ class BedrockAgentClient extends BaseClient {
     // Bedrock doesn't expose token counts directly
     // Return a conservative estimate or 0
     return 0;
+  }
+
+  getSaveOptions() {
+    return {
+      agentId: this.agentId,
+      agentAliasId: this.agentAliasId,
+      region: this.options.region,
+      knowledgeBaseId: this.knowledgeBaseId,
+      temperature: this.retrievalConfig.temperature,
+      topK: this.retrievalConfig.topK,
+      topP: this.retrievalConfig.topP,
+      modelDisplayLabel: this.options.modelDisplayLabel,
+      iconURL: this.options.iconURL,
+      greeting: this.options.greeting,
+      ...this.modelOptions,
+    };
   }
 
   setOptions(options) {

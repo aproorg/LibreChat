@@ -10,12 +10,15 @@ export default function BedrockAgent({
   popover = false,
 }: TModelSelectProps) {
   const Menu = popover ? SelectDropDownPop : SelectDropDown;
-  const { data: agents = [] } = useListBedrockAgentsQuery();
+  const { data } = useListBedrockAgentsQuery();
+  const agents = data?.agents ?? [];
 
   const agentOptions = agents.map((agent) => ({
     value: agent.id,
     label: agent.name || agent.id,
   }));
+
+  const selectedAgent = agents.find((agent) => agent.id === conversation?.agentId);
 
   return (
     <Menu
@@ -28,12 +31,14 @@ export default function BedrockAgent({
           setOption('modelLabel', selectedAgent.name);
         }
       }}
-      availableValues={agentOptions}
+      availableValues={agentOptions.map(opt => opt.value)}
+      optionLabels={Object.fromEntries(agentOptions.map(opt => [opt.value, opt.label]))}
       showAbove={showAbove}
       className={cn(
         cardStyle,
         'z-50 flex h-[40px] w-48 flex-none items-center justify-center px-4 hover:cursor-pointer',
       )}
+      text={selectedAgent?.name || 'Select Agent'}
     />
   );
 }

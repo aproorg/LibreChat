@@ -15,7 +15,11 @@ export * from './models';
 export * from './mcp';
 /* RBAC */
 export * from './roles';
-/* types (exports schemas from `./types` as they contain needed in other defs) */
+/* types and schemas */
+export * from './schemas';
+export * from './image-detail';
+export * from './settings';
+export * from './agent-settings';
 export * from './types';
 export * from './types/agents';
 export * from './types/assistants';

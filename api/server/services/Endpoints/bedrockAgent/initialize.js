@@ -1,11 +1,13 @@
-import { BedrockAgentClient } from '~/app/clients';
-import {
+const { BedrockAgentClient } = require('../../../../app/clients');
+const {
   EModelEndpoint,
   getResponseSender,
-} from 'librechat-data-provider';
-import { logger } from '~/config';
+} = require('librechat-data-provider');
+const { logger } = require('../../../../config');
 
 const initializeClient = async ({ req, res, endpointOption }) => {
+  logger.debug('[BedrockAgent] Initializing client with options:', JSON.stringify(endpointOption, null, 2));
+  
   if (!endpointOption) {
     throw new Error('Endpoint option not provided');
   }
@@ -21,9 +23,11 @@ const initializeClient = async ({ req, res, endpointOption }) => {
     ...endpointOption,
     sender,
     endpoint: EModelEndpoint.bedrockAgent,
-    agentId: process.env.AWS_BEDROCK_AGENT_ID,
-    agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
-    region: process.env.AWS_REGION || 'eu-central-1',
+    agentId: endpointOption.agentId || process.env.AWS_BEDROCK_AGENT_ID,
+    agentAliasId: endpointOption.agentAliasId || process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
+    region: endpointOption.region || process.env.AWS_REGION || 'eu-central-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   });
 
   return { client };
