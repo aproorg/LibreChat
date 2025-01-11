@@ -18,7 +18,7 @@ router.post('/chat', async (req, res) => {
     }
 
     // Validate agent exists
-    const client = new BedrockAgentRuntimeClient({
+    const validationClient = new BedrockAgentRuntimeClient({
       region: process.env.AWS_REGION || 'eu-central-1',
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -28,7 +28,7 @@ router.post('/chat', async (req, res) => {
 
     try {
       const command = new ListAgentsCommand({});
-      const response = await client.send(command);
+      const response = await validationClient.send(command);
       const validAgent = response.agentSummaries?.find(agent => agent.agentId === agentId);
       
       if (!validAgent) {
