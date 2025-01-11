@@ -20,13 +20,18 @@ class BedrockAgentClient extends BaseClient {
     const accessKeyId = options.accessKeyId || process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = options.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY;
 
+    this.modelOptions = {
+      model: 'bedrock-agent',
+      ...options.modelOptions,
+    };
+
     const safeOptions = {
       region,
       agentId: options.agentId,
       agentAliasId: options.agentAliasId,
       modelDisplayLabel: options.modelDisplayLabel,
       endpoint: options.endpoint,
-      model: options.model
+      model: this.modelOptions.model
     };
 
     logger.debug('[BedrockAgentClient] Initializing with config:', {

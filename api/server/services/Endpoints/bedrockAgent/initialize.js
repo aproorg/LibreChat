@@ -14,8 +14,13 @@ const initializeClient = async ({ req, res, endpointOption }) => {
 
   const sender = endpointOption.name ?? getResponseSender({
     ...endpointOption,
-    model: endpointOption.model_parameters?.model,
+    model: 'bedrock-agent',
   });
+
+  const modelOptions = {
+    model: 'bedrock-agent',
+    ...endpointOption.model_parameters,
+  };
 
   const client = new BedrockAgentClient(null, {
     req,
@@ -28,6 +33,7 @@ const initializeClient = async ({ req, res, endpointOption }) => {
     region: endpointOption.region || process.env.AWS_REGION || 'eu-central-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    modelOptions,
   });
 
   return { client };
