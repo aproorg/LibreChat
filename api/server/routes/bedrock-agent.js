@@ -18,30 +18,62 @@ router.post('/chat', async (req, res) => {
     }
 
     // Validate agent exists
-    const validationClient = new BedrockAgentClient({
-      region: process.env.AWS_REGION || 'eu-central-1',
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      },
-    });
-
     try {
+      const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+      const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+      const region = process.env.AWS_REGION || 'eu-central-1';
+
+      if (!accessKeyId || !secretAccessKey) {
+        logger.error('[BedrockAgent] Missing AWS credentials');
+        return res.status(500).json({
+          error: 'AWS credentials not configured',
+          code: 'aws_credentials_missing'
+        });
+      }
+
+      logger.debug('[BedrockAgent] Validating agent with credentials:', {
+        region,
+        hasAccessKey: !!accessKeyId,
+        hasSecretKey: !!secretAccessKey,
+        agentId
+      });
+
+      const validationClient = new BedrockAgentClient({
+        region,
+        credentials: {
+          accessKeyId,
+          secretAccessKey,
+        },
+      });
+
       const command = new ListAgentsCommand({});
       const response = await validationClient.send(command);
+      
+      logger.debug('[BedrockAgent] Available agents:', response.agentSummaries);
+      
       const validAgent = response.agentSummaries?.find(agent => agent.agentId === agentId);
       
       if (!validAgent) {
+        logger.debug('[BedrockAgent] Agent not found:', { 
+          requestedId: agentId,
+          availableIds: response.agentSummaries?.map(a => a.agentId)
+        });
         return res.status(400).json({
           error: 'Invalid agent ID',
           code: 'invalid_agent_id'
         });
       }
+
+      logger.debug('[BedrockAgent] Agent validated successfully:', validAgent);
     } catch (error) {
-      logger.error('[BedrockAgent] Error validating agent:', error);
+      logger.error('[BedrockAgent] Error validating agent:', {
+        error: error.message,
+        code: error.code,
+        requestId: error.$metadata?.requestId
+      });
       return res.status(500).json({
         error: 'Failed to validate agent ID',
-        code: 'agent_validation_error',
+        code: error.code || 'agent_validation_error',
         details: error.message
       });
     }
