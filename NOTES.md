@@ -15,8 +15,7 @@
 
 - AWS_ACCESS_KEY_ID: AWS access key for authentication
 - AWS_SECRET_ACCESS_KEY: AWS secret key for authentication
-- AWS_BEDROCK_AGENT_ID: Optional default Bedrock Agent ID
-- AWS_BEDROCK_AGENT_ALIAS_ID: Bedrock Agent Alias ID
+Note: Agent IDs are now fetched dynamically from AWS Bedrock
 
 ### librechat.yaml Configuration
 

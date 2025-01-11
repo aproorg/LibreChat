@@ -48,7 +48,6 @@ async function loadConfigEndpoints(req) {
   if (Array.isArray(endpoints[EModelEndpoint.bedrockAgent])) {
     const bedrockAgentEndpoints = endpoints[EModelEndpoint.bedrockAgent].filter(
       (endpoint) =>
-        endpoint.agentId &&
         endpoint.region &&
         endpoint.name &&
         endpoint.models?.default,

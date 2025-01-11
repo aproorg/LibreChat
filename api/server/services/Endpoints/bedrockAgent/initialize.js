@@ -29,7 +29,7 @@ const initializeClient = async ({ req, res, endpointOption }) => {
     sender,
     endpoint: EModelEndpoint.bedrockAgent,
     agentId: endpointOption.agentId,
-    agentAliasId: endpointOption.agentAliasId || process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
+    agentAliasId: endpointOption.agentAliasId,
     region: endpointOption.region || process.env.AWS_REGION || 'eu-central-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,

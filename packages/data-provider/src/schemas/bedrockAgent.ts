@@ -4,24 +4,29 @@ import { baseEndpointSchema } from '../settings';
 import { removeNullishValues } from '../schemas';
 import type { TConversation } from '../types';
 
-export const bedrockAgentEndpointSchema = baseEndpointSchema.merge(
-  z.object({
-    agentId: z.string(),
-    agentAliasId: z.string(),
-    region: z.string(),
-    knowledgeBaseId: z.string().optional(),
-    temperature: z.number().optional(),
-    topK: z.number().optional(),
-    topP: z.number().optional(),
+export const bedrockAgentEndpointSchema = z.object({
+  name: z.string(),
+  region: z.string(),
+  models: z.object({
+    default: z.array(z.string()),
+    supported: z.array(z.string()).optional(),
   }),
-);
+  iconURL: z.string().optional(),
+  modelDisplayLabel: z.string().optional(),
+  agentId: z.string().optional(),
+  agentAliasId: z.string().optional(),
+  knowledgeBaseId: z.string().optional(),
+  temperature: z.number().optional(),
+  topK: z.number().optional(),
+  topP: z.number().optional(),
+});
 
 export const bedrockAgentSchema = z
   .object({
     model: z.string(),
     modelLabel: z.string().nullable(),
-    agentId: z.string(),
-    agentAliasId: z.string(),
+    agentId: z.string().optional(),
+    agentAliasId: z.string().optional(),
     region: z.string(),
     knowledgeBaseId: z.string().optional(),
     temperature: z.number().optional(),
@@ -60,8 +65,8 @@ export const compactBedrockAgentSchema = z
   .object({
     model: z.string(),
     modelLabel: z.string().nullable(),
-    agentId: z.string(),
-    agentAliasId: z.string(),
+    agentId: z.string().optional(),
+    agentAliasId: z.string().optional(),
     region: z.string(),
     knowledgeBaseId: z.string().optional(),
     temperature: z.number().optional(),

@@ -8,6 +8,12 @@ const { isEnabled } = require('../../server/utils');
 const BaseClient = require('./BaseClient');
 const { logger } = require('../../config');
 
+// AWS SDK v3 client configuration
+const defaultClientConfig = {
+  maxAttempts: 3,
+  retryMode: 'standard',
+};
+
 class BedrockAgentClient extends BaseClient {
   constructor(apiKey, options = {}) {
     super(apiKey, options);
@@ -25,14 +31,19 @@ class BedrockAgentClient extends BaseClient {
       ...options.modelOptions,
     };
 
-    // Initialize the client first
+    // Initialize the client first with AWS SDK v3 configuration
     this.client = new BedrockAgentRuntimeClient({
+      ...defaultClientConfig,
       region,
       credentials: {
         accessKeyId,
         secretAccessKey,
       },
     });
+
+    if (!this.client?.config) {
+      throw new Error('Failed to initialize AWS client configuration');
+    }
 
     const safeOptions = {
       region: this.client.config.region,
@@ -47,14 +58,6 @@ class BedrockAgentClient extends BaseClient {
       ...safeOptions,
       hasAccessKey: !!this.client.config.credentials?.accessKeyId,
       hasSecretKey: !!this.client.config.credentials?.secretAccessKey
-    });
-
-    this.client = new BedrockAgentRuntimeClient({
-      region,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
     });
 
     // Set agent configuration

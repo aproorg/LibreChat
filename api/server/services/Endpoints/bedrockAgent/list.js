@@ -1,5 +1,5 @@
 const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
-const { logger } = require('~/config');
+const { logger } = require('../../../../config');
 
 async function listBedrockAgentsHandler(req, res) {
   try {

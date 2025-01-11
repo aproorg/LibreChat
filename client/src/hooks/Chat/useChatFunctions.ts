@@ -164,12 +164,16 @@ export default function useChatFunctions({
       },
       convo,
     ) as TEndpointOption;
-    if (endpoint !== EModelEndpoint.agents) {
+    if (endpoint === EModelEndpoint.agents) {
+      endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    } else if (endpoint === EModelEndpoint.bedrockAgent) {
+      endpointOption.key = getExpiry();
+      endpointOption.agentId = conversation?.agentId;
+      endpointOption.modelDisplayLabel = modelDisplayLabel;
+    } else {
       endpointOption.key = getExpiry();
       endpointOption.thread_id = thread_id;
       endpointOption.modelDisplayLabel = modelDisplayLabel;
-    } else {
-      endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     }
     const responseSender = getSender({ model: conversation?.model, ...endpointOption });
 
@@ -235,8 +239,10 @@ export default function useChatFunctions({
           },
         },
       ];
-    } else if (endpoint === EModelEndpoint.agents) {
-      initialResponse.model = conversation?.agent_id ?? '';
+    } else if (endpoint === EModelEndpoint.agents || endpoint === EModelEndpoint.bedrockAgent) {
+      initialResponse.model = endpoint === EModelEndpoint.bedrockAgent 
+        ? conversation?.agentId ?? ''
+        : conversation?.agent_id ?? '';
       initialResponse.text = '';
       initialResponse.content = [
         {

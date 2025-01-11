@@ -1,11 +1,11 @@
-const { BedrockAgentRuntimeClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
 
 async function testBedrockAgent() {
   try {
     console.log('Testing AWS credentials and Bedrock Agent access...');
     console.log('AWS Region:', process.env.AWS_REGION);
     
-    const client = new BedrockAgentRuntimeClient({
+    const client = new BedrockAgentClient({
       region: process.env.AWS_REGION || 'eu-central-1',
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,

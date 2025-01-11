@@ -165,6 +165,7 @@ export const bedrockEndpointSchema = baseEndpointSchema.merge(
 );
 
 import { bedrockAgentEndpointSchema } from './schemas/bedrockAgent';
+import { baseEndpointSchema } from './settings';
 
 export const assistantEndpointSchema = baseEndpointSchema.merge(
   z.object({
@@ -544,7 +545,11 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
-      [EModelEndpoint.bedrockAgent]: z.array(bedrockAgentEndpointSchema).optional(),
+      [EModelEndpoint.bedrockAgent]: z.array(baseEndpointSchema.merge(
+        z.object({
+          region: z.string(),
+        })
+      )).optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
