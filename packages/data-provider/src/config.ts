@@ -169,6 +169,18 @@ export const bedrockEndpointSchema = baseEndpointSchema.merge(
   }),
 );
 
+export const bedrockAgentEndpointSchema = baseEndpointSchema.merge(
+  z.object({
+    agentId: z.string(),
+    agentAliasId: z.string(),
+    region: z.string(),
+    knowledgeBaseId: z.string().optional(),
+    temperature: z.number().optional(),
+    topK: z.number().optional(),
+    topP: z.number().optional(),
+  }),
+);
+
 export const assistantEndpointSchema = baseEndpointSchema.merge(
   z.object({
     /* assistants specific */
@@ -547,6 +559,22 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
+      bedrockAgent: z.array(z.object({
+        name: z.string(),
+        agentId: z.string(),
+        agentAliasId: z.string(),
+        region: z.string(),
+        knowledgeBaseId: z.string().optional(),
+        models: z.object({
+          default: z.array(z.string()),
+          supported: z.array(z.string()),
+        }),
+        iconURL: z.string().optional(),
+        modelDisplayLabel: z.string().optional(),
+        temperature: z.number().optional(),
+        topK: z.number().optional(),
+        topP: z.number().optional(),
+      })).optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
@@ -601,6 +629,7 @@ export const defaultEndpoints: EModelEndpoint[] = [
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
 ];
 
 export const alternateName = {
@@ -616,6 +645,7 @@ export const alternateName = {
   [EModelEndpoint.anthropic]: 'Anthropic',
   [EModelEndpoint.custom]: 'Custom',
   [EModelEndpoint.bedrock]: 'AWS Bedrock',
+  [EModelEndpoint.bedrockAgent]: 'AWS Bedrock Agent',
   [KnownEndpoints.ollama]: 'Ollama',
   [KnownEndpoints.xai]: 'xAI',
 };
@@ -738,6 +768,7 @@ export const initialModelsConfig: TModelsConfig = {
   [EModelEndpoint.google]: defaultModels[EModelEndpoint.google],
   [EModelEndpoint.anthropic]: defaultModels[EModelEndpoint.anthropic],
   [EModelEndpoint.bedrock]: defaultModels[EModelEndpoint.bedrock],
+  [EModelEndpoint.bedrockAgent]: ['bedrock-agent'],
 };
 
 export const EndpointURLs: { [key in EModelEndpoint]: string } = {
@@ -753,6 +784,7 @@ export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
   [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
   [EModelEndpoint.bedrock]: `/api/${EModelEndpoint.bedrock}/chat`,
+  [EModelEndpoint.bedrockAgent]: `/api/ask/${EModelEndpoint.bedrockAgent}`,
 };
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([

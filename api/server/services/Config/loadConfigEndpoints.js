@@ -45,6 +45,36 @@ async function loadConfigEndpoints(req) {
     }
   }
 
+  if (Array.isArray(endpoints[EModelEndpoint.bedrockAgent])) {
+    const bedrockAgentEndpoints = endpoints[EModelEndpoint.bedrockAgent].filter(
+      (endpoint) =>
+        endpoint.agentId &&
+        endpoint.agentAliasId &&
+        endpoint.region &&
+        endpoint.name &&
+        endpoint.models?.default,
+    );
+
+    for (let i = 0; i < bedrockAgentEndpoints.length; i++) {
+      const endpoint = bedrockAgentEndpoints[i];
+      const { agentId, agentAliasId, region, name: configName, iconURL, modelDisplayLabel } = endpoint;
+      const name = normalizeEndpointName(configName);
+
+      const resolvedAgentId = extractEnvVariable(agentId);
+      const resolvedAliasId = extractEnvVariable(agentAliasId);
+
+      endpointsConfig[name] = {
+        type: EModelEndpoint.bedrockAgent,
+        userProvide: false,
+        modelDisplayLabel,
+        iconURL,
+        region,
+        agentId: resolvedAgentId,
+        agentAliasId: resolvedAliasId,
+      };
+    }
+  }
+
   if (req.app.locals[EModelEndpoint.azureOpenAI]) {
     /** @type {Omit<TConfig, 'order'>} */
     endpointsConfig[EModelEndpoint.azureOpenAI] = {

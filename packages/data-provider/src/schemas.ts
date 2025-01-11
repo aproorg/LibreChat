@@ -23,6 +23,7 @@ export enum EModelEndpoint {
   agents = 'agents',
   custom = 'custom',
   bedrock = 'bedrock',
+  bedrockAgent = 'bedrockAgent',
   /** @deprecated */
   bingAI = 'bingAI',
   /** @deprecated */
@@ -35,6 +36,7 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.agents,
   EModelEndpoint.openAI,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
   EModelEndpoint.azureOpenAI,
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
@@ -356,6 +358,7 @@ export const endpointSettings = {
   [EModelEndpoint.anthropic]: anthropicSettings,
   [EModelEndpoint.agents]: agentsSettings,
   [EModelEndpoint.bedrock]: agentsSettings,
+  [EModelEndpoint.bedrockAgent]: agentsSettings,
 };
 
 const google = endpointSettings[EModelEndpoint.google];
@@ -571,6 +574,10 @@ export const tConversationSchema = z.object({
   region: z.string().optional(),
   maxTokens: coerceNumber.optional(),
   additionalModelRequestFields: DocumentType.optional(),
+  /* AWS Bedrock Agent */
+  agentId: z.string().optional(),
+  agentAliasId: z.string().optional(),
+  knowledgeBaseId: z.string().optional(),
   /* assistants */
   instructions: z.string().optional(),
   additional_instructions: z.string().optional(),
@@ -684,6 +691,12 @@ export const tQueryParamsSchema = tConversationSchema
     region: true,
     /** @endpoints bedrock */
     maxTokens: true,
+    /** @endpoints bedrockAgent */
+    agentId: true,
+    /** @endpoints bedrockAgent */
+    agentAliasId: true,
+    /** @endpoints bedrockAgent */
+    knowledgeBaseId: true,
     /** @endpoints agents */
     agent_id: true,
     /** @endpoints assistants, azureAssistants */
@@ -1187,3 +1200,42 @@ export const compactAgentsSchema = tConversationSchema
   })
   .transform(removeNullishValues)
   .catch(() => ({}));
+
+export * from './schemas/bedrockAgent';
+
+export const bedrockAgentEndpointSchema = tConversationSchema
+  .pick({
+    model: true,
+    modelLabel: true,
+    agentId: true,
+    agentAliasId: true,
+    region: true,
+    knowledgeBaseId: true,
+    temperature: true,
+    topK: true,
+    topP: true,
+    promptPrefix: true,
+    iconURL: true,
+    greeting: true,
+  })
+  .transform((obj) => ({
+    ...obj,
+    model: obj.model ?? 'bedrock-agent',
+    modelLabel: obj.modelLabel ?? null,
+    temperature: obj.temperature ?? agentsSettings.temperature.default,
+    topK: obj.topK ?? 5,
+    topP: obj.topP ?? 0.9,
+    promptPrefix: obj.promptPrefix ?? null,
+    iconURL: obj.iconURL ?? undefined,
+    greeting: obj.greeting ?? undefined,
+  }))
+  .catch(() => ({
+    model: 'bedrock-agent',
+    modelLabel: null,
+    temperature: agentsSettings.temperature.default,
+    topK: 5,
+    topP: 0.9,
+    promptPrefix: null,
+    iconURL: undefined,
+    greeting: undefined,
+  }));
