@@ -12,11 +12,11 @@ router.post('/chat', async (req, res) => {
       body: JSON.stringify(req.body, null, 2),
       endpoint: req.body?.endpoint,
       model: req.body?.model,
-      agentId: process.env.AWS_BEDROCK_AGENT_ID,
+      agentId: req.body?.agentId,
       region: process.env.AWS_REGION,
       hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
       hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
-      aliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID
+      aliasId: req.body?.agentAliasId
     };
     
     console.log('[BedrockAgent] Debug Info:', debugInfo);
