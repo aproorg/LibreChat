@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { BedrockAgentRuntimeClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 const { listBedrockAgentsHandler } = require('../services/Endpoints/bedrockAgent/list');
 const { initializeClient } = require('../services/Endpoints/bedrockAgent/initialize');
 const { logger } = require('../../config');
@@ -8,6 +9,43 @@ router.get('/list', listBedrockAgentsHandler);
 
 router.post('/chat', async (req, res) => {
   try {
+    const { agentId } = req.body;
+    if (!agentId) {
+      return res.status(400).json({
+        error: 'Agent ID is required',
+        code: 'missing_agent_id'
+      });
+    }
+
+    // Validate agent exists
+    const client = new BedrockAgentRuntimeClient({
+      region: process.env.AWS_REGION || 'eu-central-1',
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      },
+    });
+
+    try {
+      const command = new ListAgentsCommand({});
+      const response = await client.send(command);
+      const validAgent = response.agentSummaries?.find(agent => agent.agentId === agentId);
+      
+      if (!validAgent) {
+        return res.status(400).json({
+          error: 'Invalid agent ID',
+          code: 'invalid_agent_id'
+        });
+      }
+    } catch (error) {
+      logger.error('[BedrockAgent] Error validating agent:', error);
+      return res.status(500).json({
+        error: 'Failed to validate agent ID',
+        code: 'agent_validation_error',
+        details: error.message
+      });
+    }
+
     const debugInfo = {
       body: JSON.stringify(req.body, null, 2),
       endpoint: req.body?.endpoint,
