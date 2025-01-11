@@ -1,10 +1,10 @@
-const path = require('path');
-const { CacheKeys, configSchema, EImageOutputType } = require('librechat-data-provider');
-const getLogStores = require('~/cache/getLogStores');
-const loadYaml = require('~/utils/loadYaml');
-const { logger } = require('~/config');
-const axios = require('axios');
-const yaml = require('js-yaml');
+import path from 'path';
+import { CacheKeys, configSchema, EImageOutputType } from 'librechat-data-provider';
+import getLogStores from '~/cache/getLogStores';
+import loadYaml from '~/utils/loadYaml';
+import { logger } from '~/config';
+import axios from 'axios';
+import yaml from 'js-yaml';
 
 const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
 const defaultConfigPath = path.resolve(projectRoot, 'librechat.yaml');
@@ -100,6 +100,29 @@ https://www.librechat.ai/docs/configuration/stt_tts`);
 
     return null;
   } else {
+    // Resolve environment variables in the config
+    const resolveEnvVars = (obj) => {
+      if (typeof obj !== 'object' || obj === null) return obj;
+      
+      if (Array.isArray(obj)) {
+        return obj.map(resolveEnvVars);
+      }
+
+      const resolved = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (typeof value === 'string' && value.startsWith('${') && value.endsWith('}')) {
+          const envVar = value.slice(2, -1);
+          resolved[key] = process.env[envVar] || '';
+        } else if (typeof value === 'object') {
+          resolved[key] = resolveEnvVars(value);
+        } else {
+          resolved[key] = value;
+        }
+      }
+      return resolved;
+    };
+
+    customConfig = resolveEnvVars(customConfig);
     logger.info('Custom config file loaded:');
     logger.info(JSON.stringify(customConfig, null, 2));
     logger.debug('Custom config:', customConfig);
@@ -117,4 +140,4 @@ https://www.librechat.ai/docs/configuration/stt_tts`);
   return customConfig;
 }
 
-module.exports = loadCustomConfig;
+export default loadCustomConfig;

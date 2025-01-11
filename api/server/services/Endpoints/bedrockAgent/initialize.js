@@ -1,9 +1,9 @@
-const { BedrockAgentClient } = require('~/app/clients');
-const {
+import { BedrockAgentClient } from '~/app/clients';
+import {
   EModelEndpoint,
   getResponseSender,
-} = require('librechat-data-provider');
-const { logger } = require('~/config');
+} from 'librechat-data-provider';
+import { logger } from '~/config';
 
 const initializeClient = async ({ req, res, endpointOption }) => {
   if (!endpointOption) {

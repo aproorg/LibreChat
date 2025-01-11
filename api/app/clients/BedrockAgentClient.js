@@ -1,12 +1,12 @@
-const {
+import {
   BedrockAgentRuntimeClient,
   InvokeAgentCommand,
   RetrieveAndGenerateCommand,
-} = require('@aws-sdk/client-bedrock-agent-runtime');
-const { EModelEndpoint } = require('librechat-data-provider');
-const { isEnabled } = require('~/server/utils');
-const BaseClient = require('./BaseClient');
-const { logger } = require('~/config');
+} from '@aws-sdk/client-bedrock-agent-runtime';
+import { EModelEndpoint } from 'librechat-data-provider';
+import { isEnabled } from '~/server/utils';
+import BaseClient from './BaseClient';
+import { logger } from '~/config';
 
 class BedrockAgentClient extends BaseClient {
   constructor(apiKey, options = {}) {
@@ -167,4 +167,4 @@ class BedrockAgentClient extends BaseClient {
   }
 }
 
-module.exports = BedrockAgentClient;
+export default BedrockAgentClient;
