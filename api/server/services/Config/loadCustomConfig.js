@@ -1,10 +1,10 @@
-import path from 'path';
-import { CacheKeys, configSchema, EImageOutputType } from 'librechat-data-provider';
-import getLogStores from '~/cache/getLogStores';
-import loadYaml from '~/utils/loadYaml';
-import { logger } from '~/config';
-import axios from 'axios';
-import yaml from 'js-yaml';
+const path = require('path');
+const { CacheKeys, configSchema, EImageOutputType } = require('librechat-data-provider');
+const getLogStores = require('~/cache/getLogStores');
+const loadYaml = require('~/utils/loadYaml');
+const { logger } = require('~/config');
+const axios = require('axios');
+const yaml = require('js-yaml');
 
 const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
 const defaultConfigPath = path.resolve(projectRoot, 'librechat.yaml');
@@ -140,4 +140,4 @@ https://www.librechat.ai/docs/configuration/stt_tts`);
   return customConfig;
 }
 
-export default loadCustomConfig;
+module.exports = loadCustomConfig;
