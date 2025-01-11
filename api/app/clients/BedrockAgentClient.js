@@ -25,8 +25,17 @@ class BedrockAgentClient extends BaseClient {
       ...options.modelOptions,
     };
 
-    const safeOptions = {
+    // Initialize the client first
+    this.client = new BedrockAgentRuntimeClient({
       region,
+      credentials: {
+        accessKeyId,
+        secretAccessKey,
+      },
+    });
+
+    const safeOptions = {
+      region: this.client.config.region,
       agentId: options.agentId,
       agentAliasId: options.agentAliasId,
       modelDisplayLabel: options.modelDisplayLabel,
@@ -34,10 +43,10 @@ class BedrockAgentClient extends BaseClient {
       model: this.modelOptions.model
     };
 
-    logger.debug('[BedrockAgentClient] Initializing with config:', {
+    logger.debug('[BedrockAgentClient] Initialized with config:', {
       ...safeOptions,
-      hasAccessKey: !!accessKeyId,
-      hasSecretKey: !!secretAccessKey
+      hasAccessKey: !!this.client.config.credentials?.accessKeyId,
+      hasSecretKey: !!this.client.config.credentials?.secretAccessKey
     });
 
     this.client = new BedrockAgentRuntimeClient({
@@ -67,7 +76,22 @@ class BedrockAgentClient extends BaseClient {
       await this.handleStartMethods(message, opts);
 
     try {
-      console.log('[BedrockAgentClient] Starting sendMessage with:', { message, opts });
+      if (!this.client?.config?.region) {
+        throw new Error('Client configuration not properly initialized');
+      }
+
+      console.log('[BedrockAgentClient] Starting sendMessage with:', { 
+        message, 
+        opts,
+        config: {
+          region: this.client.config.region,
+          agentId: this.agentId,
+          agentAliasId: this.agentAliasId,
+          hasAccessKey: !!this.client.config.credentials?.accessKeyId,
+          hasSecretKey: !!this.client.config.credentials?.secretAccessKey
+        }
+      });
+
       const baseInput = {
         agentId: this.agentId,
         agentAliasId: this.agentAliasId,
