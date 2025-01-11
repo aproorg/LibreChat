@@ -1,16 +1,22 @@
 import { useCallback, useMemo } from 'react';
+import { useListBedrockAgentsQuery } from 'librechat-data-provider/react-query';
 import { useLocalize } from '~/hooks';
 import type { TModelSelectProps } from '~/common';
-import { Input } from '~/components/ui';
+import { Input, SelectDropDown } from '~/components/ui';
 
 export default function Settings({ conversation, setOption, readonly }: TModelSelectProps) {
   const localize = useLocalize();
+  const { data: agents = [] } = useListBedrockAgentsQuery();
 
-  const onAgentIdChange = useCallback(
+  const onAgentChange = useCallback(
     (value: string) => {
       setOption('agentId', value);
+      const selectedAgent = agents.find((agent) => agent.id === value);
+      if (selectedAgent) {
+        setOption('modelLabel', selectedAgent.name);
+      }
     },
-    [setOption],
+    [setOption, agents],
   );
 
   const onAgentAliasIdChange = useCallback(
@@ -27,14 +33,20 @@ export default function Settings({ conversation, setOption, readonly }: TModelSe
     [setOption],
   );
 
+  const agentOptions = agents.map((agent) => ({
+    value: agent.id,
+    label: `${agent.name} (${agent.id})`,
+  }));
+
   const parameters = useMemo(
     () => [
       {
-        label: 'Agent ID',
+        label: 'Agent',
         value: conversation?.agentId ?? '',
-        type: 'text',
+        type: 'select',
         name: 'agentId',
-        onChange: onAgentIdChange,
+        onChange: onAgentChange,
+        options: agentOptions,
       },
       {
         label: 'Agent Alias ID',
@@ -51,7 +63,7 @@ export default function Settings({ conversation, setOption, readonly }: TModelSe
         onChange: onRegionChange,
       },
     ],
-    [conversation, onAgentIdChange, onAgentAliasIdChange, onRegionChange],
+    [conversation, onAgentChange, onAgentAliasIdChange, onRegionChange, agentOptions],
   );
 
   return (
@@ -59,12 +71,21 @@ export default function Settings({ conversation, setOption, readonly }: TModelSe
       {parameters.map((param) => (
         <div className="flex flex-col gap-1" key={param.name}>
           <label className="text-sm font-medium">{localize(param.label)}</label>
-          <Input
-            type={param.type}
-            value={param.value}
-            onChange={(e) => param.onChange(e.target.value)}
-            disabled={readonly}
-          />
+          {param.type === 'select' ? (
+            <SelectDropDown
+              value={param.value}
+              setValue={param.onChange}
+              availableValues={param.options}
+              disabled={readonly}
+            />
+          ) : (
+            <Input
+              type={param.type}
+              value={param.value}
+              onChange={(e) => param.onChange(e.target.value)}
+              disabled={readonly}
+            />
+          )}
         </div>
       ))}
     </div>

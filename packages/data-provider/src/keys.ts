@@ -46,6 +46,7 @@ export enum QueryKeys {
   health = 'health',
   userTerms = 'userTerms',
   banner = 'banner',
+  bedrockAgents = 'bedrockAgents',
 }
 
 export enum MutationKeys {
