@@ -16,8 +16,18 @@ export interface BedrockAgentListResponse {
 }
 
 async function fetchBedrockAgents(): Promise<BedrockAgentListResponse> {
-  const response = await request.get<BedrockAgentListResponse>('/api/bedrock-agent/list');
-  return response.data;
+  try {
+    const response = await request.get<BedrockAgentListResponse>('/api/bedrock-agent/list');
+    // Ensure we have a valid response with agents array
+    if (response?.data?.agents) {
+      return response.data;
+    }
+    // Return empty agents array if response is invalid
+    return { agents: [] };
+  } catch (error) {
+    console.error('[BedrockAgent] Error fetching agents:', error);
+    return { agents: [] };
+  }
 }
 
 export function useListBedrockAgentsQuery(

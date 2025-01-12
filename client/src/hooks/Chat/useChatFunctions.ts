@@ -240,9 +240,7 @@ export default function useChatFunctions({
         },
       ];
     } else if (endpoint === EModelEndpoint.agents || endpoint === EModelEndpoint.bedrockAgent) {
-      initialResponse.model = endpoint === EModelEndpoint.bedrockAgent 
-        ? conversation?.agentId ?? ''
-        : conversation?.agent_id ?? '';
+      initialResponse.model = conversation?.agentId ?? conversation?.agent_id ?? '';
       initialResponse.text = '';
       initialResponse.content = [
         {
@@ -252,6 +250,27 @@ export default function useChatFunctions({
           },
         },
       ];
+      
+      // Add metadata for Bedrock Agent
+      if (endpoint === EModelEndpoint.bedrockAgent) {
+        // Ensure essential fields are passed through
+        const metadata = {
+          agentId: conversation?.agentId,
+          sessionId: conversationId,
+        };
+        console.debug('[BedrockAgent] Setting response metadata:', {
+          metadata,
+          conversation,
+          endpoint
+        });
+        initialResponse.metadata = metadata;
+        // Set model to match the agent ID for consistency
+        initialResponse.model = conversation?.agentId ?? '';
+        if (!conversation?.agentId) {
+          console.warn('[BedrockAgent] No agent ID found in conversation');
+        }
+      }
+      
       setShowStopButton(true);
     } else {
       setShowStopButton(true);
