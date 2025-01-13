@@ -37,44 +37,86 @@ async function buildEndpointOption(req, res, next) {
       // For Bedrock Agent, ensure we preserve the original request body fields
       const { conversation = {}, endpointOption = {} } = req.body;
       
-      // Log the incoming request data for debugging
-      logger.debug('[BedrockAgent] Incoming request data:', {
-        endpointOption,
-        conversation,
-        bodyAgentId: req.body.agentId,
-        envAgentId: process.env.AWS_BEDROCK_AGENT_ID
-      });
-      
       // Get models config first
       const modelsConfig = await getModelsConfig(req);
       const bedrockConfig = modelsConfig?.bedrockAgent?.[0] ?? {};
       
-      logger.debug('[BedrockAgent] Config sources:', {
-        bedrockConfig,
-        endpointOption,
-        conversation,
-        envVars: {
+      // Log all configuration sources
+      logger.debug('[BedrockAgent] Configuration sources:', {
+        requestBody: {
+          agentId: req.body.agentId,
+          agentAliasId: req.body.agentAliasId,
+          region: req.body.region
+        },
+        conversation: {
+          agentId: conversation?.agentId,
+          agentAliasId: conversation?.agentAliasId,
+          region: conversation?.region
+        },
+        endpointOption: {
+          agentId: endpointOption?.agentId,
+          agentAliasId: endpointOption?.agentAliasId,
+          region: endpointOption?.region
+        },
+        bedrockConfig: {
+          agentId: bedrockConfig.agentId,
+          agentAliasId: bedrockConfig.agentAliasId,
+          region: bedrockConfig.region
+        },
+        environment: {
           agentId: process.env.AWS_BEDROCK_AGENT_ID,
           region: process.env.AWS_REGION
         }
       });
 
+      // Build configuration with priority order
+      const agentId = req.body.agentId || 
+                     conversation?.agentId || 
+                     endpointOption?.agentId || 
+                     bedrockConfig.agentId || 
+                     process.env.AWS_BEDROCK_AGENT_ID || 
+                     'FZUSVDW4SR';
+
+      const agentAliasId = req.body.agentAliasId || 
+                          conversation?.agentAliasId || 
+                          endpointOption?.agentAliasId || 
+                          bedrockConfig.agentAliasId || 
+                          'TSTALIASID';
+
+      const region = req.body.region || 
+                    conversation?.region || 
+                    endpointOption?.region || 
+                    bedrockConfig.region || 
+                    process.env.AWS_REGION || 
+                    'eu-central-1';
+
+      logger.debug('[BedrockAgent] Selected configuration:', {
+        agentId,
+        agentAliasId,
+        region,
+        source: {
+          agentId: agentId === req.body.agentId ? 'request' :
+                  agentId === conversation?.agentId ? 'conversation' :
+                  agentId === endpointOption?.agentId ? 'endpointOption' :
+                  agentId === bedrockConfig.agentId ? 'config' :
+                  agentId === process.env.AWS_BEDROCK_AGENT_ID ? 'environment' : 'default',
+          agentAliasId: agentAliasId === req.body.agentAliasId ? 'request' :
+                       agentAliasId === conversation?.agentAliasId ? 'conversation' :
+                       agentAliasId === endpointOption?.agentAliasId ? 'endpointOption' :
+                       agentAliasId === bedrockConfig.agentAliasId ? 'config' : 'default',
+          region: region === req.body.region ? 'request' :
+                 region === conversation?.region ? 'conversation' :
+                 region === endpointOption?.region ? 'endpointOption' :
+                 region === bedrockConfig.region ? 'config' :
+                 region === process.env.AWS_REGION ? 'environment' : 'default'
+        }
+      });
+
       parsedBody = {
         ...req.body,
-        agentId: bedrockConfig.agentId || 
-                endpointOption?.agentId || 
-                conversation?.agentId || 
-                process.env.AWS_BEDROCK_AGENT_ID || 
-                'FZUSVDW4SR',
-        agentAliasId: bedrockConfig.agentAliasId || 
-                    endpointOption?.agentAliasId || 
-                    conversation?.agentAliasId || 
-                    'TSTALIASID',
-        region: bedrockConfig.region || 
-              endpointOption?.region || 
-              conversation?.region || 
-              process.env.AWS_REGION || 
-              'eu-central-1',
+        agentId,
+        agentAliasId,
+        region,
         model: 'bedrock-agent',
         endpoint: EModelEndpoint.bedrockAgent,
         modelDisplayLabel: bedrockConfig.modelDisplayLabel || 'AWS Bedrock Agent'

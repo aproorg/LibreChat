@@ -9,6 +9,7 @@ const askChatGPTBrowser = require('./askChatGPTBrowser');
 const bedrockAgent = require('./bedrockAgent');
 const { isEnabled } = require('~/server/utils');
 const { EModelEndpoint } = require('librechat-data-provider');
+const { logger } = require('~/config');
 const {
   uaParser,
   checkBan,
@@ -48,6 +49,25 @@ router.use(`/${EModelEndpoint.anthropic}`, anthropic);
 router.use(`/${EModelEndpoint.google}`, google);
 router.use(`/${EModelEndpoint.bingAI}`, bingAI);
 router.use(`/${EModelEndpoint.custom}`, custom);
-router.use(`/${EModelEndpoint.bedrockAgent}`, bedrockAgent);
+
+// Add debug logging for bedrockAgent route
+logger.debug('[ask/index] Registering bedrockAgent route:', {
+  endpoint: EModelEndpoint.bedrockAgent,
+  path: `/${EModelEndpoint.bedrockAgent}`
+});
+
+router.use(`/${EModelEndpoint.bedrockAgent}`, (req, res, next) => {
+  logger.debug('[ask/index] Received bedrockAgent request:', {
+    method: req.method,
+    path: req.path,
+    body: {
+      endpoint: req.body?.endpoint,
+      agentId: req.body?.agentId,
+      agentAliasId: req.body?.agentAliasId,
+      text: req.body?.text
+    }
+  });
+  return bedrockAgent(req, res, next);
+});
 
 module.exports = router;
