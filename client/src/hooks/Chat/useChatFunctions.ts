@@ -163,6 +163,11 @@ export default function useChatFunctions({
         artifacts: getArtifactsMode({ codeArtifacts, includeShadcnui, customPromptMode }),
       },
       convo,
+      endpoint === EModelEndpoint.bedrockAgent ? {
+        agentId: conversation?.agentId,
+        agentAliasId: conversation?.agentAliasId,
+        region: conversation?.region || process.env.AWS_REGION || 'eu-central-1',
+      } : {},
     ) as TEndpointOption;
     if (endpoint === EModelEndpoint.agents) {
       endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -172,15 +177,24 @@ export default function useChatFunctions({
       const agentAliasId = conversation?.agentAliasId || process.env.AWS_BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
       const region = conversation?.region || process.env.AWS_REGION || 'eu-central-1';
       
-      Object.assign(endpointOption, {
+      // Create a complete configuration object
+      const agentConfig = {
         key: getExpiry(),
         agentId,
         agentAliasId,
         region,
         model: 'bedrock-agent',
         endpoint: EModelEndpoint.bedrockAgent,
-        modelDisplayLabel: modelDisplayLabel || 'AWS Bedrock Agent'
-      });
+        modelDisplayLabel: modelDisplayLabel || 'AWS Bedrock Agent',
+        conversation: {
+          agentId,
+          agentAliasId,
+          model: 'bedrock-agent'
+        }
+      };
+      
+      // Update all configuration fields at once
+      Object.assign(endpointOption, agentConfig);
       
       logger.debug('[BedrockAgent] Configured endpoint options:', {
         agentId: endpointOption.agentId,

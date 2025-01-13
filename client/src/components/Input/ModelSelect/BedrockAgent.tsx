@@ -35,7 +35,15 @@ export default function BedrockAgent({
           agentId: defaultAgent.id,
           agentAliasId: 'TSTALIASID',
           modelLabel: defaultAgent.name,
-          region: process.env.AWS_REGION || 'eu-central-1'
+          region: process.env.AWS_REGION || 'eu-central-1',
+          conversation: {
+            endpoint: EModelEndpoint.bedrockAgent,
+            agentId: defaultAgent.id,
+            agentAliasId: 'TSTALIASID',
+            model: 'bedrock-agent',
+            modelLabel: defaultAgent.name,
+            region: process.env.AWS_REGION || 'eu-central-1'
+          }
         };
         
         // Update all options at once
@@ -73,12 +81,28 @@ export default function BedrockAgent({
           if (agent) {
             setCurrentAgentId(value);
             
-            // Update individual fields first
-            setOption('endpoint', EModelEndpoint.bedrockAgent);
-            setOption('model', 'bedrock-agent');
-            setOption('agentId', value);
-            setOption('agentAliasId', 'TSTALIASID');
-            setOption('modelLabel', agent.name);
+            // Create a complete configuration object
+            const agentConfig = {
+              endpoint: EModelEndpoint.bedrockAgent,
+              model: 'bedrock-agent',
+              agentId: value,
+              agentAliasId: 'TSTALIASID',
+              modelLabel: agent.name,
+              region: process.env.AWS_REGION || 'eu-central-1',
+              conversation: {
+                endpoint: EModelEndpoint.bedrockAgent,
+                agentId: value,
+                agentAliasId: 'TSTALIASID',
+                model: 'bedrock-agent',
+                modelLabel: agent.name,
+                region: process.env.AWS_REGION || 'eu-central-1'
+              }
+            };
+
+            // Update all configuration fields at once
+            Object.entries(agentConfig).forEach(([key, val]) => {
+              setOption(key, val);
+            });
 
             // Log state updates for debugging
             console.debug('[BedrockAgent] State updates:', {
