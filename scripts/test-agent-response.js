@@ -24,7 +24,6 @@ function validateConfig() {
     credentials: {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      sessionToken: process.env.AWS_SESSION_TOKEN, // Optional
     },
   };
 }
@@ -185,7 +184,6 @@ runTests()
       environment: {
         region: process.env.AWS_REGION,
         hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
-        hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
       },
     });
 
