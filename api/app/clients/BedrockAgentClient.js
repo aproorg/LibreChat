@@ -35,6 +35,8 @@ class BedrockAgentClient extends BaseClient {
     this.sender = options.sender ?? 'Bedrock';
     this.contextStrategy = options.contextStrategy ? options.contextStrategy.toLowerCase() : 'discard';
     this.shouldSummarize = this.contextStrategy === 'summarize';
+    // Initialize generation property
+    this.generation = options.generation ?? '';
     
     // Initialize AWS Bedrock Agent client
     const region = options.region || process.env.AWS_REGION || 'eu-central-1';
@@ -93,6 +95,9 @@ class BedrockAgentClient extends BaseClient {
     const { user, head, isEdited, conversationId, responseMessageId, saveOptions, userMessage } =
       await this.handleStartMethods(message, opts);
 
+    // Initialize generation with empty string if not provided
+    const generation = opts?.generation ?? '';
+
     try {
       if (!this.client?.config?.region) {
         throw new Error('Client configuration not properly initialized');
@@ -124,11 +129,13 @@ class BedrockAgentClient extends BaseClient {
       }
 
       // Build base input with required parameters
+      // Initialize base input with required parameters
+      // Initialize base input with required parameters
       const baseInput = {
         agentId: this.agentId,
         sessionId: this.sessionId,
         enableTrace: this.enableTrace,
-        inputText: message,
+        inputText: message
       };
 
       // Only include agentAliasId if it has a value
@@ -268,29 +275,90 @@ class BedrockAgentClient extends BaseClient {
           throw new Error('No completion in agent response');
         }
 
-        let text;
-        if (response.completion instanceof Uint8Array) {
-          text = new TextDecoder().decode(response.completion);
-        } else if (Buffer.isBuffer(response.completion)) {
-          text = response.completion.toString('utf-8');
-        } else if (typeof response.completion === 'string') {
-          text = response.completion;
-        } else if (response.completion?.options?.messageStream) {
-          // Handle MessageDecoderStream response
+        let text = '';
+        if (response.completion?.options?.messageStream) {
+          // Process streaming response
           const stream = response.completion.options.messageStream;
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
+          try {
+            for await (const chunk of stream) {
+              // Check for errors first
+              if (chunk.headers?.[':exception-type']?.value) {
+                const errorMessage = new TextDecoder().decode(chunk.body);
+                throw new Error(`AWS Error: ${chunk.headers[':exception-type'].value} - ${errorMessage}`);
+              }
+
+              // Process different chunk formats
+              let chunkText = '';
+              if (chunk.chunk?.bytes) {
+                chunkText = new TextDecoder().decode(chunk.chunk.bytes);
+              } else if (chunk.message) {
+                chunkText = chunk.message;
+              } else if (chunk.body instanceof Uint8Array) {
+                chunkText = new TextDecoder().decode(chunk.body);
+              } else {
+                logger.debug('[BedrockAgentClient] Unknown chunk format:', {
+                  type: typeof chunk,
+                  hasBody: !!chunk.body,
+                  bodyType: chunk.body ? typeof chunk.body : 'none',
+                  properties: Object.keys(chunk)
+                });
+                continue;
+              }
+
+              if (chunkText) {
+                text += chunkText;
+                // Send progress update for each chunk
+                if (typeof opts?.onProgress === 'function') {
+                  const progressEvent = {
+                    type: 'message',
+                    message: {
+                      id: responseMessageId,
+                      role: 'assistant',
+                      content: text,
+                      parentMessageId: userMessage?.messageId,
+                      conversationId: this.sessionId,
+                      model: this.modelOptions.model || 'bedrock-agent',
+                      metadata: {
+                        agentId: this.agentId,
+                        agentAliasId: this.agentAliasId,
+                        sessionId: this.sessionId,
+                        partial: true
+                      }
+                    },
+                    created: Date.now(),
+                    done: false,
+                    final: false
+                  };
+                  opts.onProgress(progressEvent);
+                }
+              }
+            }
+          } catch (error) {
+            logger.error('[BedrockAgentClient] Error in streaming response:', {
+              name: error.name,
+              message: error.message,
+              code: error.$metadata?.httpStatusCode,
+              requestId: error.$metadata?.requestId,
+              sessionId: this.sessionId,
+              agentId: this.agentId
+            });
+            throw error;
           }
-          const concatenated = Buffer.concat(chunks);
-          text = new TextDecoder().decode(concatenated);
         } else {
-          logger.error('[BedrockAgentClient] Unexpected completion type:', {
-            type: typeof response.completion,
-            value: response.completion,
-            hasMessageStream: !!response.completion?.options?.messageStream
-          });
-          throw new Error('Unexpected completion type from Bedrock agent');
+          // Handle non-streaming response
+          if (response.completion instanceof Uint8Array) {
+            text = new TextDecoder().decode(response.completion);
+          } else if (Buffer.isBuffer(response.completion)) {
+            text = response.completion.toString('utf-8');
+          } else if (typeof response.completion === 'string') {
+            text = response.completion;
+          } else {
+            logger.error('[BedrockAgentClient] Unexpected completion type:', {
+              type: typeof response.completion,
+              value: response.completion
+            });
+            throw new Error('Unexpected completion type from Bedrock agent');
+          }
         }
         
         logger.debug('[BedrockAgentClient] Decoded response:', {
@@ -327,39 +395,38 @@ class BedrockAgentClient extends BaseClient {
           }
         };
 
+        // Send final message with complete response
         if (typeof opts?.onProgress === 'function') {
-          // Simulate streaming by chunking the response
-          const chunks = text.match(/[^.!?]+[.!?]+/g) || [text];
-          let accumulatedText = '';
+          const finalEvent = {
+            type: 'message',
+            message: {
+              id: responseMessageId,
+              role: 'assistant',
+              content: text,
+              parentMessageId: userMessage?.messageId,
+              conversationId: this.sessionId,
+              endpoint: EModelEndpoint.bedrockAgent,
+              model: this.modelOptions.model || 'bedrock-agent',
+              metadata: {
+                agentId: this.agentId,
+                agentAliasId: this.agentAliasId,
+                sessionId: this.sessionId,
+                partial: false
+              }
+            },
+            created: Date.now(),
+            done: true,
+            final: true
+          };
 
-          for (let i = 0; i < chunks.length; i++) {
-            accumulatedText += chunks[i];
-            const isLast = i === chunks.length - 1;
+          logger.debug('[BedrockAgentClient] Sending final response:', {
+            messageId: responseMessageId,
+            contentLength: text.length,
+            agentId: this.agentId,
+            sessionId: this.sessionId
+          });
 
-            // Update progress message with accumulated text
-            progressMessage.content = accumulatedText;
-            progressMessage.metadata.partial = !isLast;
-
-            const progressEvent = {
-              type: 'message',
-              message: JSON.parse(JSON.stringify(progressMessage)), // Ensure valid JSON
-              created: Date.now(),
-              done: isLast,
-              final: isLast
-            };
-
-            logger.debug('[BedrockAgentClient] Sending progress event:', {
-              isLast,
-              contentLength: accumulatedText.length
-            });
-            
-            opts.onProgress(progressEvent);
-
-            // Add a small delay between chunks to simulate natural typing
-            if (!isLast) {
-              await new Promise(resolve => setTimeout(resolve, 50));
-            }
-          }
+          opts.onProgress(finalEvent);
         }
         
         return { 
@@ -398,7 +465,36 @@ class BedrockAgentClient extends BaseClient {
         throw error;
       }
     } catch (error) {
-      logger.error('[BedrockAgentClient] Error in sendMessage:', error);
+      logger.error('[BedrockAgentClient] Error in sendMessage:', {
+        name: error.name,
+        message: error.message,
+        code: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId,
+        stack: error.stack
+      });
+
+      // Notify progress handler of error with detailed information
+      if (typeof opts?.onProgress === 'function') {
+        const errorEvent = {
+          type: 'error',
+          error: {
+            message: error.message,
+            code: error.$metadata?.httpStatusCode || 500,
+            type: error.name,
+            requestId: error.$metadata?.requestId,
+            details: {
+              agentId: this.agentId,
+              sessionId: this.sessionId,
+              region: this.client.config.region
+            }
+          },
+          created: Date.now(),
+          done: true,
+          final: true
+        };
+        opts.onProgress(errorEvent);
+      }
+
       throw error;
     }
   }

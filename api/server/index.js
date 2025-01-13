@@ -46,6 +46,15 @@ const startServer = async () => {
 
   /* Middleware */
   app.use(noIndex);
+  app.use((err, req, res, next) => {
+    logger.error('[Server] Error:', {
+      error: err.message,
+      stack: err.stack,
+      path: req.path,
+      method: req.method
+    });
+    next(err);
+  });
   app.use(errorController);
   app.use(express.json({ limit: '3mb' }));
   app.use(mongoSanitize());
@@ -111,6 +120,20 @@ const startServer = async () => {
   app.use('/api/bedrock-agent', routes.bedrockAgent);
 
   app.use('/api/tags', routes.tags);
+
+  // Debug middleware for all requests
+  app.use((req, res, next) => {
+    logger.debug('[Server] Incoming request:', {
+      method: req.method,
+      path: req.path,
+      query: req.query,
+      headers: {
+        ...req.headers,
+        authorization: req.headers.authorization ? '[REDACTED]' : undefined
+      }
+    });
+    next();
+  });
 
   app.use((req, res) => {
     res.set({

@@ -34,41 +34,25 @@ async function buildEndpointOption(req, res, next) {
   let parsedBody;
   try {
     if (endpoint === EModelEndpoint.bedrockAgent) {
-      // For Bedrock Agent, ensure we preserve the original request body fields
       const { conversation = {}, endpointOption = {} } = req.body;
+      
+      logger.debug('[BedrockAgent] Request body:', {
+        conversation,
+        endpointOption,
+        bodyAgentId: req.body.agentId,
+        bodyConversation: req.body.conversation
+      });
       
       // Get models config first
       const modelsConfig = await getModelsConfig(req);
       const bedrockConfig = modelsConfig?.bedrockAgent?.[0] ?? {};
       
-      // Log all configuration sources
-      logger.debug('[BedrockAgent] Configuration sources:', {
-        requestBody: {
-          agentId: req.body.agentId,
-          agentAliasId: req.body.agentAliasId,
-          region: req.body.region
-        },
-        conversation: {
-          agentId: conversation?.agentId,
-          agentAliasId: conversation?.agentAliasId,
-          region: conversation?.region
-        },
-        endpointOption: {
-          agentId: endpointOption?.agentId,
-          agentAliasId: endpointOption?.agentAliasId,
-          region: endpointOption?.region
-        },
-        bedrockConfig: {
-          agentId: bedrockConfig.agentId,
-          agentAliasId: bedrockConfig.agentAliasId,
-          region: bedrockConfig.region
-        },
-        environment: {
-          agentId: process.env.AWS_BEDROCK_AGENT_ID,
-          region: process.env.AWS_REGION
-        }
+      logger.debug('[BedrockAgent] Config sources:', {
+        modelsConfig: !!modelsConfig,
+        bedrockConfig,
+        envAgentId: process.env.AWS_BEDROCK_AGENT_ID
       });
-
+      
       // Build configuration with priority order
       const agentId = req.body.agentId || 
                      conversation?.agentId || 
@@ -90,61 +74,61 @@ async function buildEndpointOption(req, res, next) {
                     process.env.AWS_REGION || 
                     'eu-central-1';
 
-      logger.debug('[BedrockAgent] Selected configuration:', {
-        agentId,
-        agentAliasId,
-        region,
-        source: {
-          agentId: agentId === req.body.agentId ? 'request' :
-                  agentId === conversation?.agentId ? 'conversation' :
-                  agentId === endpointOption?.agentId ? 'endpointOption' :
-                  agentId === bedrockConfig.agentId ? 'config' :
-                  agentId === process.env.AWS_BEDROCK_AGENT_ID ? 'environment' : 'default',
-          agentAliasId: agentAliasId === req.body.agentAliasId ? 'request' :
-                       agentAliasId === conversation?.agentAliasId ? 'conversation' :
-                       agentAliasId === endpointOption?.agentAliasId ? 'endpointOption' :
-                       agentAliasId === bedrockConfig.agentAliasId ? 'config' : 'default',
-          region: region === req.body.region ? 'request' :
-                 region === conversation?.region ? 'conversation' :
-                 region === endpointOption?.region ? 'endpointOption' :
-                 region === bedrockConfig.region ? 'config' :
-                 region === process.env.AWS_REGION ? 'environment' : 'default'
-        }
-      });
-
-      parsedBody = {
-        ...req.body,
-        agentId,
-        agentAliasId,
-        region,
-        model: 'bedrock-agent',
-        endpoint: EModelEndpoint.bedrockAgent,
-        modelDisplayLabel: bedrockConfig.modelDisplayLabel || 'AWS Bedrock Agent'
-      };
-      
       logger.debug('[BedrockAgent] Building endpoint options:', {
-        originalBody: {
-          conversationAgentId: conversation?.agentId,
-          envAgentId: process.env.AWS_BEDROCK_AGENT_ID,
-          agentAliasId: conversation?.agentAliasId,
-          region: conversation?.region
-        },
-        parsedBody: {
-          agentId: parsedBody.agentId,
-          agentAliasId: parsedBody.agentAliasId,
-          region: parsedBody.region
-        },
+        agentId,
+        agentAliasId,
+        region,
         endpoint,
-        endpointType
+        endpointType: req.body.endpointType,
+        model: 'bedrock-agent'
       });
 
-      if (!parsedBody.agentId) {
-        logger.error('[BedrockAgent] No agent ID found in request or environment:', {
-          conversationAgentId: conversation?.agentId,
-          envAgentId: process.env.AWS_BEDROCK_AGENT_ID
-        });
+      // Ensure we have a valid agent ID
+      if (!agentId) {
+        logger.error('[BedrockAgent] No agent ID found in request or configuration');
         throw new Error('Agent ID is required');
       }
+
+      parsedBody = {
+        endpoint: EModelEndpoint.bedrockAgent,
+        endpointType: EModelEndpoint.bedrockAgent,
+        model: 'bedrock-agent',
+        agentId,
+        agentAliasId,
+        region,
+        text: req.body.text || '',
+        conversationId: req.body.conversationId,
+        parentMessageId: req.body.parentMessageId,
+        overrideParentMessageId: req.body.overrideParentMessageId,
+        modelDisplayLabel: bedrockConfig.modelDisplayLabel || 'AWS Bedrock Agent',
+        conversation: {
+          agentId,
+          agentAliasId,
+          model: 'bedrock-agent',
+          endpoint: EModelEndpoint.bedrockAgent,
+          endpointType: EModelEndpoint.bedrockAgent,
+          region
+        },
+        // Add AWS configuration
+        aws: {
+          credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          },
+          region,
+        },
+        sessionId: req.body.conversationId || `session-${Date.now()}`,
+        enableTrace: true
+      };
+
+      logger.debug('[BedrockAgent] Final parsed body:', {
+        endpoint,
+        endpointType,
+        agentId: parsedBody.agentId,
+        agentAliasId: parsedBody.agentAliasId,
+        region: parsedBody.region,
+        model: parsedBody.model
+      });
     } else {
       parsedBody = parseCompactConvo({ endpoint, endpointType, conversation: req.body });
     }
@@ -196,14 +180,6 @@ async function buildEndpointOption(req, res, next) {
   }
 
   try {
-    logger.debug('[buildEndpointOption] Building options for endpoint:', {
-      endpoint,
-      endpointType,
-      bodyEndpoint: req.body.endpoint,
-      hasAgentId: !!req.body.agentId,
-      hasAliasId: !!req.body.agentAliasId
-    });
-
     const isAgents = isAgentsEndpoint(endpoint);
     const endpointFn = buildFunction[endpointType ?? endpoint];
     
@@ -216,7 +192,81 @@ async function buildEndpointOption(req, res, next) {
       throw new Error(`No builder function found for endpoint: ${endpoint}`);
     }
     
+    logger.debug('[buildEndpointOption] Using builder function for endpoint:', {
+      endpoint,
+      endpointType,
+      isAgents,
+      hasEndpointFn: !!endpointFn,
+      parsedBody: {
+        ...parsedBody,
+        agentId: parsedBody.agentId,
+        agentAliasId: parsedBody.agentAliasId,
+        region: parsedBody.region
+      }
+    });
+    
+    // Additional validation for Bedrock Agent
+    if (endpoint === EModelEndpoint.bedrockAgent) {
+      // Get agent ID from all possible sources
+      const agentId = parsedBody.agentId || 
+                     parsedBody.conversation?.agentId || 
+                     req.body.agentId || 
+                     req.body.conversation?.agentId || 
+                     process.env.AWS_BEDROCK_AGENT_ID;
+
+      logger.debug('[buildEndpointOption] Agent ID sources:', {
+        parsedBodyAgentId: parsedBody.agentId,
+        parsedBodyConvoAgentId: parsedBody.conversation?.agentId,
+        reqBodyAgentId: req.body.agentId,
+        reqBodyConvoAgentId: req.body.conversation?.agentId,
+        envAgentId: process.env.AWS_BEDROCK_AGENT_ID,
+        selectedAgentId: agentId
+      });
+
+      if (!agentId) {
+        logger.error('[buildEndpointOption] Missing agent ID for Bedrock Agent request');
+        throw new Error('Agent ID is required for Bedrock Agent requests');
+      }
+
+      // Update parsedBody with complete agent configuration
+      parsedBody.agentId = agentId;
+      parsedBody.agentAliasId = parsedBody.agentAliasId || 
+                               parsedBody.conversation?.agentAliasId || 
+                               req.body.agentAliasId || 
+                               'TSTALIASID';
+      parsedBody.region = parsedBody.region || 
+                         process.env.AWS_REGION || 
+                         'eu-central-1';
+      parsedBody.model = 'bedrock-agent';
+      parsedBody.endpoint = EModelEndpoint.bedrockAgent;
+      parsedBody.endpointType = EModelEndpoint.bedrockAgent;
+
+      // Ensure conversation object is properly configured
+      parsedBody.conversation = {
+        ...(parsedBody.conversation || {}),
+        agentId,
+        agentAliasId: parsedBody.agentAliasId,
+        model: 'bedrock-agent',
+        endpoint: EModelEndpoint.bedrockAgent,
+        endpointType: EModelEndpoint.bedrockAgent,
+        region: parsedBody.region
+      };
+
+      logger.debug('[buildEndpointOption] Final configuration:', {
+        agentId: parsedBody.agentId,
+        agentAliasId: parsedBody.agentAliasId,
+        region: parsedBody.region,
+        model: parsedBody.model,
+        endpoint: parsedBody.endpoint
+      });
+    }
+    
     const builder = isAgents ? (...args) => endpointFn(req, ...args) : endpointFn;
+
+    // Ensure generation is initialized for Bedrock Agent
+    if (endpoint === EModelEndpoint.bedrockAgent && !parsedBody.generation) {
+      parsedBody.generation = '';
+    }
 
     // TODO: use object params
     req.body.endpointOption = await builder(endpoint, parsedBody, endpointType);

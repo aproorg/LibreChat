@@ -141,7 +141,10 @@ async function runTests() {
     const tester = new BedrockAgentTester(config);
 
     // Define agents to test
-    const agents = [{ id: 'FZUSVDW4SR', alias: '96PMMYNAEL' }];
+    const agents = [
+      { id: 'FZUSVDW4SR', alias: 'TSTALIASID' },
+      { id: 'SLBEYXPT6I', alias: 'TSTALIASID' }
+    ];
 
     let testsPassed = true;
 

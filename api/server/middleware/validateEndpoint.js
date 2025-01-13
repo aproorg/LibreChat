@@ -1,4 +1,5 @@
 const { handleError } = require('../utils');
+const { logger } = require('~/config');
 
 function validateEndpoint(req, res, next) {
   const { endpoint: _endpoint, endpointType } = req.body;
@@ -15,14 +16,51 @@ function validateEndpoint(req, res, next) {
   }
 
   if (endpoint === 'bedrockAgent') {
-    console.debug('[BedrockAgent] Request body in validateEndpoint:', {
+    logger.debug('[BedrockAgent] Validating request:', {
       endpoint,
+      bodyAgentId: req.body.agentId,
+      conversationAgentId: req.body.conversation?.agentId,
+      endpointOptionAgentId: req.body.endpointOption?.agentId,
+      envAgentId: process.env.AWS_BEDROCK_AGENT_ID
+    });
+
+    // Get agent ID from all possible sources
+    const agentId = req.body.agentId || 
+                   req.body.conversation?.agentId || 
+                   req.body.endpointOption?.agentId || 
+                   process.env.AWS_BEDROCK_AGENT_ID;
+
+    if (!agentId) {
+      logger.error('[BedrockAgent] No agent ID found in request or environment');
+      return handleError(res, { 
+        text: 'Agent ID is required',
+        details: 'No agent ID found in request body, conversation, endpointOption, or environment variables'
+      });
+    }
+
+    // Set complete configuration
+    req.body = {
+      ...req.body,
+      agentId,
+      agentAliasId: req.body.agentAliasId || 
+                    req.body.conversation?.agentAliasId || 
+                    req.body.endpointOption?.agentAliasId || 
+                    'TSTALIASID',
+      region: req.body.region || 
+              req.body.conversation?.region || 
+              req.body.endpointOption?.region || 
+              process.env.AWS_REGION || 
+              'eu-central-1',
+      model: 'bedrock-agent',
+      endpoint: 'bedrockAgent',
+      endpointType: 'bedrockAgent'
+    };
+
+    logger.debug('[BedrockAgent] Request validated:', {
       agentId: req.body.agentId,
       agentAliasId: req.body.agentAliasId,
       region: req.body.region,
-      text: req.body.text,
-      model: req.body.model,
-      conversation: req.body.conversation
+      model: req.body.model
     });
   }
 

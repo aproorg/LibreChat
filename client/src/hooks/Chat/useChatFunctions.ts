@@ -173,9 +173,9 @@ export default function useChatFunctions({
       endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     } else if (endpoint === EModelEndpoint.bedrockAgent) {
       // Ensure all required fields are set for Bedrock Agent
-      const agentId = conversation?.agentId || process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR';
-      const agentAliasId = conversation?.agentAliasId || process.env.AWS_BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
-      const region = conversation?.region || process.env.AWS_REGION || 'eu-central-1';
+      const agentId = conversation?.agentId || endpointOption?.agentId || process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR';
+      const agentAliasId = conversation?.agentAliasId || endpointOption?.agentAliasId || 'TSTALIASID';
+      const region = conversation?.region || endpointOption?.region || 'eu-central-1';
       
       // Create a complete configuration object
       const agentConfig = {
@@ -185,16 +185,28 @@ export default function useChatFunctions({
         region,
         model: 'bedrock-agent',
         endpoint: EModelEndpoint.bedrockAgent,
+        endpointType: EModelEndpoint.bedrockAgent,
         modelDisplayLabel: modelDisplayLabel || 'AWS Bedrock Agent',
         conversation: {
           agentId,
           agentAliasId,
-          model: 'bedrock-agent'
+          model: 'bedrock-agent',
+          endpoint: EModelEndpoint.bedrockAgent,
+          endpointType: EModelEndpoint.bedrockAgent,
+          region
         }
       };
       
       // Update all configuration fields at once
       Object.assign(endpointOption, agentConfig);
+      
+      logger.debug('[BedrockAgent] Chat configuration:', {
+        agentId: endpointOption.agentId,
+        agentAliasId: endpointOption.agentAliasId,
+        region: endpointOption.region,
+        model: endpointOption.model,
+        endpoint: endpointOption.endpoint
+      });
       
       logger.debug('[BedrockAgent] Configured endpoint options:', {
         agentId: endpointOption.agentId,

@@ -12,9 +12,61 @@ export default function BedrockAgent({
   popover = false,
 }: TModelSelectProps) {
   const Menu = popover ? SelectDropDownPop : SelectDropDown;
-  const { data, isLoading, error } = useListBedrockAgentsQuery();
+  const { data, isLoading, error, refetch } = useListBedrockAgentsQuery();
   const agents = data?.agents ?? [];
-  const [currentAgentId, setCurrentAgentId] = useState(conversation?.agentId ?? '');
+  const [currentAgentId, setCurrentAgentId] = useState(conversation?.agentId ?? process.env.AWS_BEDROCK_AGENT_ID ?? 'FZUSVDW4SR');
+  
+  useEffect(() => {
+    // Set initial agent configuration if we have agents
+    if (agents.length > 0 && !currentAgentId) {
+      const defaultAgent = agents.find(agent => agent.id === process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR') || agents[0];
+      if (defaultAgent) {
+        setCurrentAgentId(defaultAgent.id);
+        
+        // Set complete configuration for the agent
+        const config = {
+          agentId: defaultAgent.id,
+          agentAliasId: 'TSTALIASID',
+          model: 'bedrock-agent',
+          endpoint: EModelEndpoint.bedrockAgent,
+          endpointType: EModelEndpoint.bedrockAgent,
+          region: 'eu-central-1',
+          modelDisplayLabel: defaultAgent.name,
+          conversation: {
+            agentId: defaultAgent.id,
+            agentAliasId: 'TSTALIASID',
+            model: 'bedrock-agent',
+            endpoint: EModelEndpoint.bedrockAgent,
+            endpointType: EModelEndpoint.bedrockAgent,
+            region: 'eu-central-1'
+          }
+        };
+        
+        // Update all configuration fields at once
+        Object.entries(config).forEach(([key, val]) => {
+          setOption(key, val);
+        });
+        
+        console.debug('[BedrockAgent] Initial configuration set:', config);
+      }
+    }
+  }, [agents, currentAgentId, setOption]);
+
+  useEffect(() => {
+    // Refetch agents when component mounts and set initial configuration
+    refetch().then(() => {
+      if (agents.length > 0) {
+        const defaultAgent = agents.find(agent => agent.id === process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR') || agents[0];
+        if (defaultAgent) {
+          setCurrentAgentId(defaultAgent.id);
+          setOption('agentId', defaultAgent.id);
+          setOption('model', 'bedrock-agent');
+          setOption('endpoint', EModelEndpoint.bedrockAgent);
+          setOption('endpointType', EModelEndpoint.bedrockAgent);
+        }
+      }
+    });
+  }, [refetch, agents, setOption]);
 
   useEffect(() => {
     if (conversation?.agentId) {
@@ -29,31 +81,45 @@ export default function BedrockAgent({
       const defaultAgent = agents.find(agent => agent.id === process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR') || agents[0];
       if (defaultAgent) {
         console.debug('[BedrockAgent] Setting default agent:', defaultAgent);
-        const updates = {
+        
+        // Create a complete configuration object
+        const agentConfig = {
           endpoint: EModelEndpoint.bedrockAgent,
+          endpointType: EModelEndpoint.bedrockAgent,
           model: 'bedrock-agent',
           agentId: defaultAgent.id,
           agentAliasId: 'TSTALIASID',
-          modelLabel: defaultAgent.name,
+          modelDisplayLabel: defaultAgent.name,
           region: process.env.AWS_REGION || 'eu-central-1',
           conversation: {
             endpoint: EModelEndpoint.bedrockAgent,
+            endpointType: EModelEndpoint.bedrockAgent,
             agentId: defaultAgent.id,
             agentAliasId: 'TSTALIASID',
             model: 'bedrock-agent',
-            modelLabel: defaultAgent.name,
+            modelDisplayLabel: defaultAgent.name,
             region: process.env.AWS_REGION || 'eu-central-1'
           }
         };
         
-        // Update all options at once
-        Object.entries(updates).forEach(([key, value]) => {
-          setOption(key, value);
+        // Update all configuration fields at once
+        Object.entries(agentConfig).forEach(([key, val]) => {
+          setOption(key, val);
         });
         
         setCurrentAgentId(defaultAgent.id);
         
-        console.debug('[BedrockAgent] Initial configuration set:', updates);
+        console.debug('[BedrockAgent] Initial configuration set:', agentConfig);
+        
+        // Log state updates for debugging
+        console.debug('[BedrockAgent] State updates:', {
+          endpoint: EModelEndpoint.bedrockAgent,
+          model: 'bedrock-agent',
+          agentId: defaultAgent.id,
+          agentAliasId: 'TSTALIASID',
+          modelDisplayLabel: defaultAgent.name,
+          agent: defaultAgent
+        });
       }
     }
   }, [agents, currentAgentId, setOption]);
@@ -67,10 +133,18 @@ export default function BedrockAgent({
   const selectedAgent = agents.find((agent) => agent.id === currentAgentId);
 
   const errorMessage = error 
-    ? 'Failed to load Bedrock agents. Please try again later.' 
+    ? `Failed to load Bedrock agents: ${error.message}` 
     : agents.length === 0 
       ? 'No Bedrock agents available. Please configure an agent in AWS Bedrock.'
       : undefined;
+  
+  console.debug('[BedrockAgent] Component state:', {
+    agents,
+    currentAgentId,
+    error,
+    isLoading,
+    conversation
+  });
 
   return (
     <>
@@ -84,17 +158,19 @@ export default function BedrockAgent({
             // Create a complete configuration object
             const agentConfig = {
               endpoint: EModelEndpoint.bedrockAgent,
+              endpointType: EModelEndpoint.bedrockAgent,
               model: 'bedrock-agent',
               agentId: value,
               agentAliasId: 'TSTALIASID',
-              modelLabel: agent.name,
+              modelDisplayLabel: agent.name,
               region: process.env.AWS_REGION || 'eu-central-1',
               conversation: {
                 endpoint: EModelEndpoint.bedrockAgent,
+                endpointType: EModelEndpoint.bedrockAgent,
                 agentId: value,
                 agentAliasId: 'TSTALIASID',
                 model: 'bedrock-agent',
-                modelLabel: agent.name,
+                modelDisplayLabel: agent.name,
                 region: process.env.AWS_REGION || 'eu-central-1'
               }
             };
