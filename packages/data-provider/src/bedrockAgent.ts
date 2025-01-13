@@ -1,8 +1,7 @@
 import { z } from 'zod';
-import { agentsSettings } from '../agent-settings';
-import { baseEndpointSchema } from '../settings';
-import { removeNullishValues } from '../schemas';
-import type { TConversation } from '../types';
+import { agentsSettings } from './agent-settings';
+import { removeNullishValues } from './schemas';
+import type { TConversation } from './types';
 
 export const bedrockAgentEndpointSchema = z.object({
   name: z.string(),

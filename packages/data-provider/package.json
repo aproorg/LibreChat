@@ -39,6 +39,8 @@
   },
   "homepage": "https://librechat.ai",
   "dependencies": {
+    "@aws-sdk/client-bedrock-agent": "^3.726.1",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.726.1",
     "axios": "^1.7.7",
     "js-yaml": "^4.1.0",
     "zod": "^3.22.4"

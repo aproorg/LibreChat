@@ -154,8 +154,6 @@ export const defaultAssistantsVersion = {
   [EModelEndpoint.azureAssistants]: 1,
 };
 
-import { baseEndpointSchema } from './settings';
-
 export type TBaseEndpoint = z.infer<typeof baseEndpointSchema>;
 
 export const bedrockEndpointSchema = baseEndpointSchema.merge(
@@ -164,7 +162,6 @@ export const bedrockEndpointSchema = baseEndpointSchema.merge(
   }),
 );
 
-import { bedrockAgentEndpointSchema } from './schemas/bedrockAgent';
 import { baseEndpointSchema } from './settings';
 
 export const assistantEndpointSchema = baseEndpointSchema.merge(
@@ -545,11 +542,15 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
-      [EModelEndpoint.bedrockAgent]: z.array(baseEndpointSchema.merge(
-        z.object({
-          region: z.string(),
-        })
-      )).optional(),
+      [EModelEndpoint.bedrockAgent]: z
+        .array(
+          baseEndpointSchema.merge(
+            z.object({
+              region: z.string(),
+            }),
+          ),
+        )
+        .optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
@@ -607,17 +608,17 @@ export const defaultEndpoints: EModelEndpoint[] = [
   EModelEndpoint.bedrockAgent,
 ];
 
-export const defaultEndpointSettings = {
-  [EModelEndpoint.openAI]: true,
-  [EModelEndpoint.azureOpenAI]: true,
-  [EModelEndpoint.google]: true,
-  [EModelEndpoint.anthropic]: true,
-  [EModelEndpoint.assistants]: true,
-  [EModelEndpoint.agents]: true,
-  [EModelEndpoint.custom]: true,
-  [EModelEndpoint.bedrock]: true,
-  [EModelEndpoint.bedrockAgent]: true,
-};
+// export const defaultEndpointSettings = {
+//   [EModelEndpoint.openAI]: true,
+//   [EModelEndpoint.azureOpenAI]: true,
+//   [EModelEndpoint.google]: true,
+//   [EModelEndpoint.anthropic]: true,
+//   [EModelEndpoint.assistants]: true,
+//   [EModelEndpoint.agents]: true,
+//   [EModelEndpoint.custom]: true,
+//   [EModelEndpoint.bedrock]: true,
+//   [EModelEndpoint.bedrockAgent]: true,
+// };
 
 export const alternateName = {
   [EModelEndpoint.openAI]: 'OpenAI',

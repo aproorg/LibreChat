@@ -20,7 +20,7 @@ import {
   compactAssistantSchema,
 } from './schemas';
 import { bedrockInputSchema } from './bedrock';
-import { bedrockAgentSchema, compactBedrockAgentSchema } from './schemas/bedrockAgent';
+import { bedrockAgentSchema, compactBedrockAgentSchema } from './bedrockAgent';
 import { alternateName } from './config';
 
 type EndpointSchema =

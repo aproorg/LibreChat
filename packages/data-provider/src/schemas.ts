@@ -42,30 +42,6 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.custom,
 ]);
 
-export const defaultEndpoints = [
-  EModelEndpoint.openAI,
-  EModelEndpoint.azureOpenAI,
-  EModelEndpoint.google,
-  EModelEndpoint.anthropic,
-  EModelEndpoint.assistants,
-  EModelEndpoint.agents,
-  EModelEndpoint.custom,
-  EModelEndpoint.bedrock,
-  EModelEndpoint.bedrockAgent,
-];
-
-export const defaultEndpointSettings = {
-  [EModelEndpoint.openAI]: true,
-  [EModelEndpoint.azureOpenAI]: true,
-  [EModelEndpoint.google]: true,
-  [EModelEndpoint.anthropic]: true,
-  [EModelEndpoint.assistants]: true,
-  [EModelEndpoint.agents]: true,
-  [EModelEndpoint.custom]: true,
-  [EModelEndpoint.bedrock]: true,
-  [EModelEndpoint.bedrockAgent]: true,
-};
-
 export enum BedrockProviders {
   AI21 = 'ai21',
   Amazon = 'amazon',

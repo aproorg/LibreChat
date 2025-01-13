@@ -69,6 +69,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-agent": "^3.726.1",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.726.1",
     "@modelcontextprotocol/sdk": "^1.0.3",
     "diff": "^7.0.0",
     "eventsource": "^3.0.1",
