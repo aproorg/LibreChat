@@ -14,6 +14,18 @@ function validateEndpoint(req, res, next) {
     return handleError(res, { text: 'Illegal request: Endpoint mismatch' });
   }
 
+  if (endpoint === 'bedrockAgent') {
+    console.debug('[BedrockAgent] Request body in validateEndpoint:', {
+      endpoint,
+      agentId: req.body.agentId,
+      agentAliasId: req.body.agentAliasId,
+      region: req.body.region,
+      text: req.body.text,
+      model: req.body.model,
+      conversation: req.body.conversation
+    });
+  }
+
   next();
 }
 

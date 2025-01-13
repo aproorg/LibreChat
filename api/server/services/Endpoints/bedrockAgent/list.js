@@ -72,19 +72,7 @@ async function listBedrockAgentsHandler(req, res) {
         rawResponse: JSON.stringify(response, null, 2)
       });
 
-      // Always return a mock agent for testing UI flow
-      logger.info('[BedrockAgent] Returning mock agent for UI testing');
-      return res.json({
-        agents: [{
-          id: 'mock-agent-001',
-          name: 'Mock Bedrock Agent',
-          description: 'Mock agent for testing UI integration',
-          status: 'Available',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }]
-      });
-
+      // Return real agents from AWS Bedrock
       if (!response.agentSummaries) {
         logger.warn('[BedrockAgent] No agent summaries in response:', {
           metadata: response.$metadata,
@@ -101,6 +89,11 @@ async function listBedrockAgentsHandler(req, res) {
         createdAt: agent.creationDateTime?.toISOString() || new Date().toISOString(),
         updatedAt: agent.lastUpdatedDateTime?.toISOString() || new Date().toISOString(),
       }));
+
+      logger.debug('[BedrockAgent] Mapped agents:', {
+        count: agents.length,
+        agents: agents.map(a => ({ id: a.id, name: a.name, status: a.status }))
+      });
 
       logger.debug('[BedrockAgent] Mapped agents:', {
         count: agents.length,

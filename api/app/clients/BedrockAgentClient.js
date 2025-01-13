@@ -16,6 +16,19 @@ const defaultClientConfig = {
   retryMode: 'standard',
 };
 
+// AWS Bedrock session ID validation pattern
+const SESSION_ID_PATTERN = /^[0-9a-zA-Z._:-]{2,100}$/;
+
+function validateSessionId(sessionId) {
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw new Error('Session ID must be a non-empty string');
+  }
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    throw new Error('Session ID must match pattern: ^[0-9a-zA-Z._:-]{2,100}$');
+  }
+  return true;
+}
+
 class BedrockAgentClient extends BaseClient {
   constructor(apiKey, options = {}) {
     super(apiKey, options);
@@ -97,9 +110,17 @@ class BedrockAgentClient extends BaseClient {
         }
       });
 
-      // Ensure session continuity
+      // Ensure session continuity with validation
       if (!this.sessionId) {
+        if (!conversationId) {
+          throw new Error('Conversation ID is required for session continuity');
+        }
+        validateSessionId(conversationId);
         this.sessionId = conversationId;
+        logger.debug('[BedrockAgentClient] Session ID set:', {
+          sessionId: this.sessionId,
+          pattern: SESSION_ID_PATTERN.source
+        });
       }
 
       // Build base input with required parameters
@@ -132,7 +153,7 @@ class BedrockAgentClient extends BaseClient {
         };
         command = new RetrieveAndGenerateCommand(retrievalInput);
       } else {
-        // Use InvokeAgent with the latest agent version as alias ID
+        // Use InvokeAgent without alias ID first
         const commandInput = {
           agentId: this.agentId,
           sessionId: this.sessionId,
@@ -140,12 +161,19 @@ class BedrockAgentClient extends BaseClient {
           enableTrace: this.enableTrace
         };
 
-        // Only include agentAliasId if it has a value, otherwise default to '1'
-        if (this.agentAliasId) {
+        // Only include agentAliasId if explicitly provided
+        if (this.agentAliasId && this.agentAliasId !== 'undefined') {
           commandInput.agentAliasId = this.agentAliasId;
-        } else {
-          commandInput.agentAliasId = '1'; // Use latest agent version as default
         }
+
+        logger.debug('[BedrockAgentClient] Preparing InvokeAgentCommand:', {
+          ...commandInput,
+          credentials: {
+            hasAccessKey: !!this.client.config.credentials?.accessKeyId,
+            hasSecretKey: !!this.client.config.credentials?.secretAccessKey,
+            region: this.client.config.region
+          }
+        });
 
         command = new InvokeAgentCommand(commandInput);
       }
@@ -538,7 +566,12 @@ class BedrockAgentClient extends BaseClient {
       this.agentAliasId = options.agentAliasId;
     }
     if (options.sessionId) {
+      validateSessionId(options.sessionId);
       this.sessionId = options.sessionId;
+      logger.debug('[BedrockAgentClient] Session ID updated in setOptions:', {
+        sessionId: this.sessionId,
+        pattern: SESSION_ID_PATTERN.source
+      });
     }
     if (typeof options.enableTrace === 'boolean') {
       this.enableTrace = options.enableTrace;

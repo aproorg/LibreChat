@@ -23,6 +23,33 @@ export default function BedrockAgent({
     }
   }, [conversation?.agentId]);
 
+  useEffect(() => {
+    // Set initial agent if none selected and agents are available
+    if (!currentAgentId && agents.length > 0) {
+      const defaultAgent = agents.find(agent => agent.id === process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR') || agents[0];
+      if (defaultAgent) {
+        console.debug('[BedrockAgent] Setting default agent:', defaultAgent);
+        const updates = {
+          endpoint: EModelEndpoint.bedrockAgent,
+          model: 'bedrock-agent',
+          agentId: defaultAgent.id,
+          agentAliasId: 'TSTALIASID',
+          modelLabel: defaultAgent.name,
+          region: process.env.AWS_REGION || 'eu-central-1'
+        };
+        
+        // Update all options at once
+        Object.entries(updates).forEach(([key, value]) => {
+          setOption(key, value);
+        });
+        
+        setCurrentAgentId(defaultAgent.id);
+        
+        console.debug('[BedrockAgent] Initial configuration set:', updates);
+      }
+    }
+  }, [agents, currentAgentId, setOption]);
+
   const agentOptions = agents.map((agent) => ({
     value: agent.id,
     label: agent.name || agent.id,
@@ -50,6 +77,7 @@ export default function BedrockAgent({
             setOption('endpoint', EModelEndpoint.bedrockAgent);
             setOption('model', 'bedrock-agent');
             setOption('agentId', value);
+            setOption('agentAliasId', 'TSTALIASID');
             setOption('modelLabel', agent.name);
 
             // Log state updates for debugging
@@ -57,6 +85,7 @@ export default function BedrockAgent({
               endpoint: EModelEndpoint.bedrockAgent,
               model: 'bedrock-agent',
               agentId: value,
+              agentAliasId: 'TSTALIASID',
               modelLabel: agent.name,
               agent
             });
@@ -67,6 +96,7 @@ export default function BedrockAgent({
               conversation: {
                 endpoint: EModelEndpoint.bedrockAgent,
                 agentId: value,
+                agentAliasId: 'TSTALIASID',
                 model: 'bedrock-agent',
                 modelLabel: agent.name
               }

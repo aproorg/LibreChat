@@ -6,6 +6,8 @@ const gptPlugins = require('~/server/services/Endpoints/gptPlugins');
 const { processFiles } = require('~/server/services/Files/process');
 const anthropic = require('~/server/services/Endpoints/anthropic');
 const bedrock = require('~/server/services/Endpoints/bedrock');
+const { logger } = require('~/config');
+const bedrockAgent = require('~/server/services/Endpoints/bedrockAgent');
 const openAI = require('~/server/services/Endpoints/openAI');
 const agents = require('~/server/services/Endpoints/agents');
 const custom = require('~/server/services/Endpoints/custom');
@@ -19,6 +21,7 @@ const buildFunction = {
   [EModelEndpoint.custom]: custom.buildOptions,
   [EModelEndpoint.agents]: agents.buildOptions,
   [EModelEndpoint.bedrock]: bedrock.buildOptions,
+  [EModelEndpoint.bedrockAgent]: bedrockAgent.buildOptions,
   [EModelEndpoint.azureOpenAI]: openAI.buildOptions,
   [EModelEndpoint.anthropic]: anthropic.buildOptions,
   [EModelEndpoint.gptPlugins]: gptPlugins.buildOptions,
@@ -30,8 +33,81 @@ async function buildEndpointOption(req, res, next) {
   const { endpoint, endpointType } = req.body;
   let parsedBody;
   try {
-    parsedBody = parseCompactConvo({ endpoint, endpointType, conversation: req.body });
+    if (endpoint === EModelEndpoint.bedrockAgent) {
+      // For Bedrock Agent, ensure we preserve the original request body fields
+      const { conversation = {}, endpointOption = {} } = req.body;
+      
+      // Log the incoming request data for debugging
+      logger.debug('[BedrockAgent] Incoming request data:', {
+        endpointOption,
+        conversation,
+        bodyAgentId: req.body.agentId,
+        envAgentId: process.env.AWS_BEDROCK_AGENT_ID
+      });
+      
+      // Get models config first
+      const modelsConfig = await getModelsConfig(req);
+      const bedrockConfig = modelsConfig?.bedrockAgent?.[0] ?? {};
+      
+      logger.debug('[BedrockAgent] Config sources:', {
+        bedrockConfig,
+        endpointOption,
+        conversation,
+        envVars: {
+          agentId: process.env.AWS_BEDROCK_AGENT_ID,
+          region: process.env.AWS_REGION
+        }
+      });
+
+      parsedBody = {
+        ...req.body,
+        agentId: bedrockConfig.agentId || 
+                endpointOption?.agentId || 
+                conversation?.agentId || 
+                process.env.AWS_BEDROCK_AGENT_ID || 
+                'FZUSVDW4SR',
+        agentAliasId: bedrockConfig.agentAliasId || 
+                    endpointOption?.agentAliasId || 
+                    conversation?.agentAliasId || 
+                    'TSTALIASID',
+        region: bedrockConfig.region || 
+              endpointOption?.region || 
+              conversation?.region || 
+              process.env.AWS_REGION || 
+              'eu-central-1',
+        model: 'bedrock-agent',
+        endpoint: EModelEndpoint.bedrockAgent,
+        modelDisplayLabel: bedrockConfig.modelDisplayLabel || 'AWS Bedrock Agent'
+      };
+      
+      logger.debug('[BedrockAgent] Building endpoint options:', {
+        originalBody: {
+          conversationAgentId: conversation?.agentId,
+          envAgentId: process.env.AWS_BEDROCK_AGENT_ID,
+          agentAliasId: conversation?.agentAliasId,
+          region: conversation?.region
+        },
+        parsedBody: {
+          agentId: parsedBody.agentId,
+          agentAliasId: parsedBody.agentAliasId,
+          region: parsedBody.region
+        },
+        endpoint,
+        endpointType
+      });
+
+      if (!parsedBody.agentId) {
+        logger.error('[BedrockAgent] No agent ID found in request or environment:', {
+          conversationAgentId: conversation?.agentId,
+          envAgentId: process.env.AWS_BEDROCK_AGENT_ID
+        });
+        throw new Error('Agent ID is required');
+      }
+    } else {
+      parsedBody = parseCompactConvo({ endpoint, endpointType, conversation: req.body });
+    }
   } catch (error) {
+    console.error('[BedrockAgent] Error parsing conversation:', error);
     return handleError(res, { text: 'Error parsing conversation' });
   }
 
@@ -78,8 +154,26 @@ async function buildEndpointOption(req, res, next) {
   }
 
   try {
+    logger.debug('[buildEndpointOption] Building options for endpoint:', {
+      endpoint,
+      endpointType,
+      bodyEndpoint: req.body.endpoint,
+      hasAgentId: !!req.body.agentId,
+      hasAliasId: !!req.body.agentAliasId
+    });
+
     const isAgents = isAgentsEndpoint(endpoint);
     const endpointFn = buildFunction[endpointType ?? endpoint];
+    
+    if (!endpointFn) {
+      logger.error('[buildEndpointOption] No builder function found for endpoint:', {
+        endpoint,
+        endpointType,
+        availableEndpoints: Object.keys(buildFunction)
+      });
+      throw new Error(`No builder function found for endpoint: ${endpoint}`);
+    }
+    
     const builder = isAgents ? (...args) => endpointFn(req, ...args) : endpointFn;
 
     // TODO: use object params

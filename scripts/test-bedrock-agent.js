@@ -43,9 +43,14 @@ async function testAgentResponse({ agentId, sessionId, inputText }) {
       
       try {
         for await (const chunk of stream) {
-          console.log('Raw chunk:', chunk);
-          console.log('Chunk type:', typeof chunk);
-          console.log('Chunk properties:', Object.keys(chunk));
+          if (chunk.headers?.[':exception-type']?.value) {
+            const errorMessage = new TextDecoder().decode(chunk.body);
+            console.error('AWS Error:', {
+              type: chunk.headers[':exception-type'].value,
+              message: errorMessage
+            });
+            throw new Error(`AWS Error: ${chunk.headers[':exception-type'].value} - ${errorMessage}`);
+          }
           
           if (typeof chunk === 'string') {
             fullText += chunk;
@@ -53,8 +58,15 @@ async function testAgentResponse({ agentId, sessionId, inputText }) {
             fullText += new TextDecoder().decode(chunk.chunk.bytes);
           } else if (chunk.message) {
             fullText += chunk.message;
+          } else if (chunk.body instanceof Uint8Array) {
+            fullText += new TextDecoder().decode(chunk.body);
           } else {
-            console.log('Unknown chunk format:', JSON.stringify(chunk, null, 2));
+            console.debug('Processing chunk:', {
+              type: typeof chunk,
+              hasBody: !!chunk.body,
+              bodyType: chunk.body ? typeof chunk.body : 'none',
+              properties: Object.keys(chunk)
+            });
           }
         }
         
@@ -107,7 +119,7 @@ async function testAgentResponse({ agentId, sessionId, inputText }) {
 async function main() {
   try {
     const testInput = {
-      agentId: process.env.AWS_BEDROCK_AGENT_ID || 'SLBEYXPT6I',
+      agentId: process.env.AWS_BEDROCK_AGENT_ID || 'mock-agent-001',
       sessionId: 'test-session-' + Date.now(),
       inputText: 'Hello, can you tell me what capabilities you have as an agent?'
     };

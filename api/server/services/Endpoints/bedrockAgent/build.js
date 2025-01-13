@@ -13,8 +13,37 @@ const buildOptions = (endpoint, parsedBody) => {
     greeting,
     spec,
     artifacts,
+    agentId,
+    agentAliasId,
+    region,
     ...model_parameters
   } = parsedBody;
+
+  if (!agentId) {
+    logger.error('[BedrockAgent] Missing agent ID in parsedBody:', {
+      parsedBody,
+      agentId,
+      agentAliasId,
+      region,
+      envAgentId: process.env.AWS_BEDROCK_AGENT_ID
+    });
+    throw new Error('Agent ID is required');
+  }
+
+  logger.debug('[BedrockAgent] Building endpoint options with:', {
+    agentId,
+    agentAliasId,
+    region,
+    model: 'bedrock-agent',
+    parsedBody
+  });
+
+  logger.debug('[BedrockAgent] Building endpoint options:', {
+    agentId,
+    agentAliasId,
+    region,
+    model: 'bedrock-agent'
+  });
 
   const endpointOption = removeNullishValues({
     endpoint,
@@ -26,6 +55,10 @@ const buildOptions = (endpoint, parsedBody) => {
     spec,
     promptPrefix,
     maxContextTokens,
+    agentId,
+    agentAliasId,
+    region: region || process.env.AWS_REGION || 'eu-central-1',
+    model: 'bedrock-agent',
     model_parameters,
   });
 

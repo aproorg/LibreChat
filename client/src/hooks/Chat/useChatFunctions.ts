@@ -167,9 +167,45 @@ export default function useChatFunctions({
     if (endpoint === EModelEndpoint.agents) {
       endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     } else if (endpoint === EModelEndpoint.bedrockAgent) {
-      endpointOption.key = getExpiry();
-      endpointOption.agentId = conversation?.agentId;
-      endpointOption.modelDisplayLabel = modelDisplayLabel;
+      // Ensure all required fields are set for Bedrock Agent
+      const agentId = conversation?.agentId || process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR';
+      const agentAliasId = conversation?.agentAliasId || process.env.AWS_BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
+      const region = conversation?.region || process.env.AWS_REGION || 'eu-central-1';
+      
+      Object.assign(endpointOption, {
+        key: getExpiry(),
+        agentId,
+        agentAliasId,
+        region,
+        model: 'bedrock-agent',
+        endpoint: EModelEndpoint.bedrockAgent,
+        modelDisplayLabel: modelDisplayLabel || 'AWS Bedrock Agent'
+      });
+      
+      logger.debug('[BedrockAgent] Configured endpoint options:', {
+        agentId: endpointOption.agentId,
+        agentAliasId: endpointOption.agentAliasId,
+        region: endpointOption.region,
+        model: endpointOption.model,
+        endpoint: endpointOption.endpoint
+      });
+      
+      // Ensure agentId is set from conversation or environment
+      if (!endpointOption.agentId) {
+        endpointOption.agentId = process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR';
+      }
+      
+      logger.debug('[BedrockAgent] Setting endpoint options:', {
+        agentId: endpointOption.agentId,
+        agentAliasId: endpointOption.agentAliasId,
+        region: endpointOption.region,
+        endpoint,
+        model: endpointOption.model,
+        conversation: {
+          agentId: conversation?.agentId,
+          agentAliasId: conversation?.agentAliasId
+        }
+      });
     } else {
       endpointOption.key = getExpiry();
       endpointOption.thread_id = thread_id;
@@ -226,6 +262,8 @@ export default function useChatFunctions({
       iconURL: convo.iconURL,
       model: convo.model,
       error: false,
+      agentId: convo.agentId,
+      agentAliasId: convo.agentAliasId,
     };
 
     if (isAssistantsEndpoint(endpoint)) {
