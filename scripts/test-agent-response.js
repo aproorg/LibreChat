@@ -1,175 +1,199 @@
-const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const {
+  BedrockAgentRuntimeClient,
+  InvokeAgentCommand,
+} = require('@aws-sdk/client-bedrock-agent-runtime');
 
-async function testAgentResponse({ agentId, agentAliasId }) {
-  try {
-    console.log('\nTesting AWS Bedrock Agent Response:');
-    console.log('================================');
-    console.log('Configuration:', {
-      agentId,
-      agentAliasId,
-      region: process.env.AWS_REGION,
-      hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
-      hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY
-    });
+// Configuration validation and setup
+class ConfigurationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConfigurationError';
+  }
+}
 
-    const client = new BedrockAgentRuntimeClient({
-      region: process.env.AWS_REGION || 'eu-central-1',
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      },
+function validateConfig() {
+  const requiredEnvVars = ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
+  const missing = requiredEnvVars.filter((varName) => !process.env[varName]);
+
+  if (missing.length > 0) {
+    throw new ConfigurationError(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  return {
+    region: process.env.AWS_REGION,
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      sessionToken: process.env.AWS_SESSION_TOKEN, // Optional
+    },
+  };
+}
+
+// Response processing utilities
+class ResponseProcessor {
+  static async processStreamingResponse(stream) {
+    let text = '';
+    for await (const chunk of stream) {
+      const chunkText = await this.processChunk(chunk);
+      if (chunkText) {
+        text += chunkText;
+        process.stdout.write(chunkText); // Real-time output
+      }
+    }
+    return text;
+  }
+
+  static async processChunk(chunk) {
+    // Check for errors first
+    if (chunk.headers?.[':exception-type']?.value) {
+      const errorMessage = new TextDecoder().decode(chunk.body);
+      throw new Error(`AWS Error: ${chunk.headers[':exception-type'].value} - ${errorMessage}`);
+    }
+
+    // Process different chunk formats
+    if (chunk.chunk?.bytes) {
+      return new TextDecoder().decode(chunk.chunk.bytes);
+    }
+    if (chunk.message) {
+      return chunk.message;
+    }
+    if (chunk.body instanceof Uint8Array) {
+      return new TextDecoder().decode(chunk.body);
+    }
+
+    console.debug('Unknown chunk format:', {
+      type: typeof chunk,
+      hasBody: !!chunk.body,
+      bodyType: chunk.body ? typeof chunk.body : 'none',
+      properties: Object.keys(chunk),
     });
+    return '';
+  }
+
+  static processNonStreamingResponse(completion) {
+    if (completion instanceof Uint8Array) {
+      return new TextDecoder().decode(completion);
+    }
+    if (Buffer.isBuffer(completion)) {
+      return completion.toString('utf-8');
+    }
+    if (typeof completion === 'string') {
+      return completion;
+    }
+    throw new Error('Unexpected completion type from Bedrock agent');
+  }
+}
+
+// Main agent testing class
+class BedrockAgentTester {
+  constructor(config) {
+    this.client = new BedrockAgentRuntimeClient(config);
+  }
+
+  async testAgent({ agentId, agentAliasId }) {
+    console.log('\nTesting AWS Bedrock Agent:', { agentId, agentAliasId });
 
     const input = {
       agentId,
       agentAliasId,
-      sessionId: 'test-session-' + Date.now(),
+      sessionId: `test-session-${Date.now()}`,
       inputText: 'Hello! Can you tell me what capabilities you have as an agent?',
-      enableTrace: true
+      enableTrace: true,
     };
 
-    console.log('Request Parameters:', {
-      agentId: input.agentId,
-      sessionId: input.sessionId,
-      inputText: input.inputText
-    });
-
-    const command = new InvokeAgentCommand(input);
-    console.log('\nSending request to AWS Bedrock...');
-    const response = await client.send(command);
-
-    if (!response.completion) {
-      throw new Error('No completion in agent response');
-    }
-
-    let text = '';
-    console.log('Processing response...');
-    console.log('Response type:', typeof response.completion);
-    console.log('Has messageStream:', !!response.completion?.options?.messageStream);
-    
-    if (response.completion?.options?.messageStream) {
-      console.log('Processing streaming response...');
-      const stream = response.completion.options.messageStream;
-      for await (const chunk of stream) {
-        console.log('Received chunk:', chunk);
-        
-        if (chunk.headers?.[':exception-type']?.value) {
-          const errorMessage = new TextDecoder().decode(chunk.body);
-          console.error('AWS Error:', {
-            type: chunk.headers[':exception-type'].value,
-            message: errorMessage
-          });
-          throw new Error(`AWS Error: ${chunk.headers[':exception-type'].value} - ${errorMessage}`);
-        }
-        
-        let chunkText = '';
-        if (chunk.chunk?.bytes) {
-          chunkText = new TextDecoder().decode(chunk.chunk.bytes);
-        } else if (chunk.message) {
-          chunkText = chunk.message;
-        } else if (chunk.body instanceof Uint8Array) {
-          chunkText = new TextDecoder().decode(chunk.body);
-        } else {
-          console.debug('Unknown chunk format:', {
-            type: typeof chunk,
-            hasBody: !!chunk.body,
-            bodyType: chunk.body ? typeof chunk.body : 'none',
-            properties: Object.keys(chunk)
-          });
-          continue;
-        }
-        
-        text += chunkText;
-        // Print chunks as they arrive
-        process.stdout.write(chunkText);
-      }
-    } else if (response.completion instanceof Uint8Array) {
-      console.log('Processing Uint8Array response...');
-      text = new TextDecoder().decode(response.completion);
-    } else if (Buffer.isBuffer(response.completion)) {
-      console.log('Processing Buffer response...');
-      text = response.completion.toString('utf-8');
-    } else if (typeof response.completion === 'string') {
-      console.log('Processing string response...');
-      text = response.completion;
-    } else {
-      console.error('Unexpected completion type:', {
-        type: typeof response.completion,
-        value: JSON.stringify(response.completion, null, 2),
-        properties: Object.keys(response.completion || {})
-      });
-      throw new Error('Unexpected completion type from Bedrock agent');
-    }
-
-    console.log('\nAgent Response:');
-    console.log('--------------------------------');
-    console.log(text);
-    console.log('--------------------------------');
-
-    return {
-      text,
-      metadata: response.$metadata,
-      requestId: response.$metadata?.requestId
-    };
-  } catch (error) {
-    console.error('\nError testing agent:', {
-      name: error.name,
-      message: error.message,
-      code: error.$metadata?.httpStatusCode,
-      requestId: error.$metadata?.requestId
-    });
-    throw error;
-  }
-}
-
-// Test both available agents
-async function main() {
-  // Try agents with and without alias
-  const agents = [
-    // Only try with TSTALIASID as configured in librechat.yaml
-    { id: 'FZUSVDW4SR', alias: 'TSTALIASID' },
-    { id: 'SLBEYXPT6I', alias: 'TSTALIASID' }
-  ];
-
-  for (const agent of agents) {
-    console.log(`\n=== Testing Agent ${agent.id} ===`);
     try {
-      const params = {
-        agentId: agent.id,
-        ...(agent.alias && { agentAliasId: agent.alias })
+      const command = new InvokeAgentCommand(input);
+      const response = await this.client.send(command);
+
+      if (!response.completion) {
+        throw new Error('No completion in agent response');
+      }
+
+      const text = await this.processResponse(response.completion);
+
+      return {
+        text,
+        metadata: response.$metadata,
+        requestId: response.$metadata?.requestId,
       };
-      console.log('Testing with params:', params);
-      const result = await testAgentResponse(params);
-      console.log('\nTest completed successfully!');
-      console.log('Request ID:', result.requestId);
-      console.log('HTTP Status:', result.metadata?.httpStatusCode);
     } catch (error) {
-      console.error(`\nTest failed for agent ${agent.id}:`, error.message);
-      // Continue testing next agent
-      continue;
+      console.error('Error in agent test:', {
+        name: error.name,
+        message: error.message,
+        code: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId,
+      });
+      throw error;
     }
+  }
+
+  async processResponse(completion) {
+    if (completion?.options?.messageStream) {
+      return ResponseProcessor.processStreamingResponse(completion.options.messageStream);
+    }
+    return ResponseProcessor.processNonStreamingResponse(completion);
   }
 }
 
-// Track test success
-let integration_test_passed = false;
+// Test execution
+async function runTests() {
+  try {
+    const config = validateConfig();
+    const tester = new BedrockAgentTester(config);
 
-// Run the tests
-main()
-  .then(() => {
-    integration_test_passed = true;
+    // Define agents to test
+    const agents = [{ id: 'FZUSVDW4SR', alias: '96PMMYNAEL' }];
+
+    let testsPassed = true;
+
+    for (const agent of agents) {
+      console.log(`\n=== Testing Agent ${agent.id} ===`);
+      try {
+        const result = await tester.testAgent({
+          agentId: agent.id,
+          agentAliasId: agent.alias,
+        });
+
+        console.log('\nTest Results:', {
+          requestId: result.requestId,
+          httpStatus: result.metadata?.httpStatusCode,
+          responseLength: result.text.length,
+        });
+      } catch (error) {
+        testsPassed = false;
+        console.error(`Test failed for agent ${agent.id}:`, error.message);
+      }
+    }
+
+    return testsPassed;
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      console.error('Configuration Error:', error.message);
+    } else {
+      console.error('Unexpected Error:', error);
+    }
+    return false;
+  }
+}
+
+// Execute tests and handle results
+runTests()
+  .then((passed) => {
     console.log('\nIntegration Test Status:', {
-      passed: integration_test_passed,
+      passed,
       timestamp: new Date().toISOString(),
       environment: {
         region: process.env.AWS_REGION,
-        hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
-        hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY
-      }
+        hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
+        hasSessionToken: !!process.env.AWS_SESSION_TOKEN,
+      },
     });
+
+    if (!passed) {
+      process.exit(1);
+    }
   })
   .catch((error) => {
-    integration_test_passed = false;
-    console.error('\nIntegration Test Failed:', error);
+    console.error('Fatal error in test execution:', error);
     process.exit(1);
   });
