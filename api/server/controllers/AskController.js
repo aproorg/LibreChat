@@ -1,5 +1,5 @@
 const throttle = require('lodash/throttle');
-const { getResponseSender, Constants, CacheKeys, Time } = require('librechat-data-provider');
+const { getResponseSender, Constants, CacheKeys, Time, EModelEndpoint } = require('librechat-data-provider');
 const { createAbortController, handleAbortError } = require('~/server/middleware');
 const { sendMessage, createOnProgress } = require('~/server/utils');
 const { getLogStores } = require('~/cache');
@@ -134,6 +134,15 @@ const AskController = async (req, res, next, initializeClient, addTitle) => {
     const { conversation = {} } = await client.responsePromise;
     conversation.title =
       conversation && !conversation.title ? null : conversation?.title || 'New Chat';
+    
+    // Handle Bedrock Agent specific response format
+    if (endpointOption.endpoint === EModelEndpoint.bedrockAgent && response.finalMessage) {
+      response = {
+        ...response,
+        conversation,
+        title: conversation.title,
+      };
+    }
 
     if (client.options.attachments) {
       userMessage.files = client.options.attachments;

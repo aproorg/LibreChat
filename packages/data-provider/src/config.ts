@@ -547,6 +547,7 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
+      [EModelEndpoint.bedrockAgent]: assistantEndpointSchema.optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
