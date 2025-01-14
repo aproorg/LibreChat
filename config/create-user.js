@@ -30,7 +30,9 @@ const argv = yargs
   })
   .usage('Usage: $0 [options]')
   .example('$0 --email user@example.com --name "John Doe" --username johndoe')
-  .help().argv;
+  .help()
+  .alias('help', 'h')
+  .epilogue('For more information, check the documentation.').argv;
 
 (async () => {
   await connect();
@@ -42,13 +44,10 @@ const argv = yargs
   let { email, name, username, password } = argv;
   let emailVerified = argv['email-verified'];
 
-  if (!email) {
-    email = await askQuestion('Email:');
-  }
-  if (!email.includes('@')) {
-    console.red('Error: Invalid email address!');
-    silentExit(1);
-  }
+  // Handle positional arguments for backwards compatibility
+  if (!email && argv._[0]) email = argv._[0];
+  if (!name && argv._[1]) name = argv._[1];
+  if (!username && argv._[2]) username = argv._[2];
 
   const defaultName = email.split('@')[0];
   if (!name) {
@@ -72,7 +71,7 @@ const argv = yargs
   }
 
   // Only prompt for emailVerified if it wasn't set via CLI
-  if (argv['email-verified'] === undefined) {
+  if (emailVerified === undefined) {
     const emailVerifiedInput = await askQuestion(`Email verified? (Y/n, default is Y):
 
 If \`y\`, the user's email will be considered verified.
@@ -84,12 +83,21 @@ or the user will need to attempt logging in to have a verification link sent to 
 
     if (emailVerifiedInput.toLowerCase() === 'n') {
       emailVerified = false;
+    } else {
+      emailVerified = true;
     }
   }
 
   const userExists = await User.findOne({ $or: [{ email }, { username }] });
   if (userExists) {
     console.red('Error: A user with that email or username already exists!');
+    if (userExists.email === email) {
+      console.red(`The email '${email}' is already in use.`);
+    }
+    if (userExists.username === username) {
+      console.red(`The username '${username}' is already taken.`);
+    }
+    console.orange('Please try again with a different email and/or username.');
     silentExit(1);
   }
 
