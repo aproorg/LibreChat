@@ -164,11 +164,24 @@ export default function useChatFunctions({
       },
       convo,
       endpoint === EModelEndpoint.bedrockAgent ? {
-        agentId: conversation?.agentId,
-        agentAliasId: conversation?.agentAliasId,
+        agentId: conversation?.agentId || process.env.AWS_BEDROCK_AGENT_ID || 'FZUSVDW4SR',
+        agentAliasId: conversation?.agentAliasId || 'TSTALIASID',
         region: conversation?.region || process.env.AWS_REGION || 'eu-central-1',
+        model: 'bedrock-agent',
+        endpoint: EModelEndpoint.bedrockAgent,
+        endpointType: EModelEndpoint.bedrockAgent
       } : {},
     ) as TEndpointOption;
+    
+    if (endpoint === EModelEndpoint.bedrockAgent) {
+      logger.debug('[BedrockAgent] Configured endpoint options:', {
+        agentId: endpointOption.agentId,
+        agentAliasId: endpointOption.agentAliasId,
+        region: endpointOption.region,
+        model: endpointOption.model,
+        endpoint: endpointOption.endpoint
+      });
+    }
     if (endpoint === EModelEndpoint.agents) {
       endpointOption.key = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     } else if (endpoint === EModelEndpoint.bedrockAgent) {
@@ -314,6 +327,25 @@ export default function useChatFunctions({
           },
         },
       ];
+      
+      // Add metadata for Bedrock Agent
+      if (endpoint === EModelEndpoint.bedrockAgent) {
+        logger.debug('[BedrockAgent] Setting response metadata:', {
+          agentId: conversation?.agentId,
+          agentAliasId: conversation?.agentAliasId,
+          region: conversation?.region,
+          endpoint,
+          model: 'bedrock-agent'
+        });
+        
+        initialResponse.metadata = {
+          agentId: conversation?.agentId,
+          agentAliasId: conversation?.agentAliasId || 'TSTALIASID',
+          region: conversation?.region || process.env.AWS_REGION || 'eu-central-1',
+          endpoint: EModelEndpoint.bedrockAgent,
+          model: 'bedrock-agent'
+        };
+      }
       
       // Add metadata for Bedrock Agent
       if (endpoint === EModelEndpoint.bedrockAgent) {

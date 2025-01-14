@@ -60,11 +60,16 @@ router.use(`/${EModelEndpoint.bedrockAgent}`, (req, res, next) => {
   logger.debug('[ask/index] Received bedrockAgent request:', {
     method: req.method,
     path: req.path,
+    url: req.url,
+    baseUrl: req.baseUrl,
+    originalUrl: req.originalUrl,
     body: {
       endpoint: req.body?.endpoint,
       agentId: req.body?.agentId,
       agentAliasId: req.body?.agentAliasId,
-      text: req.body?.text
+      text: req.body?.text,
+      conversationId: req.body?.conversationId,
+      parentMessageId: req.body?.parentMessageId
     }
   });
   return bedrockAgent(req, res, next);

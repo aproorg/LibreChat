@@ -59,64 +59,42 @@ async function listBedrockAgentsHandler(req, res) {
       configuredAgentId
     });
     
-    // If no agents found, return the configured agent as fallback
-    if (!response.agentSummaries || response.agentSummaries.length === 0) {
-      logger.debug('[BedrockAgent] No agents found, using configured agent:', configuredAgentId);
-      return res.json({
-        agents: [{
-          id: configuredAgentId,
-          name: 'demo',
-          description: 'Bedrock Agent (from configuration)',
-          status: 'PREPARED',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }]
-      });
-    }
-    
-    // Log response details
-    logger.debug('[BedrockAgent] Raw response:', {
-      metadata: response.$metadata,
-      agentCount: response.agentSummaries?.length ?? 0,
-      status: response.$metadata?.httpStatusCode,
-      requestId: response.$metadata?.requestId,
-      configuredAgentId
-    });
-
-    // Always ensure we have at least one agent
+    // Create default agent configuration
     const defaultAgent = {
       id: configuredAgentId,
-      name: 'demo - PREPARED',
-      description: `Bedrock Agent ${configuredAgentId}`,
-      status: 'PREPARED',
+      name: 'demo',
+      description: 'AWS Bedrock Agent',
+      status: 'AVAILABLE',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
+    // Process response and map agents
     let agents = [];
     if (response.agentSummaries && response.agentSummaries.length > 0) {
       agents = response.agentSummaries.map((agent) => ({
         id: agent.agentId,
-        name: agent.agentName || agent.agentId,
-        description: agent.description || `Bedrock Agent ${agent.agentId}`,
-        status: agent.agentStatus,
+        name: agent.agentName || 'demo',
+        description: agent.description || `AWS Bedrock Agent ${agent.agentId}`,
+        status: agent.agentStatus || 'AVAILABLE',
         createdAt: agent.creationDateTime?.toISOString() || new Date().toISOString(),
         updatedAt: agent.lastUpdatedDateTime?.toISOString() || new Date().toISOString(),
       }));
+
+      logger.debug('[BedrockAgent] Found agents:', {
+        count: agents.length,
+        agents: agents.map(a => ({ id: a.id, name: a.name, status: a.status }))
+      });
     } else {
-      logger.warn('[BedrockAgent] No agent summaries in response, using default agent');
+      logger.debug('[BedrockAgent] No agents found, using default agent:', defaultAgent);
       agents = [defaultAgent];
     }
-    
-    logger.debug('[BedrockAgent] Mapped agents:', {
-      count: agents.length,
-      agents: agents.map(a => ({ id: a.id, name: a.name, status: a.status }))
-    });
-    
-    // If no agents were found, use the default agent
-    if (agents.length === 0) {
-      logger.warn('[BedrockAgent] No agents found, using default agent');
-      agents = [defaultAgent];
+
+    // Ensure configured agent is included
+    const hasConfiguredAgent = agents.some(agent => agent.id === configuredAgentId);
+    if (!hasConfiguredAgent) {
+      logger.debug('[BedrockAgent] Adding configured agent to list:', configuredAgentId);
+      agents.unshift(defaultAgent);
     }
 
     return res.json({ agents });
@@ -126,22 +104,14 @@ async function listBedrockAgentsHandler(req, res) {
       message: error.message,
       code: error.$metadata?.httpStatusCode,
       requestId: error.$metadata?.requestId,
-      stack: error.stack,
-      credentials: {
-        hasAccessKey: !!accessKeyId,
-        hasSecretKey: !!secretAccessKey,
-        region,
-        configuredAgentId
-      }
+      stack: error.stack
     });
 
-    // Return default agent on error
-    logger.warn('[BedrockAgent] Returning default agent due to error');
-    return res.json({ agents: [defaultAgent] });
-    return res.status(500).json({ 
-      error: 'Failed to list Bedrock agents',
-      details: error.message,
-      requestId: error.$metadata?.requestId
+    // On error, return the default agent to ensure UI functionality
+    logger.debug('[BedrockAgent] Returning default agent due to error');
+    return res.json({ 
+      agents: [defaultAgent],
+      warning: 'Using fallback agent due to listing error'
     });
   }
 }

@@ -21,8 +21,15 @@ function validateEndpoint(req, res, next) {
       bodyAgentId: req.body.agentId,
       conversationAgentId: req.body.conversation?.agentId,
       endpointOptionAgentId: req.body.endpointOption?.agentId,
-      envAgentId: process.env.AWS_BEDROCK_AGENT_ID
+      envAgentId: process.env.AWS_BEDROCK_AGENT_ID,
+      conversationId: req.body.conversationId
     });
+
+    // Ensure conversationId is set
+    if (!req.body.conversationId) {
+      req.body.conversationId = `session-${Date.now()}`;
+      logger.debug('[BedrockAgent] Generated new conversationId:', req.body.conversationId);
+    }
 
     // Get agent ID from all possible sources
     const agentId = req.body.agentId || 
@@ -53,14 +60,17 @@ function validateEndpoint(req, res, next) {
               'eu-central-1',
       model: 'bedrock-agent',
       endpoint: 'bedrockAgent',
-      endpointType: 'bedrockAgent'
+      endpointType: 'bedrockAgent',
+      sessionId: req.body.conversationId // Ensure sessionId is set for BedrockAgent
     };
 
     logger.debug('[BedrockAgent] Request validated:', {
       agentId: req.body.agentId,
       agentAliasId: req.body.agentAliasId,
       region: req.body.region,
-      model: req.body.model
+      model: req.body.model,
+      conversationId: req.body.conversationId,
+      sessionId: req.body.sessionId
     });
   }
 

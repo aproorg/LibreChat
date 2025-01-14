@@ -10,11 +10,18 @@ interface BedrockAgentListResponse {
 
 const fetchBedrockAgents = async (): Promise<BedrockAgentListResponse> => {
   try {
+    console.debug('[BedrockAgent] Fetching agents...');
     const response = await request.get<BedrockAgentListResponse>('/api/bedrock-agent/list');
+    console.debug('[BedrockAgent] Agents fetched:', response);
     return response;
-  } catch (error) {
-    console.error('[BedrockAgent] Error fetching agents:', error);
-    return { agents: [] };
+  } catch (error: any) {
+    console.error('[BedrockAgent] Error fetching agents:', {
+      error,
+      message: error.message,
+      status: error.status,
+      response: error.response
+    });
+    throw error;
   }
 };
 

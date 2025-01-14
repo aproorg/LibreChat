@@ -12,10 +12,52 @@ router.use(requireJwtAuth);
 router.get('/:conversationId', validateMessageReq, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const messages = await getMessages({ conversationId }, '-_id -__v -user');
+    logger.debug('[Messages] Fetching messages:', {
+      conversationId,
+      params: req.params,
+      query: req.query,
+      user: req.user?.id
+    });
+    
+    // Ensure we have a valid conversation ID
+    if (!conversationId) {
+      logger.error('[Messages] Missing conversation ID');
+      return res.status(400).json({ error: 'Conversation ID is required' });
+    }
+
+    // Handle new conversations
+    if (conversationId === 'new') {
+      logger.debug('[Messages] New conversation requested');
+      return res.status(200).json([]);
+    }
+
+    // Get messages for the conversation
+    const messages = await getMessages({ conversationId, user: req.user.id }, '-_id -__v -user');
+    
+    logger.debug('[Messages] Found messages:', {
+      conversationId,
+      count: messages?.length ?? 0,
+      messages: messages?.map(m => ({
+        messageId: m.messageId,
+        sender: m.sender,
+        endpoint: m.endpoint
+      }))
+    });
+    
+    // Return empty array if no messages found (don't treat as 404)
+    if (!messages || messages.length === 0) {
+      logger.debug('[Messages] No messages found for conversation:', { conversationId });
+      return res.status(200).json([]);
+    }
+    
     res.status(200).json(messages);
   } catch (error) {
-    logger.error('Error fetching messages:', error);
+    logger.error('[Messages] Error fetching messages:', {
+      error: error.message,
+      stack: error.stack,
+      conversationId: req.params.conversationId,
+      user: req.user?.id
+    });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

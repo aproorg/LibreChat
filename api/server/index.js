@@ -98,7 +98,21 @@ const startServer = async () => {
   app.use('/api/search', routes.search);
   app.use('/api/ask', routes.ask);
   app.use('/api/edit', routes.edit);
-  app.use('/api/messages', routes.messages);
+  // Add debug logging for message routes
+  app.use('/api/messages', (req, res, next) => {
+    logger.debug('[Server] Messages route hit:', {
+      method: req.method,
+      path: req.path,
+      params: req.params,
+      query: req.query,
+      body: req.body,
+      headers: {
+        ...req.headers,
+        authorization: req.headers.authorization ? '[REDACTED]' : undefined
+      }
+    });
+    return routes.messages(req, res, next);
+  });
   app.use('/api/convos', routes.convos);
   app.use('/api/presets', routes.presets);
   app.use('/api/prompts', routes.prompts);

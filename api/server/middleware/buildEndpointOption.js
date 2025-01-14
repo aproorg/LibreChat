@@ -40,7 +40,9 @@ async function buildEndpointOption(req, res, next) {
         conversation,
         endpointOption,
         bodyAgentId: req.body.agentId,
-        bodyConversation: req.body.conversation
+        bodyConversation: req.body.conversation,
+        conversationId: req.body.conversationId,
+        sessionId: req.body.sessionId
       });
       
       // Get models config first
@@ -52,6 +54,9 @@ async function buildEndpointOption(req, res, next) {
         bedrockConfig,
         envAgentId: process.env.AWS_BEDROCK_AGENT_ID
       });
+
+      // Ensure conversationId is set
+      const conversationId = req.body.conversationId || `session-${Date.now()}`;
       
       // Build configuration with priority order
       const agentId = req.body.agentId || 
@@ -80,7 +85,9 @@ async function buildEndpointOption(req, res, next) {
         region,
         endpoint,
         endpointType: req.body.endpointType,
-        model: 'bedrock-agent'
+        model: 'bedrock-agent',
+        conversationId,
+        sessionId: conversationId
       });
 
       // Ensure we have a valid agent ID
@@ -97,7 +104,7 @@ async function buildEndpointOption(req, res, next) {
         agentAliasId,
         region,
         text: req.body.text || '',
-        conversationId: req.body.conversationId,
+        conversationId,
         parentMessageId: req.body.parentMessageId,
         overrideParentMessageId: req.body.overrideParentMessageId,
         modelDisplayLabel: bedrockConfig.modelDisplayLabel || 'AWS Bedrock Agent',
@@ -107,7 +114,8 @@ async function buildEndpointOption(req, res, next) {
           model: 'bedrock-agent',
           endpoint: EModelEndpoint.bedrockAgent,
           endpointType: EModelEndpoint.bedrockAgent,
-          region
+          region,
+          conversationId
         },
         // Add AWS configuration
         aws: {
@@ -117,7 +125,7 @@ async function buildEndpointOption(req, res, next) {
           },
           region,
         },
-        sessionId: req.body.conversationId || `session-${Date.now()}`,
+        sessionId: conversationId, // Use conversationId as sessionId for consistency
         enableTrace: true
       };
 

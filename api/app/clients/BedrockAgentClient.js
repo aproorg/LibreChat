@@ -103,6 +103,19 @@ class BedrockAgentClient extends BaseClient {
         throw new Error('Client configuration not properly initialized');
       }
 
+      // Ensure session continuity with validation
+      if (!this.sessionId) {
+        // Generate a session ID if none provided
+        const sessionId = conversationId || `session-${Date.now()}`;
+        validateSessionId(sessionId);
+        this.sessionId = sessionId;
+        logger.debug('[BedrockAgentClient] Session ID set:', {
+          sessionId: this.sessionId,
+          conversationId,
+          pattern: SESSION_ID_PATTERN.source
+        });
+      }
+
       logger.debug('[BedrockAgentClient] Starting sendMessage with:', { 
         message, 
         opts,
@@ -110,26 +123,12 @@ class BedrockAgentClient extends BaseClient {
           region: this.client.config.region,
           agentId: this.agentId,
           agentAliasId: this.agentAliasId,
+          sessionId: this.sessionId,
           hasAccessKey: !!this.client.config.credentials?.accessKeyId,
           hasSecretKey: !!this.client.config.credentials?.secretAccessKey
         }
       });
 
-      // Ensure session continuity with validation
-      if (!this.sessionId) {
-        if (!conversationId) {
-          throw new Error('Conversation ID is required for session continuity');
-        }
-        validateSessionId(conversationId);
-        this.sessionId = conversationId;
-        logger.debug('[BedrockAgentClient] Session ID set:', {
-          sessionId: this.sessionId,
-          pattern: SESSION_ID_PATTERN.source
-        });
-      }
-
-      // Build base input with required parameters
-      // Initialize base input with required parameters
       // Initialize base input with required parameters
       const baseInput = {
         agentId: this.agentId,
@@ -312,12 +311,13 @@ class BedrockAgentClient extends BaseClient {
                   const progressEvent = {
                     type: 'message',
                     message: {
-                      id: responseMessageId,
+                      messageId: responseMessageId,
                       role: 'assistant',
                       content: text,
                       parentMessageId: userMessage?.messageId,
                       conversationId: this.sessionId,
                       model: this.modelOptions.model || 'bedrock-agent',
+                      endpoint: EModelEndpoint.bedrockAgent,
                       metadata: {
                         agentId: this.agentId,
                         agentAliasId: this.agentAliasId,
@@ -397,8 +397,33 @@ class BedrockAgentClient extends BaseClient {
 
         // Send final message with complete response
         if (typeof opts?.onProgress === 'function') {
-          const finalEvent = {
+          // First send the content as a regular message
+          const messageEvent = {
             type: 'message',
+            message: {
+              id: responseMessageId,
+              role: 'assistant',
+              content: text,
+              parentMessageId: userMessage?.messageId,
+              conversationId: this.sessionId,
+              endpoint: EModelEndpoint.bedrockAgent,
+              model: this.modelOptions.model || 'bedrock-agent',
+              metadata: {
+                agentId: this.agentId,
+                agentAliasId: this.agentAliasId,
+                sessionId: this.sessionId,
+                partial: false
+              }
+            },
+            created: Date.now(),
+            done: false,
+            final: false
+          };
+          opts.onProgress(messageEvent);
+
+          // Then send the final event to indicate completion
+          const finalEvent = {
+            type: 'done',
             message: {
               id: responseMessageId,
               role: 'assistant',

@@ -12,9 +12,29 @@ export default function BedrockAgent({
   popover = false,
 }: TModelSelectProps) {
   const Menu = popover ? SelectDropDownPop : SelectDropDown;
-  const { data, isLoading, error, refetch } = useListBedrockAgentsQuery();
+  const { data, isLoading, error, refetch } = useListBedrockAgentsQuery({
+    retry: 2,
+    retryDelay: 1000,
+    onSuccess: (data) => {
+      console.debug('[BedrockAgent] Query success:', {
+        agents: data?.agents,
+        count: data?.agents?.length ?? 0
+      });
+    },
+    onError: (err) => {
+      console.error('[BedrockAgent] Query error:', {
+        error: err,
+        message: err.message,
+        status: err.response?.status
+      });
+    }
+  });
   const agents = data?.agents ?? [];
-  const [currentAgentId, setCurrentAgentId] = useState(conversation?.agentId ?? process.env.AWS_BEDROCK_AGENT_ID ?? 'FZUSVDW4SR');
+  const [currentAgentId, setCurrentAgentId] = useState(
+    conversation?.agentId ?? 
+    process.env.AWS_BEDROCK_AGENT_ID ?? 
+    'FZUSVDW4SR'
+  );
   
   useEffect(() => {
     // Set initial agent configuration if we have agents
