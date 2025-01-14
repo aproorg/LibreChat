@@ -20,7 +20,7 @@ const argv = yargs
     type: 'string',
   })
   .option('password', {
-    describe: "User's password (not recommended for security)",
+    describe: "User's password",
     type: 'string',
   })
   .option('email-verified', {
@@ -29,7 +29,7 @@ const argv = yargs
     default: true,
   })
   .usage('Usage: $0 [options]')
-  .example('$0 --email user@example.com --name "John Doe" --username johndoe')
+  .example('$0 --email user@example.com --name "John Doe" --username johndoe --password mypassword')
   .help()
   .alias('help', 'h')
   .epilogue('For more information, check the documentation.').argv;
@@ -48,6 +48,15 @@ const argv = yargs
   if (!email && argv._[0]) email = argv._[0];
   if (!name && argv._[1]) name = argv._[1];
   if (!username && argv._[2]) username = argv._[2];
+  if (!password && argv._[3]) password = argv._[3];
+
+  if (!email) {
+    email = await askQuestion('Email:');
+  }
+  if (!email.includes('@')) {
+    console.red('Error: Invalid email address!');
+    silentExit(1);
+  }
 
   const defaultName = email.split('@')[0];
   if (!name) {
@@ -63,14 +72,14 @@ const argv = yargs
     }
   }
   if (!password) {
-    password = await askQuestion('Password: (leave blank, to generate one)');
+    password = await askQuestion('Password: (leave blank to generate one)');
     if (!password) {
       password = Math.random().toString(36).slice(-18);
-      console.orange('Your password is: ' + password);
+      console.orange('Your generated password is: ' + password);
     }
-  }
-
-  // Only prompt for emailVerified if it wasn't set via CLI
+  } else {
+    console.orange('Warning: Password provided via command line argument. This is not secure!');
+  } // Only prompt for emailVerified if it wasn't set via CLI
   if (emailVerified === undefined) {
     const emailVerifiedInput = await askQuestion(`Email verified? (Y/n, default is Y):
 
