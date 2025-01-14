@@ -1,167 +1,105 @@
-# LibreChat AWS Bedrock Integration Notes
+# AssistantService.js Investigation Notes
 
-## Architecture Overview
+## Module System
 
-- Model providers implemented as clients in api/app/clients/
-- Clients inherit from BaseClient class
-- Configuration handled through:
-  - librechat.yaml for endpoint config
-  - Environment variables for credentials
-  - Docker configuration for service setup
+- Uses CommonJS (require/module.exports)
+- Imports from librechat-data-provider and local services
+- New files should maintain CommonJS pattern for consistency
 
-## Configuration Structure
+## Key Components
 
-### Environment Variables
+1. Message Progress Handling
 
-- AWS_ACCESS_KEY_ID: AWS access key for authentication
-- AWS_SECRET_ACCESS_KEY: AWS secret key for authentication
-Note: Agent IDs are now fetched dynamically from AWS Bedrock
+- createOnTextProgress: Manages streaming text responses
+- Uses contentParts and aggregateContent for message assembly
+- Maintains conversation state (messageId, parentMessageId)
 
-### librechat.yaml Configuration
+2. Response Management
 
-```yaml
-endpoints:
-  bedrockAgent:
-    - name: 'AWS Bedrock Agent'
-      agentId: '${AWS_BEDROCK_AGENT_ID}'
-      agentAliasId: '${AWS_BEDROCK_AGENT_ALIAS_ID}'
-      region: 'eu-central-1'
-      models:
-        default: ['bedrock-agent']
-        supported: ['bedrock-agent']
-      iconURL: '/assets/aws-bedrock.png'
-      modelDisplayLabel: 'AWS Bedrock Agent'
-```
+- getResponse: Handles run completion and required actions
+- Supports both completed messages and action requirements
+- Uses ThreadMessage[] for message handling
 
-### AWS SDK Configuration
+3. Step Management
 
-The BedrockAgentClient uses the following configuration:
+- filterSteps: Maintains unique, latest steps
+- RunManager for async operation management
+- Supports tool calls and message creation steps
 
-- Region: eu-central-1 (configured in librechat.yaml)
-- Credentials: Loaded from environment variables
-- Agent Configuration:
-  - Agent ID: From AWS_BEDROCK_AGENT_ID
-  - Agent Alias ID: From AWS_BEDROCK_AGENT_ALIAS_ID
+4. Streaming Implementation
 
-## AWS Bedrock Agent Capabilities
+- TextStream class for controlled text streaming
+- Progress callbacks for SSE message generation
+- Supports partial text updates
 
-1. Core Features:
+5. Tool Integration
 
-   - Natural language understanding
-   - Task orchestration
-   - API action execution
-   - Knowledge base integration
-   - Memory/session management
+- Handles tool calls (function, code interpreter)
+- Processes image generation and file outputs
+- Maintains tool call state and progress
 
-2. API Components:
+## Dependencies Location
 
-   - bedrock-agent: Control plane for agent management
-   - bedrock-agent-runtime: Data plane for agent invocation
-   - Key commands:
-     - InvokeAgentCommand: Main chat interaction
-     - RetrieveAndGenerateCommand: Knowledge base queries
-     - GetAgentMemoryCommand: Session management
+- Backend dependencies should be managed in api/server directory
+- Frontend in client directory
+- No root-level package installations
 
-3. Streaming Support:
-   - Supported for orchestration prompts
-   - Response in bytes field of chunk object
-   - Session continuity via sessionId
-   - Limitations:
-     - Not supported for pre/post processing
-     - Limited with knowledge base + user input
+## Key Patterns to Adopt
 
-## Integration Points
+1. State Management
 
-1. Client Implementation (BedrockAgentClient):
+- Track message and conversation IDs
+- Maintain tool call progress
+- Handle streaming state
 
-   - Location: api/app/clients/
-   - Extend BaseClient
-   - Key methods:
-     - constructor (AWS credentials, agent config)
-     - sendMessage (InvokeAgentCommand)
-     - getTokenCount (agent-specific counting)
-     - getCompletion (streaming support)
+2. Error Handling
 
-2. Configuration:
+- Specific error types (ConfigurationError)
+- Comprehensive error information in responses
+- Status tracking for operations
 
-   - librechat.yaml:
-     - Agent endpoint definition
-     - Model configuration
-     - Knowledge base settings
-   - Environment:
-     - AWS credentials
-     - Region configuration
-     - Agent/Knowledge Base IDs
+3. Response Processing
 
-3. Message Handling:
+- Message aggregation and sorting
+- Content type handling (text, images, tool calls)
+- Stream processing with progress tracking
 
-   - Streaming response implementation
-   - Session management via sessionId
-   - Memory/context handling
-   - Error handling and retries
+4. Configuration
 
-4. Frontend Updates:
-   - Model selection UI
-   - Agent configuration options
-   - Knowledge base integration UI
-   - Session management
+- Environment variable validation
+- Endpoint configuration management
+- Client initialization patterns
 
-## Implementation Strategy
+## AWS Bedrock Agent Integration Points
 
-1. Phase 1 - Basic Integration:
+1. Required Components
 
-   - Single agent support
-   - Basic chat functionality
-   - Streaming responses
-   - Session management
+- BedrockAgentClient (similar to OpenAIClient)
+- Response streaming handler
+- Tool call processor
+- Run/Step management
 
-2. Phase 2 - Advanced Features:
-   - Knowledge base integration
-   - Multiple agent support
-   - Action group configuration
-   - Enhanced error handling
+2. Configuration Needs
 
-## Questions to Resolve
+- Agent/Alias ID management
+- AWS credentials handling
+- Region configuration
 
-1. Agent configuration format in librechat.yaml
-2. Token counting strategy for Bedrock
-3. Error handling and retry logic
-4. Frontend configuration options
-5. Testing and validation approach
+3. Streaming Requirements
 
-## Message Routing and UI Contexts
+- Implement TextStream equivalent
+- Progress callback system
+- Content aggregation
 
-1. Message Flow:
+4. Error Management
 
-   - User input captured in ChatForm.tsx
-   - Processed through useSubmitMessage hook
-   - Routed via useChatFunctions.ts
-   - Handled by appropriate client (BedrockAgentClient)
+- AWS-specific error handling
+- Status code processing
+- Request/Response validation
 
-2. Provider Selection:
+## Testing Approach
 
-   - ModelSelect.tsx renders provider-specific components
-   - useSelectMention.ts manages endpoint switching
-   - Conversation state tracked in conversation.ts
-   - Provider-specific settings in BedrockAgent.tsx
-
-3. Routing Decision Flow:
-
-   - Based on conversation.endpoint and endpointType
-   - Validates endpoint configuration
-   - Checks agent availability
-   - Constructs appropriate payload
-
-4. UI Context Management:
-   - Provider-specific components (BedrockAgent.tsx)
-   - Dynamic settings forms
-   - Real-time validation
-   - Session state tracking
-
-## Next Steps
-
-1. Define configuration schema
-2. Implement BedrockAgentClient
-3. Add streaming support
-4. Create frontend components
-5. Test and validate integration
+- Validate AWS credentials
+- Test agent responses
+- Verify streaming functionality
+- Check tool call processing
