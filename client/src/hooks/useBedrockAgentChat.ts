@@ -1,9 +1,9 @@
 import { useMutation } from '@tanstack/react-query';
-import { invokeBedrockAgentChat } from 'librechat-data-provider/react-query';
+import { dataService } from 'librechat-data-provider';
 
 export const useBedrockAgentChat = () => {
   return useMutation({
-    mutationFn: invokeBedrockAgentChat,
+    mutationFn: dataService.invokeBedrockAgentChat,
   });
 };
 

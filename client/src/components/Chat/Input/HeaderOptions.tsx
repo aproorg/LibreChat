@@ -28,24 +28,9 @@ export default function HeaderOptions({
   );
   const localize = useLocalize();
 
-  const { showPopover, conversation, latestMessage, setShowPopover, setShowBingToneSetting, addMessage, setGenerating } =
+  const { showPopover, conversation, latestMessage, setShowPopover, setShowBingToneSetting } =
     useChatContext();
-  const { mutate: invokeAgent } = useBedrockAgentChat({
-    onMutate: () => {
-      setGenerating(true);
-    },
-    onSuccess: (data) => {
-      if (data?.text) {
-        addMessage(data);
-      }
-      setGenerating(false);
-    },
-    onError: (error) => {
-      console.error('BedrockAgent error:', error);
-      addMessage({ error: true, text: error.message || 'Error invoking Bedrock Agent' });
-      setGenerating(false);
-    },
-  });
+  const { mutate: invokeAgent } = useBedrockAgentChat();
   const { setOption } = useSetIndexOptions();
   const { endpoint, conversationId, jailbreak = false } = conversation ?? {};
 

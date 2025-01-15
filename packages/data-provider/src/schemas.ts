@@ -13,6 +13,13 @@ export enum AuthType {
 
 export const authTypeSchema = z.nativeEnum(AuthType);
 
+export enum ECallState {
+  NONE = 'none',
+  CALLING = 'calling',
+  DONE = 'done',
+  ERROR = 'error'
+}
+
 export enum EModelEndpoint {
   azureOpenAI = 'azureOpenAI',
   openAI = 'openAI',
