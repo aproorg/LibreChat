@@ -2,14 +2,11 @@ import { useMemo } from 'react';
 import { EModelEndpoint } from 'librechat-data-provider';
 import { useBedrockAgents } from '~/hooks';
 import type { TModelSelectProps } from '~/common';
-import {
-  SelectDropDown,
-  SliderInput,
-  InputNumber,
-  OptionHover,
-} from '~/components/Input';
-import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
+import { SelectDropDown, InputNumber } from '../../ui';
+import OptionHover from './OptionHover';
+import { useLocalize } from '../../../hooks';
+import { cn } from '../../../utils';
+import { Slider } from '../../ui/Slider';
 
 export default function Settings({ conversation, setOption, models, readonly }: TModelSelectProps) {
   const localize = useLocalize();
@@ -39,6 +36,7 @@ export default function Settings({ conversation, setOption, models, readonly }: 
         max: 1,
         step: 0.01,
         onChange: (value: number) => setOption('temperature', value),
+        component: Slider,
       },
       {
         type: 'number',
@@ -81,12 +79,12 @@ export default function Settings({ conversation, setOption, models, readonly }: 
               />
             )}
             {param.type === 'slider' && (
-              <SliderInput
+              <param.component
                 value={param.value}
                 min={param.min}
                 max={param.max}
                 step={param.step}
-                onChange={param.onChange}
+                onValueChange={param.onChange}
                 disabled={readonly}
               />
             )}

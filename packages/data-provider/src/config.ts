@@ -165,6 +165,16 @@ export type TBaseEndpoint = z.infer<typeof baseEndpointSchema>;
 
 export const bedrockEndpointSchema = baseEndpointSchema.merge(
   z.object({
+    name: z.string(),
+    region: z.string(),
+    models: z.object({
+      default: z.array(z.string()).min(1),
+      supported: z.array(z.string()).min(1),
+    }),
+    iconURL: z.string().optional(),
+    modelDisplayLabel: z.string().optional(),
+    agentId: z.string(),
+    agentAliasId: z.string().optional(),
     availableRegions: z.array(z.string()).optional(),
   }),
 );
@@ -552,6 +562,7 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
+      [EModelEndpoint.bedrockAgent]: z.array(bedrockEndpointSchema).optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {

@@ -39,10 +39,13 @@ const startServer = async () => {
   app.disable('x-powered-by');
   await AppService(app);
 
-  const indexPath = path.join(app.locals.paths.dist, 'index.html');
-  const indexHTML = fs.readFileSync(indexPath, 'utf8');
-
   app.get('/health', (_req, res) => res.status(200).send('OK'));
+
+  let indexHTML = '';
+  if (process.env.NODE_ENV === 'production') {
+    const indexPath = path.join(app.locals.paths.dist, 'index.html');
+    indexHTML = fs.readFileSync(indexPath, 'utf8');
+  }
 
   /* Middleware */
   app.use(noIndex);
@@ -111,19 +114,21 @@ const startServer = async () => {
 
   app.use('/api/tags', routes.tags);
 
-  app.use((req, res) => {
-    res.set({
-      'Cache-Control': process.env.INDEX_CACHE_CONTROL || 'no-cache, no-store, must-revalidate',
-      Pragma: process.env.INDEX_PRAGMA || 'no-cache',
-      Expires: process.env.INDEX_EXPIRES || '0',
-    });
+  if (process.env.NODE_ENV === 'production') {
+    app.use((req, res) => {
+      res.set({
+        'Cache-Control': process.env.INDEX_CACHE_CONTROL || 'no-cache, no-store, must-revalidate',
+        Pragma: process.env.INDEX_PRAGMA || 'no-cache',
+        Expires: process.env.INDEX_EXPIRES || '0',
+      });
 
-    const lang = req.cookies.lang || req.headers['accept-language']?.split(',')[0] || 'en-US';
-    const saneLang = lang.replace(/"/g, '&quot;');
-    const updatedIndexHtml = indexHTML.replace(/lang="en-US"/g, `lang="${saneLang}"`);
-    res.type('html');
-    res.send(updatedIndexHtml);
-  });
+      const lang = req.cookies.lang || req.headers['accept-language']?.split(',')[0] || 'en-US';
+      const saneLang = lang.replace(/"/g, '&quot;');
+      const updatedIndexHtml = indexHTML.replace(/lang="en-US"/g, `lang="${saneLang}"`);
+      res.type('html');
+      res.send(updatedIndexHtml);
+    });
+  }
 
   app.listen(port, host, () => {
     if (host == '0.0.0.0') {
