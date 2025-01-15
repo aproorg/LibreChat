@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { EModelEndpoint } from 'librechat-data-provider';
+import { useBedrockAgents } from '~/hooks';
 import type { TModelSelectProps } from '~/common';
 import {
   SelectDropDown,
@@ -13,6 +14,8 @@ import { cn } from '~/utils';
 export default function Settings({ conversation, setOption, models, readonly }: TModelSelectProps) {
   const localize = useLocalize();
 
+  const { data: agents = [] } = useBedrockAgents();
+
   const parameters = useMemo(() => {
     return [
       {
@@ -20,9 +23,10 @@ export default function Settings({ conversation, setOption, models, readonly }: 
         label: localize('com_endpoint_agent_select'),
         description: localize('com_endpoint_agent_select_helper'),
         value: conversation?.agent_id ?? '',
-        options: models?.map((model) => ({
-          label: model,
-          value: model,
+        options: agents.map((agent) => ({
+          label: agent.agentName,
+          value: agent.agentId,
+          description: agent.description,
         })) ?? [],
         onChange: (value: string) => setOption('agent_id', value),
       },

@@ -459,3 +459,28 @@ export const useGetBannerQuery = (
     ...config,
   });
 };
+
+/**
+ * React Query hook for invoking Bedrock Agent chat
+ */
+export function useBedrockAgentChat() {
+  return useMutation({
+    mutationFn: dataService.invokeBedrockAgentChat,
+  });
+}
+
+/**
+ * React Query hook for fetching available Bedrock Agents
+ */
+type BedrockAgentsQueryKey = ['bedrockAgents'];
+
+export function useBedrockAgents() {
+  return useQuery<import('../types/bedrock').TBedrockAgent[], Error, import('../types/bedrock').TBedrockAgent[], BedrockAgentsQueryKey>(
+    ['bedrockAgents'],
+    () => dataService.getBedrockAgents(),
+    {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      refetchOnWindowFocus: false,
+    }
+  );
+}

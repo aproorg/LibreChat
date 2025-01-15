@@ -13,6 +13,8 @@ export * from './Plugins';
 export * from './Prompts';
 export * from './Roles';
 export * from './SSE';
+export { default as useBedrockAgents } from './useBedrockAgents';
+export { useBedrockAgentChat } from './useBedrockAgentChat';
 
 export * from './AuthContext';
 export * from './ThemeContext';

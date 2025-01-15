@@ -5,6 +5,7 @@ import * as a from './types/assistants';
 import * as m from './types/mutations';
 import * as q from './types/queries';
 import * as f from './types/files';
+import * as b from './types/bedrock';
 import * as config from './config';
 import request from './request';
 import * as s from './schemas';
@@ -539,6 +540,14 @@ export const getCodeOutputDownload = async (url: string): Promise<AxiosResponse>
   });
 };
 
+/**
+ * Fetches available Bedrock Agents
+ * @returns {Promise<b.TBedrockAgent[]>} List of available agents
+ */
+export const getBedrockAgents = (): Promise<b.TBedrockAgent[]> => {
+  return request.get(endpoints.bedrockAgents());
+};
+
 export const deleteFiles = async (payload: {
   files: f.BatchFile[];
   agent_id?: string;
@@ -641,6 +650,33 @@ export function archiveConversation(
 export function genTitle(payload: m.TGenTitleRequest): Promise<m.TGenTitleResponse> {
   return request.post(endpoints.genTitle(), payload);
 }
+
+/**
+ * Invokes a Bedrock Agent chat request
+ * @param {Object} payload - The request payload
+ * @param {string} [payload.agentId] - Optional Bedrock agent ID
+ * @param {string} [payload.agentAliasId] - Optional Bedrock agent alias ID
+ * @param {string} payload.prompt - The input text for the agent
+ * @param {string} [payload.sessionId] - Optional session ID for conversation tracking
+ * @returns {Promise<Object>} The agent's response
+ */
+export async function invokeBedrockAgentChat(payload: {
+  agentId?: string;
+  agentAliasId?: string;
+  prompt: string;
+  sessionId?: string;
+}) {
+  return request.post(endpoints.bedrockAgentChat(), {
+    ...payload,
+    endpointType: 'bedrockAgent',
+  });
+}
+
+/**
+ * Fetches available Bedrock Agents
+ * @returns {Promise<import('./types/bedrock').TBedrockAgent[]>} List of available agents
+ */
+// Removed duplicate getBedrockAgents function
 
 export function getPrompt(id: string): Promise<{ prompt: t.TPrompt }> {
   return request.get(endpoints.getPrompt(id));

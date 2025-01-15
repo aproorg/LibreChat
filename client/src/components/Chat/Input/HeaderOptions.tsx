@@ -1,6 +1,7 @@
 import { useRecoilState } from 'recoil';
 import { Settings2 } from 'lucide-react';
 import { Root, Anchor } from '@radix-ui/react-popover';
+import { useBedrockAgentChat } from '~/hooks';
 import { useState, useEffect, useMemo } from 'react';
 import { useGetEndpointsQuery } from 'librechat-data-provider/react-query';
 import { tConvoUpdateSchema, EModelEndpoint, isParamEndpoint } from 'librechat-data-provider';
@@ -27,8 +28,24 @@ export default function HeaderOptions({
   );
   const localize = useLocalize();
 
-  const { showPopover, conversation, latestMessage, setShowPopover, setShowBingToneSetting } =
+  const { showPopover, conversation, latestMessage, setShowPopover, setShowBingToneSetting, addMessage, setGenerating } =
     useChatContext();
+  const { mutate: invokeAgent } = useBedrockAgentChat({
+    onMutate: () => {
+      setGenerating(true);
+    },
+    onSuccess: (data) => {
+      if (data?.text) {
+        addMessage(data);
+      }
+      setGenerating(false);
+    },
+    onError: (error) => {
+      console.error('BedrockAgent error:', error);
+      addMessage({ error: true, text: error.message || 'Error invoking Bedrock Agent' });
+      setGenerating(false);
+    },
+  });
   const { setOption } = useSetIndexOptions();
   const { endpoint, conversationId, jailbreak = false } = conversation ?? {};
 
@@ -44,6 +61,7 @@ export default function HeaderOptions({
     () => ({
       [EModelEndpoint.chatGPTBrowser]: true,
       [EModelEndpoint.bingAI]: jailbreak ? false : conversationId !== 'new',
+      [EModelEndpoint.bedrockAgent]: false,
     }),
     [jailbreak, conversationId],
   );
