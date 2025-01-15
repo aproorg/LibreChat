@@ -44,7 +44,7 @@
     "frontend:dev": "scripts/dev.sh frontend",
     "backend:dev": "scripts/dev.sh backend",
     "backend:stop": "node config/stop-backend.js",
-    "build:data-provider": "cd packages/data-provider && yarn build",
+    "build:data-provider": "yarn workspace librechat-data-provider build",
     "build:mcp": "cd packages/mcp && yarn build",
     "frontend": "yarn build:data-provider && yarn build:mcp && cd client && yarn build",
     "frontend:ci": "yarn build:data-provider && cd client && yarn build:ci",

@@ -759,6 +759,7 @@ export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
   [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
   [EModelEndpoint.bedrock]: `/api/${EModelEndpoint.bedrock}/chat`,
+  [EModelEndpoint.bedrockAgent]: `/api/${EModelEndpoint.bedrockAgent}/chat`,
 };
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([
@@ -770,6 +771,7 @@ export const modularEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.custom,
   EModelEndpoint.agents,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
 ]);
 
 export const supportsBalanceCheck = {
@@ -782,6 +784,7 @@ export const supportsBalanceCheck = {
   [EModelEndpoint.azureAssistants]: true,
   [EModelEndpoint.azureOpenAI]: true,
   [EModelEndpoint.bedrock]: true,
+  [EModelEndpoint.bedrockAgent]: true,
 };
 
 export const visionModels = [
