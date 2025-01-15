@@ -513,6 +513,11 @@ export const configSchema = z.object({
   mcpServers: MCPServersSchema.optional(),
   interface: intefaceSchema,
   fileStrategy: fileSourceSchema.default(FileSources.local),
+  bedrockAgent: z.object({
+    agentId: z.string(),
+    agentAliasId: z.string(),
+    region: z.string(),
+  }).optional(),
   actions: z
     .object({
       allowedDomains: z.array(z.string()).optional(),
@@ -605,6 +610,7 @@ export const defaultEndpoints: EModelEndpoint[] = [
 
 export const alternateName = {
   [EModelEndpoint.openAI]: 'OpenAI',
+  [EModelEndpoint.bedrockAgent]: 'AWS Bedrock Agent',
   [EModelEndpoint.assistants]: 'Assistants',
   [EModelEndpoint.agents]: 'Agents',
   [EModelEndpoint.azureAssistants]: 'Azure Assistants',

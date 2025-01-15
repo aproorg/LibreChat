@@ -3,6 +3,7 @@ import type { FC } from 'react';
 import type { TModelSelectProps } from '~/common';
 import { GoogleSettings, PluginSettings } from './MultiView';
 import AssistantsSettings from './Assistants';
+import BedrockAgentSettings from './BedrockAgent';
 import AnthropicSettings from './Anthropic';
 import BedrockSettings from './Bedrock';
 import BingAISettings from './BingAI';
@@ -10,6 +11,7 @@ import OpenAISettings from './OpenAI';
 
 const settings: { [key: string]: FC<TModelSelectProps> | undefined } = {
   [EModelEndpoint.assistants]: AssistantsSettings,
+  [EModelEndpoint.bedrockAgent]: BedrockAgentSettings,
   [EModelEndpoint.azureAssistants]: AssistantsSettings,
   [EModelEndpoint.agents]: OpenAISettings,
   [EModelEndpoint.openAI]: OpenAISettings,

@@ -8,11 +8,13 @@ import Google from './Google';
 import ChatGPT from './ChatGPT';
 import Anthropic from './Anthropic';
 import PluginsByIndex from './PluginsByIndex';
+import BedrockAgent from './BedrockAgent';
 
 export const options: { [key: string]: FC<TModelSelectProps> } = {
   [EModelEndpoint.openAI]: OpenAI,
   [EModelEndpoint.custom]: OpenAI,
   [EModelEndpoint.bedrock]: OpenAI,
+  [EModelEndpoint.bedrockAgent]: BedrockAgent,
   [EModelEndpoint.azureOpenAI]: OpenAI,
   [EModelEndpoint.bingAI]: BingAI,
   [EModelEndpoint.google]: Google,

@@ -74,5 +74,6 @@ export const icons = {
   [EModelEndpoint.azureAssistants]: AssistantAvatar,
   [EModelEndpoint.agents]: AgentAvatar,
   [EModelEndpoint.bedrock]: Bedrock,
+  [EModelEndpoint.bedrockAgent]: Bedrock,
   unknown: UnknownIcon,
 };

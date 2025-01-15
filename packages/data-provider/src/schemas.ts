@@ -23,6 +23,7 @@ export enum EModelEndpoint {
   agents = 'agents',
   custom = 'custom',
   bedrock = 'bedrock',
+  bedrockAgent = 'bedrockAgent',
   /** @deprecated */
   bingAI = 'bingAI',
   /** @deprecated */
@@ -35,6 +36,7 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.agents,
   EModelEndpoint.openAI,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgent,
   EModelEndpoint.azureOpenAI,
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
@@ -350,12 +352,40 @@ export const agentsSettings = {
   },
 };
 
+export const bedrockAgentSettings = {
+  model: {
+    default: 'bedrock-agent',
+  },
+  temperature: {
+    min: 0,
+    max: 1,
+    step: 0.01,
+    default: 1,
+  },
+  maxOutputTokens: {
+    min: 1,
+    max: 4096,
+    step: 1,
+    default: 4096,
+  },
+  resendFiles: {
+    default: true,
+  },
+  maxContextTokens: {
+    default: undefined,
+  },
+  imageDetail: {
+    default: ImageDetail.auto,
+  },
+};
+
 export const endpointSettings = {
   [EModelEndpoint.openAI]: openAISettings,
   [EModelEndpoint.google]: googleSettings,
   [EModelEndpoint.anthropic]: anthropicSettings,
   [EModelEndpoint.agents]: agentsSettings,
   [EModelEndpoint.bedrock]: agentsSettings,
+  [EModelEndpoint.bedrockAgent]: bedrockAgentSettings,
 };
 
 const google = endpointSettings[EModelEndpoint.google];
