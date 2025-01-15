@@ -3,6 +3,9 @@
 GIT_ROOT=$(git rev-parse --show-toplevel)
 source "${GIT_ROOT}/.env"
 
+API_WORKSPACE="@librechat/backend"
+CLIENT_WORKSPACE="@librechat/frontend"
+
 kill_port() {
   local port=$1
   if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -26,12 +29,12 @@ case "$1" in
 backend)
   echo "Restarting backend..."
   kill_port 3080
-  PORT=3080 npm run backend:dev
+  PORT=3080 yarn workspace $API_WORKSPACE run dev
   ;;
 frontend)
   echo "Restarting frontend..."
   kill_port 3090
-  PORT=3090 npm run frontend:dev
+  PORT=3090 yarn workspace $CLIENT_WORKSPACE run dev
   ;;
 *)
   echo "Invalid argument. Use 'backend' or 'frontend'."

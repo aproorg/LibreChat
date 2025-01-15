@@ -3,6 +3,7 @@
   "version": "v0.7.6",
   "description": "",
   "scripts": {
+    "dev": "cross-env NODE_ENV=development nodemon server/index.js",
     "start": "echo 'please run this from the root directory'",
     "server-dev": "echo 'please run this from the root directory'",
     "test": "cross-env NODE_ENV=test jest",
