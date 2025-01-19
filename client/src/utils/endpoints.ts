@@ -77,7 +77,11 @@ export function getEndpointField<K extends keyof t.TConfig>(
 
 export function mapEndpoints(endpointsConfig: t.TEndpointsConfig) {
   const filter = getEndpointsFilter(endpointsConfig);
-  return getAvailableEndpoints(filter, endpointsConfig).sort(
+  console.log('Endpoints Filter:', filter);
+  console.log('Endpoints Config:', endpointsConfig);
+  const endpoints = getAvailableEndpoints(filter, endpointsConfig);
+  console.log('Available Endpoints:', endpoints);
+  return endpoints.sort(
     (a, b) => (endpointsConfig?.[a]?.order ?? 0) - (endpointsConfig?.[b]?.order ?? 0),
   );
 }

@@ -23,6 +23,7 @@ export enum EModelEndpoint {
   agents = 'agents',
   custom = 'custom',
   bedrock = 'bedrock',
+  bedrockAgents = 'bedrockAgents',
   /** @deprecated */
   bingAI = 'bingAI',
   /** @deprecated */
@@ -35,6 +36,7 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.agents,
   EModelEndpoint.openAI,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgents,
   EModelEndpoint.azureOpenAI,
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
@@ -356,6 +358,7 @@ export const endpointSettings = {
   [EModelEndpoint.anthropic]: anthropicSettings,
   [EModelEndpoint.agents]: agentsSettings,
   [EModelEndpoint.bedrock]: agentsSettings,
+  [EModelEndpoint.bedrockAgents]: agentsSettings,
 };
 
 const google = endpointSettings[EModelEndpoint.google];

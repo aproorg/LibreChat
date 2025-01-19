@@ -21,6 +21,7 @@ export enum QueryKeys {
   assistant = 'assistant',
   agents = 'agents',
   agent = 'agent',
+  bedrockAgents = 'bedrockAgents',
   endpointsConfigOverride = 'endpointsConfigOverride',
   files = 'files',
   fileConfig = 'fileConfig',

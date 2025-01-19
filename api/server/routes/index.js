@@ -9,6 +9,7 @@ const prompts = require('./prompts');
 const balance = require('./balance');
 const plugins = require('./plugins');
 const bedrock = require('./bedrock');
+const bedrockAgents = require('./endpoints/bedrockAgents');
 const search = require('./search');
 const models = require('./models');
 const convos = require('./convos');
@@ -39,6 +40,7 @@ module.exports = {
   share,
   agents,
   bedrock,
+  bedrockAgents,
   convos,
   search,
   prompts,

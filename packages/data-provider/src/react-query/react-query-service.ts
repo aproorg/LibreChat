@@ -243,6 +243,18 @@ export const useGetModelsQuery = (
   });
 };
 
+export const useListBedrockAgentsQuery = (
+  config?: UseQueryOptions<t.TModelsConfig>,
+): QueryObserverResult<t.TModelsConfig> => {
+  return useQuery<t.TModelsConfig>([QueryKeys.bedrockAgents], () => dataService.getBedrockAgents(), {
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    staleTime: Infinity,
+    ...config,
+  });
+};
+
 export const useCreatePresetMutation = (): UseMutationResult<
   s.TPreset,
   unknown,

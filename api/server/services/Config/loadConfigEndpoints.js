@@ -59,6 +59,13 @@ async function loadConfigEndpoints(req) {
     };
   }
 
+  if (req.app.locals[EModelEndpoint.bedrockAgents]) {
+    /** @type {Omit<TConfig, 'order'>} */
+    endpointsConfig[EModelEndpoint.bedrockAgents] = {
+      userProvide: false,
+    };
+  }
+
   return endpointsConfig;
 }
 
