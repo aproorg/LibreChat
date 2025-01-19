@@ -547,6 +547,7 @@ export const configSchema = z.object({
       [EModelEndpoint.agents]: agentsEndpointSChema.optional(),
       [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
+      [EModelEndpoint.bedrockAgents]: agentsEndpointSChema.optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
@@ -601,6 +602,7 @@ export const defaultEndpoints: EModelEndpoint[] = [
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgents,
 ];
 
 export const alternateName = {
@@ -616,6 +618,7 @@ export const alternateName = {
   [EModelEndpoint.anthropic]: 'Anthropic',
   [EModelEndpoint.custom]: 'Custom',
   [EModelEndpoint.bedrock]: 'AWS Bedrock',
+  [EModelEndpoint.bedrockAgents]: 'AWS Bedrock Agents',
   [KnownEndpoints.ollama]: 'Ollama',
   [KnownEndpoints.xai]: 'xAI',
 };
@@ -738,6 +741,7 @@ export const initialModelsConfig: TModelsConfig = {
   [EModelEndpoint.google]: defaultModels[EModelEndpoint.google],
   [EModelEndpoint.anthropic]: defaultModels[EModelEndpoint.anthropic],
   [EModelEndpoint.bedrock]: defaultModels[EModelEndpoint.bedrock],
+  [EModelEndpoint.bedrockAgents]: ['FZUSVDW4SR'],
 };
 
 export const EndpointURLs: { [key in EModelEndpoint]: string } = {
@@ -753,6 +757,7 @@ export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
   [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
   [EModelEndpoint.bedrock]: `/api/${EModelEndpoint.bedrock}/chat`,
+  [EModelEndpoint.bedrockAgents]: `/api/${EModelEndpoint.bedrockAgents}/chat`,
 };
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([
@@ -764,6 +769,7 @@ export const modularEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.custom,
   EModelEndpoint.agents,
   EModelEndpoint.bedrock,
+  EModelEndpoint.bedrockAgents,
 ]);
 
 export const supportsBalanceCheck = {
@@ -776,6 +782,7 @@ export const supportsBalanceCheck = {
   [EModelEndpoint.azureAssistants]: true,
   [EModelEndpoint.azureOpenAI]: true,
   [EModelEndpoint.bedrock]: true,
+  [EModelEndpoint.bedrockAgents]: true,
 };
 
 export const visionModels = [
