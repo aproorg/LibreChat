@@ -59,11 +59,18 @@ async function loadConfigEndpoints(req) {
     };
   }
 
+  console.log('Loading endpoints config...');
+  console.log('App locals:', req.app.locals);
+  
   if (req.app.locals[EModelEndpoint.bedrockAgents]) {
+    console.log('Found bedrockAgents in app.locals');
     /** @type {Omit<TConfig, 'order'>} */
     endpointsConfig[EModelEndpoint.bedrockAgents] = {
       userProvide: false,
+      order: 2,
     };
+  } else {
+    console.log('bedrockAgents not found in app.locals');
   }
 
   return endpointsConfig;

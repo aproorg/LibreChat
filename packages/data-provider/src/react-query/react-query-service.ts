@@ -3,6 +3,7 @@ import type {
   UseQueryOptions,
   UseMutationResult,
   QueryObserverResult,
+  QueryKey,
 } from '@tanstack/react-query';
 import { initialModelsConfig, LocalStorageKeys } from '../config';
 import type { TStartupConfig } from '../config';
@@ -244,13 +245,33 @@ export const useGetModelsQuery = (
 };
 
 export const useListBedrockAgentsQuery = (
-  config?: UseQueryOptions<t.TModelsConfig>,
-): QueryObserverResult<t.TModelsConfig> => {
-  return useQuery<t.TModelsConfig>([QueryKeys.bedrockAgents], () => dataService.getBedrockAgents(), {
+  config?: UseQueryOptions<t.TBedrockAgent[]>,
+): QueryObserverResult<t.TBedrockAgent[]> => {
+  return useQuery<t.TBedrockAgent[]>([QueryKeys.bedrockAgents], async () => {
+    console.log('Fetching Bedrock agents...');
+    try {
+      const response = await dataService.getBedrockAgents();
+      console.log('Bedrock agents response:', response);
+      if (!Array.isArray(response)) {
+        console.warn('Invalid response format:', response);
+        throw new Error('Invalid response format');
+      }
+      return response;
+    } catch (error) {
+      console.error('Error fetching Bedrock agents:', error);
+      console.warn('Using fallback agent');
+      return [{
+        id: 'FZUSVDW4SR',
+        name: 'AWS Services Agent'
+      }];
+    }
+  }, {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
     staleTime: Infinity,
+    retry: 1,
+    retryDelay: 1000,
     ...config,
   });
 };

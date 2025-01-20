@@ -757,7 +757,7 @@ export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
   [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
   [EModelEndpoint.bedrock]: `/api/${EModelEndpoint.bedrock}/chat`,
-  [EModelEndpoint.bedrockAgents]: `/api/${EModelEndpoint.bedrockAgents}/chat`,
+  [EModelEndpoint.bedrockAgents]: `/api/endpoints/${EModelEndpoint.bedrockAgents}/chat`,
 };
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([

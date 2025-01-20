@@ -53,25 +53,21 @@ const initializeClient = async ({ req, res, endpointOption }) => {
       model: endpointOption.model_parameters.model,
     });
 
-  const client = new AgentClient({
-    req,
-    agent,
-    sender,
-    // tools,
-    contentParts,
-    eventHandlers,
-    collectedUsage,
-    spec: endpointOption.spec,
-    iconURL: endpointOption.iconURL,
-    endpoint: EModelEndpoint.bedrockAgents,
-    resendFiles: endpointOption.resendFiles,
-    maxContextTokens:
-      endpointOption.maxContextTokens ??
-      agent.max_context_tokens ??
-      getModelMaxTokens(agent.model_parameters.model, providerEndpointMap[agent.provider]) ??
-      4000,
-    attachments: endpointOption.attachments,
+  const config = {
+    region: process.env.BEDROCK_AWS_DEFAULT_REGION || process.env.AWS_REGION || 'eu-central-1',
+    credentials: {
+      accessKeyId: process.env.BEDROCK_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY,
+    }
+  };
+
+  console.log('Initializing BedrockAgentsClient with config:', {
+    region: config.region,
+    hasAccessKey: !!config.credentials.accessKeyId,
+    hasSecretKey: !!config.credentials.secretAccessKey
   });
+
+  const client = new BedrockAgentsClient(config);
   return { client };
 };
 

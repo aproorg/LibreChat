@@ -1,5 +1,5 @@
 import { useGetModelsQuery, useListBedrockAgentsQuery } from 'librechat-data-provider/react-query';
-import type { TConversation } from 'librechat-data-provider';
+import type { TConversation, TBedrockAgent } from 'librechat-data-provider';
 import { EModelEndpoint } from 'librechat-data-provider';
 import type { TSetOption } from '~/common';
 import { multiChatOptions } from './options';
@@ -26,6 +26,13 @@ export default function ModelSelect({
   const modelsQuery = useGetModelsQuery();
   const bedrockAgentsQuery = useListBedrockAgentsQuery();
 
+  console.log('ModelSelect - Queries:', {
+    bedrockAgentsQuery: bedrockAgentsQuery?.data,
+    bedrockAgentsStatus: bedrockAgentsQuery?.status,
+    bedrockAgentsError: bedrockAgentsQuery?.error,
+    modelsQuery: modelsQuery?.data,
+  });
+
   if (!conversation?.endpoint) {
     return null;
   }
@@ -35,8 +42,15 @@ export default function ModelSelect({
   
   // Use bedrockAgents query for the bedrockAgents endpoint
   const models = endpoint === EModelEndpoint.bedrockAgents
-    ? bedrockAgentsQuery?.data?.bedrockAgents ?? []
+    ? (bedrockAgentsQuery?.data ?? []) as Array<string | TBedrockAgent>
     : modelsQuery?.data?.[_endpoint] ?? [];
+
+  console.log('ModelSelect - Selected models:', {
+    endpoint,
+    endpointType,
+    models,
+    isBedrockAgents: endpoint === EModelEndpoint.bedrockAgents
+  });
 
   const OptionComponent = multiChatOptions[endpoint];
 

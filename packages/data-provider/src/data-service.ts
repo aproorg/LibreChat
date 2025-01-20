@@ -181,8 +181,41 @@ export const getAIEndpoints = (): Promise<t.TEndpointsConfig> => {
   return request.get(endpoints.aiEndpoints());
 };
 
-export const getBedrockAgents = async (): Promise<t.TModelsConfig> => {
-  return request.get(endpoints.bedrockAgents());
+import type { AxiosError } from 'axios';
+
+export const getBedrockAgents = async (): Promise<t.TBedrockAgent[]> => {
+  console.log('Calling bedrockAgents models endpoint...');
+  try {
+    const response = await request.get(endpoints.bedrockAgentsModels());
+    console.log('BedrockAgents response:', response);
+    if (!Array.isArray(response)) {
+      console.warn('Invalid response format, using fallback:', response);
+      return [{
+        id: 'FZUSVDW4SR',
+        name: 'AWS Services Agent'
+      }];
+    }
+    return response;
+  } catch (error: any) {
+    console.error('Error fetching Bedrock agents:', error);
+    if (error?.response?.status === 404) {
+      console.warn('Endpoint not found, retrying with fallback URL');
+      try {
+        const fallbackResponse = await request.get('/api/endpoints/bedrockAgents/models');
+        console.log('BedrockAgents fallback response:', fallbackResponse);
+        if (Array.isArray(fallbackResponse)) {
+          return fallbackResponse;
+        }
+      } catch (fallbackError) {
+        console.error('Fallback request failed:', fallbackError);
+      }
+    }
+    console.warn('Using hardcoded fallback agent');
+    return [{
+      id: 'FZUSVDW4SR',
+      name: 'AWS Services Agent'
+    }];
+  }
 };
 
 export const getModels = async (): Promise<t.TModelsConfig> => {

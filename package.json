@@ -126,6 +126,9 @@
     ]
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock": "^3.731.1",
+    "@aws-sdk/client-bedrock-agent": "^3.731.1",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.731.1",
     "dotenv": "^16.4.7",
     "librechat-mcp": "^1.0.0"
   }

@@ -66,7 +66,14 @@ export const aiEndpoints = () => '/api/endpoints';
 export const endpointsConfigOverride = () => '/api/endpoints/config/override';
 
 export const models = () => '/api/models';
-export const bedrockAgents = () => '/api/bedrockAgents';
+/**
+ * Get available Bedrock agents
+ * @returns {string} The API endpoint for Bedrock agents
+ */
+export const bedrockAgentsModels = () => '/api/endpoints/bedrockAgents/models';
+export const bedrockAgentsChat = () => '/api/endpoints/bedrockAgents/chat';
+export const bedrockAgents = () => '/api/endpoints/bedrockAgents';
+export const bedrockAgentsConfig = () => '/api/endpoints/bedrockAgents/config';
 
 export const tokenizer = () => '/api/tokenizer';
 

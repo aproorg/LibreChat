@@ -76,9 +76,14 @@ export function getEndpointField<K extends keyof t.TConfig>(
 }
 
 export function mapEndpoints(endpointsConfig: t.TEndpointsConfig) {
+  if (!endpointsConfig) {
+    console.warn('Endpoints config is undefined!');
+    return [];
+  }
   const filter = getEndpointsFilter(endpointsConfig);
   console.log('Endpoints Filter:', filter);
   console.log('Endpoints Config:', endpointsConfig);
+  console.log('Has bedrockAgents?', endpointsConfig.bedrockAgents);
   const endpoints = getAvailableEndpoints(filter, endpointsConfig);
   console.log('Available Endpoints:', endpoints);
   return endpoints.sort(

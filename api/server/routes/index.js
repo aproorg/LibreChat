@@ -9,7 +9,6 @@ const prompts = require('./prompts');
 const balance = require('./balance');
 const plugins = require('./plugins');
 const bedrock = require('./bedrock');
-const bedrockAgents = require('./endpoints/bedrockAgents');
 const search = require('./search');
 const models = require('./models');
 const convos = require('./convos');
@@ -22,38 +21,42 @@ const share = require('./share');
 const tags = require('./tags');
 const auth = require('./auth');
 const edit = require('./edit');
+const banner = require('./banner');
+const ask = require('./ask');
 const keys = require('./keys');
 const user = require('./user');
-const ask = require('./ask');
-const banner = require('./banner');
+
+// Ensure endpoints.bedrockAgents is available
+if (!endpoints.bedrockAgents) {
+  console.error('bedrockAgents router not found in endpoints');
+}
 
 module.exports = {
-  ask,
-  edit,
-  auth,
-  keys,
-  user,
-  tags,
+  assistants,
+  categories,
+  tokenizer,
+  endpoints,
+  staticRoute,
+  messages,
+  presets,
+  prompts,
+  balance,
+  plugins,
+  bedrock,
+  search,
+  models,
+  convos,
+  config,
+  agents,
   roles,
   oauth,
   files,
   share,
-  agents,
-  bedrock,
-  bedrockAgents,
-  convos,
-  search,
-  prompts,
-  config,
-  models,
-  plugins,
-  presets,
-  balance,
-  messages,
-  endpoints,
-  tokenizer,
-  assistants,
-  categories,
-  staticRoute,
+  tags,
+  auth,
+  edit,
   banner,
+  ask,
+  keys,
+  user,
 };

@@ -1,10 +1,16 @@
 import React from 'react';
 import type { TModelSelectProps, Option } from '~/common/types';
 import type { TBedrockAgent } from 'librechat-data-provider';
+import { EModelEndpoint } from 'librechat-data-provider';
 import useLocalize from '~/hooks/useLocalize';
 import cn from '~/utils/cn';
 import SelectDropDown from '~/components/ui/SelectDropDown';
-import { Plus } from 'lucide-react';
+
+type BedrockOption = {
+  value: string;
+  label: string;
+  display: string;
+};
 
 export default function BedrockAgents({
   conversation,
@@ -12,40 +18,45 @@ export default function BedrockAgents({
   models,
   showAbove = true,
   popover = false,
-}: TModelSelectProps & { models: Array<string | { id: string; name: string }> }) {
+}: TModelSelectProps & { models: Array<string | TBedrockAgent> }) {
   const localize = useLocalize();
 
   const onSelect = (value: string | Option) => {
     if (!value) {
       return;
     }
+    console.log('BedrockAgents - onSelect value:', value);
     const modelValue = typeof value === 'object' ? value.value : value;
     if (modelValue) {
-      console.log('Setting agent model:', modelValue);
-      // Set endpoint, type, and model synchronously
-      setOption('endpointType')('bedrockAgents');
-      setOption('endpoint')('bedrockAgents');
+      console.log('BedrockAgents - Setting agent model:', modelValue);
+      setOption('endpointType')(EModelEndpoint.bedrockAgents);
+      setOption('endpoint')(EModelEndpoint.bedrockAgents);
       setOption('model')(modelValue);
-      console.log('Agent model set to:', modelValue);
+      console.log('BedrockAgents - Agent model set to:', modelValue);
     }
   };
 
-  const formatAgentOption = (agent: string | { id: string; name: string; }) => {
+  const formatAgentOption = (agent: string | TBedrockAgent): Option => {
     if (typeof agent === 'string') {
       return {
         value: agent,
         label: agent,
-        display: agent
       };
     }
     return {
       value: agent.id,
       label: agent.name,
-      display: agent.name
     };
   };
 
   const hasValue = conversation?.model != null && conversation.model !== '';
+
+  console.log('BedrockAgents - Props:', {
+    conversation,
+    models,
+    hasValue,
+    formattedModels: Array.isArray(models) ? models.map(formatAgentOption) : []
+  });
 
   return (
     <div className="flex w-full flex-col">
@@ -60,16 +71,14 @@ export default function BedrockAgents({
       <div className="relative">
         <SelectDropDown
         value={(() => {
-          if (!conversation?.model) return '';
-          const foundModel = models.find(model => 
+          if (!conversation?.model) return null;
+          const foundModel = models.find((model: string | TBedrockAgent) => 
             (typeof model === 'object' && 'id' in model) 
               ? model.id === conversation.model
               : model === conversation.model
           );
-          if (!foundModel) return '';
-          const formattedOption = formatAgentOption(foundModel);
-          console.log('Current model value:', formattedOption);
-          return formattedOption;
+          if (!foundModel) return null;
+          return formatAgentOption(foundModel);
         })()}
         setValue={onSelect}
         availableValues={Array.isArray(models) ? models.map(formatAgentOption) : []}

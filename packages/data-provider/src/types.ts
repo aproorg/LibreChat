@@ -256,7 +256,12 @@ export type TEndpointsConfig =
   | Record<EModelEndpoint | string, TConfig | null | undefined>
   | undefined;
 
-export type TModelsConfig = Record<string, string[]>;
+export interface TBedrockAgent {
+  id: string;
+  name: string;
+}
+
+export type TModelsConfig = Record<string, string[] | TBedrockAgent[]>;
 
 export type TUpdateTokenCountResponse = {
   count: number;

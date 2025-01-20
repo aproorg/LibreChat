@@ -3,6 +3,7 @@ const path = require('path');
 require('module-alias')({ base: path.resolve(__dirname, '..') });
 const cors = require('cors');
 const axios = require('axios');
+const { EModelEndpoint } = require('librechat-data-provider');
 const express = require('express');
 const compression = require('compression');
 const passport = require('passport');
@@ -54,7 +55,17 @@ const startServer = async () => {
   app.use(staticCache(app.locals.paths.fonts));
   app.use(staticCache(app.locals.paths.assets));
   app.set('trust proxy', 1); /* trust first proxy */
-  app.use(cors());
+  app.use(cors({
+    origin: [
+      'http://localhost:3090',
+      'https://user:1f3eac8923923244ab4a81f1ce867d96@playbook-runner-app-tunnel-pbh4rzzb.devinapps.com',
+      'https://user:5d2a6d635c281fac12df903d4d7ca489@playbook-runner-app-tunnel-m3bjgpxz.devinapps.com'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Cookie'],
+    exposedHeaders: ['set-cookie']
+  }));
   app.use(cookieParser());
 
   if (!isEnabled(DISABLE_COMPRESSION)) {
@@ -95,7 +106,22 @@ const startServer = async () => {
   app.use('/api/prompts', routes.prompts);
   app.use('/api/categories', routes.categories);
   app.use('/api/tokenizer', routes.tokenizer);
-  app.use('/api/endpoints', routes.endpoints);
+
+  // Enable bedrockAgents endpoint before any route registration
+  app.locals[EModelEndpoint.bedrockAgents] = true;
+
+  // Mount endpoints route with debug middleware
+  app.use('/api/endpoints', (req, res, next) => {
+    console.log('Main App - /api/endpoints hit:', {
+      method: req.method,
+      path: req.path,
+      baseUrl: req.baseUrl,
+      originalUrl: req.originalUrl
+    });
+    next();
+  }, routes.endpoints);
+
+  // Mount all API routes before error handlers
   app.use('/api/balance', routes.balance);
   app.use('/api/models', routes.models);
   app.use('/api/plugins', routes.plugins);
@@ -108,10 +134,31 @@ const startServer = async () => {
   app.use('/api/agents', routes.agents);
   app.use('/api/banner', routes.banner);
   app.use('/api/bedrock', routes.bedrock);
-  app.use('/api/bedrockAgents', routes.bedrockAgents);
-
   app.use('/api/tags', routes.tags);
 
+  // Debug log mounted routes
+  app._router.stack.forEach((r) => {
+    if (r.route && r.route.path) {
+      console.log('Route:', r.route.path);
+    } else if (r.name === 'router') {
+      console.log('Router middleware:', r.regexp);
+    }
+  });
+
+  // Catch-all route must be last
+  // API error handler
+  app.use('/api', (err, req, res, next) => {
+    console.error('API Error:', err);
+    res.status(500).json({ error: err.message || 'Internal Server Error' });
+  });
+
+  // API 404 handler
+  app.use('/api/*', (req, res) => {
+    console.log('API 404:', req.path);
+    res.status(404).json({ error: 'API endpoint not found' });
+  });
+
+  // Frontend catch-all route
   app.use((req, res) => {
     res.set({
       'Cache-Control': process.env.INDEX_CACHE_CONTROL || 'no-cache, no-store, must-revalidate',

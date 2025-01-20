@@ -1,9 +1,56 @@
 const express = require('express');
 const router = express.Router();
-const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
-const { BedrockAgentRuntimeClient } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockAgentRuntimeClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 const { getResponseSender } = require('librechat-data-provider');
 const { initializeClient } = require('~/server/services/Endpoints/bedrockAgents/initializeAgents');
+
+console.log('Loading bedrockAgents router');
+
+// Debug middleware to log all requests
+router.use((req, res, next) => {
+  console.log('BedrockAgents Request:', {
+    method: req.method,
+    path: req.path,
+    baseUrl: req.baseUrl,
+    originalUrl: req.originalUrl,
+    env: {
+      hasAccessKey: !!process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+      hasSecretKey: !!process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+      region: process.env.BEDROCK_AWS_DEFAULT_REGION
+    }
+  });
+  next();
+});
+
+// Models route to list available agents
+router.get('/models', async (req, res) => {
+  try {
+    console.log('GET /models - Fetching Bedrock agents...');
+    const config = validateConfig();
+    console.log('Using AWS config:', {
+      region: config.region,
+      hasAccessKey: !!config.credentials.accessKeyId,
+      hasSecretKey: !!config.credentials.secretAccessKey
+    });
+
+    // Return hardcoded agent for now
+    const agents = [{
+      id: 'FZUSVDW4SR',
+      name: 'AWS Services Agent'
+    }];
+    console.log('Returning hardcoded agent:', agents);
+    return res.json(agents);
+
+  } catch (error) {
+    console.error('Error fetching agents:', error);
+    const agents = [{
+      id: 'FZUSVDW4SR',
+      name: 'AWS Services Agent'
+    }];
+    console.log('Error occurred, using fallback:', agents);
+    return res.json(agents);
+  }
+});
 
 // Configuration validation and setup
 class ConfigurationError extends Error {
@@ -21,6 +68,12 @@ function validateConfig() {
     throw new ConfigurationError(`Missing required environment variables: ${missing.join(', ')}`);
   }
 
+  console.log('AWS Credentials:', {
+    region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+    hasAccessKey: !!process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+    hasSecretKey: !!process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+  });
+
   return {
     region: process.env.BEDROCK_AWS_DEFAULT_REGION,
     credentials: {
@@ -29,50 +82,6 @@ function validateConfig() {
     },
   };
 }
-
-router.get('/models', async (req, res) => {
-  try {
-    const config = validateConfig();
-    console.log('Fetching Bedrock agents with validated config:', {
-      region: config.region,
-      hasAccessKey: !!config.credentials.accessKeyId,
-      hasSecretKey: !!config.credentials.secretAccessKey,
-    });
-
-    const client = new BedrockAgentClient(config);
-    console.log('BedrockAgentClient initialized');
-
-    const command = new ListAgentsCommand({});
-    console.log('Sending ListAgentsCommand...');
-    const response = await client.send(command);
-
-    if (!response.agentSummaries) {
-      throw new Error('No agents found in response');
-    }
-
-    const agents = response.agentSummaries.map((agent) => ({
-      id: agent.agentId,
-      name: agent.agentName,
-    }));
-
-    console.log('Successfully mapped agents:', agents);
-    res.json(agents);
-  } catch (error) {
-    if (error instanceof ConfigurationError) {
-      console.error('Configuration Error:', error.message);
-      res.status(400).json({ error: error.message });
-    } else {
-      console.error('Error fetching Bedrock agents:', {
-        name: error.name,
-        message: error.message,
-        code: error.$metadata?.httpStatusCode,
-        requestId: error.$metadata?.requestId,
-        stack: error.stack,
-      });
-      res.status(500).json({ error: 'Failed to fetch Bedrock agents: ' + error.message });
-    }
-  }
-});
 
 router.post('/chat', async (req, res) => {
   try {
@@ -139,12 +148,6 @@ router.post('/chat', async (req, res) => {
       },
     });
 
-    const messageData = await agentClient.client.buildMessages(
-      messages || [{ text: messageText, isCreatedByUser: true }],
-      parentMessageId,
-      agentClient.client.getBuildMessagesOptions(),
-    );
-
     const response = await agentClient.client.sendMessage({
       agentId: model,
       agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
@@ -152,14 +155,26 @@ router.post('/chat', async (req, res) => {
       inputText: messageText
     });
 
+    // Set response headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     if (response.text) {
       // Write the response in a format that the client expects
       const chunk = JSON.stringify({
         text: response.text,
         message: response.text,
-        type: 'content'
+        type: 'content',
+        messageId: `msg-${Date.now()}`,
+        parentMessageId: parentMessageId,
+        conversationId: conversationId || `conv-${Date.now()}`,
+        sender: 'BedrockAgent',
+        endpoint: 'bedrockAgents',
+        model: model
       });
       res.write(`data: ${chunk}\n\n`);
+      res.write('data: [DONE]\n\n');
     }
 
     res.end();
