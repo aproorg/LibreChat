@@ -260,10 +260,12 @@ export default function useChatFunctions({
       conversation: {
         ...conversation,
         conversationId,
+        model: conversation?.model,  // Ensure model is included in submission
       },
       endpointOption,
       userMessage: {
         ...currentMsg,
+        model: conversation?.model,  // Include model in user message
         generation,
         responseMessageId,
         overrideParentMessageId: isRegenerate ? messageId : null,

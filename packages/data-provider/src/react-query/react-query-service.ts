@@ -244,9 +244,9 @@ export const useGetModelsQuery = (
 };
 
 export const useListBedrockAgentsQuery = (
-  config?: UseQueryOptions<t.TModelsConfig>,
-): QueryObserverResult<t.TModelsConfig> => {
-  return useQuery<t.TModelsConfig>([QueryKeys.bedrockAgents], () => dataService.getBedrockAgents(), {
+  config?: UseQueryOptions<s.TBedrockAgent[]>,
+): QueryObserverResult<s.TBedrockAgent[]> => {
+  return useQuery<s.TBedrockAgent[]>([QueryKeys.bedrockAgents], () => dataService.getBedrockAgents(), {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,

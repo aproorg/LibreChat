@@ -6,6 +6,7 @@ const axios = require('axios');
 const express = require('express');
 const compression = require('compression');
 const passport = require('passport');
+const { EModelEndpoint } = require('librechat-data-provider');
 const mongoSanitize = require('express-mongo-sanitize');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
@@ -108,7 +109,18 @@ const startServer = async () => {
   app.use('/api/agents', routes.agents);
   app.use('/api/banner', routes.banner);
   app.use('/api/bedrock', routes.bedrock);
-  app.use('/api/bedrockAgents', routes.bedrockAgents);
+
+  // Enable bedrockAgents endpoint and register route
+  app.locals[EModelEndpoint.bedrockAgents] = true;
+  console.log('BedrockAgents Config:', {
+    enabled: app.locals[EModelEndpoint.bedrockAgents],
+    hasAccessKey: !!process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+    hasSecretKey: !!process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+    region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+    agentId: process.env.AWS_BEDROCK_AGENT_ID,
+    agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID
+  });
+  app.use('/api/endpoints/bedrockAgents', routes.bedrockAgents);
 
   app.use('/api/tags', routes.tags);
 

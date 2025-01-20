@@ -95,9 +95,20 @@ export default function useSSE(
 
     let textIndex = null;
 
+    console.log('Creating SSE connection with:', {
+      url: payloadData.server,
+      payload,
+      endpoint: payload.endpoint
+    });
+
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Accept': 'text/event-stream',
+        'Authorization': `Bearer ${token}` 
+      },
+      method: 'POST'
     });
 
     sse.addEventListener('attachment', (e: MessageEvent) => {
@@ -110,6 +121,7 @@ export default function useSSE(
     });
 
     sse.addEventListener('message', (e: MessageEvent) => {
+      console.log('SSE message received:', e.data);
       const data = JSON.parse(e.data);
 
       if (data.final != null) {
@@ -160,7 +172,10 @@ export default function useSSE(
 
     sse.addEventListener('open', () => {
       setAbortScroll(false);
-      console.log('connection is opened');
+      console.log('SSE connection opened:', {
+        readyState: sse.readyState,
+        url: payloadData.server
+      });
     });
 
     sse.addEventListener('cancel', async () => {

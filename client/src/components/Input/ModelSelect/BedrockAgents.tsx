@@ -12,7 +12,7 @@ export default function BedrockAgents({
   models,
   showAbove = true,
   popover = false,
-}: TModelSelectProps & { models: Array<string | { id: string; name: string }> }) {
+}: TModelSelectProps & { models: Array<TBedrockAgent> }) {
   const localize = useLocalize();
 
   const onSelect = (value: string | Option) => {
@@ -22,22 +22,24 @@ export default function BedrockAgents({
     const modelValue = typeof value === 'object' ? value.value : value;
     if (modelValue) {
       console.log('Setting agent model:', modelValue);
-      // Set endpoint, type, and model synchronously
+      // Initialize conversation state first
+      const conversationId = `conv-${Date.now()}`;
+      // Set all options synchronously
+      setOption('conversationId')(conversationId);
       setOption('endpointType')('bedrockAgents');
       setOption('endpoint')('bedrockAgents');
       setOption('model')(modelValue);
-      console.log('Agent model set to:', modelValue);
+      
+      // Force a re-render by setting the model again after a short delay
+      setTimeout(() => {
+        setOption('model')(modelValue);
+        setOption('conversationId')(conversationId); // Ensure conversationId persists
+      }, 100);
+      console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
     }
   };
 
-  const formatAgentOption = (agent: string | { id: string; name: string; }) => {
-    if (typeof agent === 'string') {
-      return {
-        value: agent,
-        label: agent,
-        display: agent
-      };
-    }
+  const formatAgentOption = (agent: TBedrockAgent): Option => {
     return {
       value: agent.id,
       label: agent.name,
@@ -60,13 +62,13 @@ export default function BedrockAgents({
       <div className="relative">
         <SelectDropDown
         value={(() => {
-          if (!conversation?.model) return '';
-          const foundModel = models.find(model => 
-            (typeof model === 'object' && 'id' in model) 
-              ? model.id === conversation.model
-              : model === conversation.model
-          );
-          if (!foundModel) return '';
+          if (!conversation?.model) {
+            return { value: '', label: 'Select Agent', display: 'Select Agent' };
+          }
+          const foundModel = models.find((model: TBedrockAgent) => model.id === conversation.model);
+          if (!foundModel) {
+            return { value: '', label: 'Select Agent', display: 'Select Agent' };
+          }
           const formattedOption = formatAgentOption(foundModel);
           console.log('Current model value:', formattedOption);
           return formattedOption;

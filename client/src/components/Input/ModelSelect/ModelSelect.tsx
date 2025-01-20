@@ -35,7 +35,7 @@ export default function ModelSelect({
   
   // Use bedrockAgents query for the bedrockAgents endpoint
   const models = endpoint === EModelEndpoint.bedrockAgents
-    ? bedrockAgentsQuery?.data?.bedrockAgents ?? []
+    ? bedrockAgentsQuery?.data ?? []
     : modelsQuery?.data?.[_endpoint] ?? [];
 
   const OptionComponent = multiChatOptions[endpoint];

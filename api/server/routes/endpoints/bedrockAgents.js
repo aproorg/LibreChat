@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
-const { BedrockAgentRuntimeClient } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 const { getResponseSender } = require('librechat-data-provider');
 const { initializeClient } = require('~/server/services/Endpoints/bedrockAgents/initializeAgents');
 
@@ -75,9 +75,18 @@ router.get('/models', async (req, res) => {
 });
 
 router.post('/chat', async (req, res) => {
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
   try {
     console.log('POST /chat - Processing chat request...');
-    const { text: inputText, messages, parentMessageId, conversationId, model } = req.body;
+    const { text: inputText, messages, parentMessageId, conversationId: reqConversationId, model } = req.body;
+    const conversationId = reqConversationId || `conv-${Date.now()}`;
     
     console.log('Received request:', {
       model,
@@ -139,27 +148,102 @@ router.post('/chat', async (req, res) => {
       },
     });
 
+    const initialMessage = { text: messageText, isCreatedByUser: true };
     const messageData = await agentClient.client.buildMessages(
-      messages || [{ text: messageText, isCreatedByUser: true }],
+      messages || [initialMessage],
       parentMessageId,
       agentClient.client.getBuildMessagesOptions(),
     );
 
-    const response = await agentClient.client.sendMessage({
+    // Generate a unique message ID if not present
+    const messageId = messageData?.messages?.[messageData.messages.length - 1]?.messageId ?? crypto.randomUUID();
+
+    // Send created event
+    const createdEvent = {
+      created: true,
+      message: {
+        messageId,
+        parentMessageId,
+        conversationId,
+      },
+    };
+    res.write(`data: ${JSON.stringify(createdEvent)}\n\n`);
+
+    const client = new BedrockAgentRuntimeClient({
+      region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+      credentials: {
+        accessKeyId: process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+      },
+    });
+
+    const command = new InvokeAgentCommand({
       agentId: model,
       agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
-      sessionId: conversationId || `session-${Date.now()}`,
+      sessionId: conversationId,
       inputText: messageText
     });
 
-    if (response.text) {
-      // Write the response in a format that the client expects
-      const chunk = JSON.stringify({
-        text: response.text,
-        message: response.text,
-        type: 'content'
-      });
-      res.write(`data: ${chunk}\n\n`);
+    const response = await client.send(command);
+
+    // Extract text from response, handling different possible response formats
+    let responseText = '';
+    if (response?.completion) {
+      for await (const chunk of response.completion) {
+        if (chunk.chunk?.bytes) {
+          const decodedResponse = new TextDecoder().decode(chunk.chunk.bytes);
+          try {
+            const jsonData = JSON.parse(decodedResponse);
+            let extractedText = '';
+            
+            // Try to extract text from various response formats
+            if (jsonData.content?.[0]?.text) {
+              const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
+              extractedText = match ? match[1].trim() : jsonData.content[0].text;
+            } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
+              extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
+            } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
+              const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
+              extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+            }
+
+            if (extractedText && !extractedText.includes('{') && !extractedText.includes('}')) {
+              responseText += extractedText;
+              // Send message event with partial response
+              const messageEvent = {
+                message: extractedText,
+                messageId,
+                parentMessageId,
+                conversationId,
+                type: 'content'
+              };
+              res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
+            }
+          } catch (err) {
+            // If not JSON or parsing fails, treat as raw text
+            if (!decodedResponse.includes('{') && !decodedResponse.includes('}')) {
+              responseText += decodedResponse;
+              const messageEvent = {
+                message: decodedResponse,
+                messageId,
+                parentMessageId,
+                conversationId,
+                type: 'content'
+              };
+              res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
+            }
+          }
+        }
+      }
+
+      // Send final event with complete response
+      const finalEvent = {
+        final: true,
+        message: responseText,
+        messageId,
+        conversationId,
+      };
+      res.write(`data: ${JSON.stringify(finalEvent)}\n\n`);
     }
 
     res.end();
@@ -171,13 +255,16 @@ router.post('/chat', async (req, res) => {
       requestId: error.$metadata?.requestId,
       stack: error.stack,
     });
-    const errorMessage = error.message || 'An error occurred while processing your request';
-    res.status(500).json({ 
-      error: errorMessage,
+
+    // Send error event in SSE format
+    const errorEvent = {
+      error: true,
+      message: error.message || 'An error occurred while processing your request',
       code: error.$metadata?.httpStatusCode,
       requestId: error.$metadata?.requestId,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined 
-    });
+    };
+    res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+    res.end();
   }
 });
 

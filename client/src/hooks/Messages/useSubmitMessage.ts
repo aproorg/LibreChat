@@ -17,8 +17,9 @@ const appendIndex = (index: number, value?: string) => {
 export default function useSubmitMessage(helpers?: { clearDraft?: () => void }) {
   const { user } = useAuthContext();
   const methods = useChatFormContext();
-  const { ask, index, getMessages, setMessages, latestMessage } = useChatContext();
+  const { ask, index, getMessages, setMessages, latestMessage, conversation } = useChatContext();
   const { addedIndex, ask: askAdditional, conversation: addedConvo } = useAddedChatContext();
+  const conversationId = conversation?.conversationId;
 
   const autoSendPrompts = useRecoilValue(store.autoSendPrompts);
   const activeConvos = useRecoilValue(store.allConversationsSelector);
@@ -46,18 +47,28 @@ export default function useSubmitMessage(helpers?: { clearDraft?: () => void }) 
       const overrideUserMessageId = hasAdded ? v4() : undefined;
       const rootIndex = addedIndex - 1;
       const clientTimestamp = new Date().toISOString();
+      
+      console.log('Submitting message with model:', conversation?.model);
 
-      ask({
+      const modelId = conversation?.model || undefined;
+      console.log('Submitting message with model:', modelId);
+
+      const messagePayload = {
         text: data.text,
+        model: modelId,
+        conversationId: conversation?.conversationId || `conv-${Date.now()}`,
         overrideConvoId: appendIndex(rootIndex, overrideConvoId),
         overrideUserMessageId: appendIndex(rootIndex, overrideUserMessageId),
         clientTimestamp,
-      });
+      };
+      console.log('Submitting message with payload:', messagePayload);
+      ask(messagePayload);
 
       if (hasAdded) {
         askAdditional(
           {
             text: data.text,
+            model: modelId,
             overrideConvoId: appendIndex(addedIndex, overrideConvoId),
             overrideUserMessageId: appendIndex(addedIndex, overrideUserMessageId),
             clientTimestamp,

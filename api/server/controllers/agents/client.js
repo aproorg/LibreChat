@@ -383,16 +383,17 @@ class AgentClient extends BaseClient {
   }
 
   async chatCompletion({ payload, abortController = null }) {
-    try {
-      if (!abortController) {
-        abortController = new AbortController();
-      }
+    if (!abortController) {
+      abortController = new AbortController();
+    }
 
-      const baseURL = extractBaseURL(this.completionsUrl);
-      logger.debug('[api/server/controllers/agents/client.js] chatCompletion', {
-        baseURL,
-        payload,
-      });
+    const baseURL = extractBaseURL(this.completionsUrl);
+    logger.debug('[api/server/controllers/agents/client.js] chatCompletion', {
+      baseURL,
+      payload,
+    });
+
+    try {
 
       // if (this.useOpenRouter) {
       //   opts.defaultHeaders = {
@@ -526,8 +527,9 @@ class AgentClient extends BaseClient {
         config.configurable.agent_id = agent.id;
         config.configurable.name = agent.name;
         config.configurable.agent_index = i;
+        const modelName = agent.model_parameters?.model ?? '';
         const noSystemMessages = noSystemModelRegex.some((regex) =>
-          agent.model_parameters.model.match(regex),
+          modelName.match(regex),
         );
 
         const systemMessage = Object.values(agent.toolContextMap ?? {})
@@ -593,33 +595,156 @@ class AgentClient extends BaseClient {
         });
       };
 
-      if (this.options.endpoint === EModelEndpoint.bedrock && this.options.bedrockClient) {
+      const processBedrockResponse = async () => {
+        let responseText = '';
         const message = initialMessages[initialMessages.length - 1].content;
-        const response = await this.options.bedrockClient.sendMessage({
-          agentId: this.options.agent.model_parameters.agentId,
-          agentAliasId: this.options.agent.model_parameters.agentAliasId,
-          sessionId: this.conversationId,
-          inputText: typeof message === 'string' ? message : message[0].text
-        });
 
-        // Initialize a basic run object for Bedrock agents
-        this.run = {
-          Graph: {
-            contentData: [],
-            getRunMessages: () => []
+        if (this.options.endpoint === 'bedrockAgents') {
+          const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+          const client = new BedrockAgentRuntimeClient({
+            region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+            credentials: {
+              accessKeyId: process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+              secretAccessKey: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+            },
+          });
+
+          const sessionId = this.conversationId || `session-${Date.now()}`;
+          console.log('Using session ID:', sessionId);
+          const command = new InvokeAgentCommand({
+            agentId: this.options.agent.id,
+            agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID,
+            sessionId: sessionId,
+            inputText: typeof message === 'string' ? message : message[0].text,
+          });
+          
+          // Set conversation ID if not already set
+          if (!this.conversationId) {
+            this.conversationId = sessionId;
           }
-        };
 
-        if (this.options.eventHandlers?.onProgress) {
-          this.options.eventHandlers.onProgress(response.text);
+          // Initialize a basic run object for Bedrock agents
+          this.run = {
+            Graph: {
+              contentData: [],
+              getRunMessages: () => []
+            }
+          };
+          
+          // Ensure we have a valid messageId and parentMessageId
+          if (!this.responseMessageId) {
+            this.responseMessageId = v4();
+          }
+          if (!this.parentMessageId) {
+            this.parentMessageId = '00000000-0000-0000-0000-000000000000';
+          }
+
+          // Send created event
+          if (this.options.eventHandlers?.onProgress) {
+            this.options.eventHandlers.onProgress({
+              type: 'created',
+              message: {
+                messageId: this.responseMessageId,
+                parentMessageId: this.parentMessageId,
+                conversationId: this.conversationId,
+              }
+            });
+          }
+
+          const agentResponse = await client.send(command);
+          
+          if (agentResponse.completion) {
+            for await (const chunk of agentResponse.completion) {
+              if (chunk.chunk?.bytes) {
+                const decodedResponse = new TextDecoder().decode(chunk.chunk.bytes);
+                try {
+                  const jsonData = JSON.parse(decodedResponse);
+                  let extractedText = '';
+                  
+                  // Try to extract text from various response formats
+                  if (jsonData.content?.[0]?.text) {
+                    const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
+                    extractedText = match ? match[1].trim() : jsonData.content[0].text;
+                  } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
+                    extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
+                  } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
+                    const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
+                    extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+                  }
+
+                  if (extractedText && !extractedText.includes('{') && !extractedText.includes('}')) {
+                    responseText += extractedText;
+                    // Send message event with partial response
+                    if (this.options.eventHandlers?.onProgress) {
+                      this.options.eventHandlers.onProgress({
+                        type: 'message',
+                        message: extractedText,
+                        messageId: this.responseMessageId,
+                        parentMessageId: this.parentMessageId,
+                        conversationId: this.conversationId,
+                      });
+                    }
+                  }
+                } catch (err) {
+                  // If not JSON or parsing fails, treat as raw text
+                  if (!decodedResponse.includes('{') && !decodedResponse.includes('}')) {
+                    responseText += decodedResponse;
+                    if (this.options.eventHandlers?.onProgress) {
+                      this.options.eventHandlers.onProgress({
+                        type: 'message',
+                        message: decodedResponse,
+                        messageId: this.responseMessageId,
+                        parentMessageId: this.parentMessageId,
+                        conversationId: this.conversationId,
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Send final event
+          if (this.options.eventHandlers?.onProgress) {
+            this.options.eventHandlers.onProgress({
+              type: 'final',
+              message: responseText,
+              messageId: this.responseMessageId,
+              parentMessageId: this.parentMessageId,
+              conversationId: this.conversationId,
+            });
+          }
+        } else {
+          const response = await this.options.bedrockClient.sendMessage({
+            agentId: this.options.agent.model_parameters.agentId,
+            agentAliasId: this.options.agent.model_parameters.agentAliasId,
+            sessionId: this.conversationId,
+            inputText: typeof message === 'string' ? message : message[0].text
+          });
+          responseText = response?.text || response?.completion || '';
         }
+
+        return responseText;
+      };
+
+      let responseText = '';
+      if ((this.options.endpoint === EModelEndpoint.bedrock && this.options.bedrockClient) || 
+          this.options.endpoint === 'bedrockAgents') {
+        responseText = await processBedrockResponse();
         this.contentParts.push({
           type: ContentTypes.TEXT,
-          text: response.text
+          text: responseText
         });
       } else {
         await runAgent(this.options.agent, initialMessages);
       }
+
+      await this.recordCollectedUsage({ context: 'message' }).catch((err) => {
+        logger.error(
+          '[api/server/controllers/agents/client.js #chatCompletion] Error recording collected usage',
+          err,
+        );
+      });
 
       let finalContentStart = 0;
       if (this.agentConfigs && this.agentConfigs.size > 0) {
@@ -702,7 +827,7 @@ class AgentClient extends BaseClient {
         );
       });
 
-      this.recordCollectedUsage({ context: 'message' }).catch((err) => {
+      await this.recordCollectedUsage({ context: 'message' }).catch((err) => {
         logger.error(
           '[api/server/controllers/agents/client.js #chatCompletion] Error recording collected usage',
           err,
@@ -725,57 +850,47 @@ class AgentClient extends BaseClient {
   }
 
   /**
-   *
+   * Generates a title for the conversation based on the given text.
    * @param {Object} params
-   * @param {string} params.text
-   * @param {string} params.conversationId
+   * @param {string} params.text - The text to generate a title from
+   * @param {string} [params.conversationId] - Optional conversation ID
+   * @returns {Promise<string|undefined>} The generated title or undefined if error occurs
    */
   async titleConvo({ text }) {
     if (!this.run) {
-      throw new Error('Run not initialized');
+      logger.error('[api/server/controllers/agents/client.js #titleConvo] Run not initialized');
+      return null;
     }
-    const { handleLLMEnd, collected: collectedMetadata } = createMetadataAggregator();
-    const clientOptions = {};
-    const providerConfig = this.options.req.app.locals[this.options.agent.provider];
-    if (
-      providerConfig &&
-      providerConfig.titleModel &&
-      providerConfig.titleModel !== Constants.CURRENT_MODEL
-    ) {
-      clientOptions.model = providerConfig.titleModel;
-    }
+
     try {
+      const { handleLLMEnd, collected: collectedMetadata } = createMetadataAggregator();
+      const clientOptions = {};
+      const providerConfig = this.options.req.app.locals[this.options.agent.provider];
+      
+      if (providerConfig?.titleModel && providerConfig.titleModel !== Constants.CURRENT_MODEL) {
+        clientOptions.model = providerConfig.titleModel;
+      }
+
       const titleResult = await this.run.generateTitle({
         inputText: text,
         contentParts: this.contentParts,
         clientOptions,
         chainOptions: {
-          callbacks: [
-            {
-              handleLLMEnd,
-            },
-          ],
+          callbacks: [{ handleLLMEnd }],
         },
       });
 
+      if (!titleResult?.title) {
+        throw new Error('Failed to generate title');
+      }
+
       const collectedUsage = collectedMetadata.map((item) => {
-        let input_tokens, output_tokens;
-
-        if (item.usage) {
-          input_tokens = item.usage.input_tokens || item.usage.inputTokens;
-          output_tokens = item.usage.output_tokens || item.usage.outputTokens;
-        } else if (item.tokenUsage) {
-          input_tokens = item.tokenUsage.promptTokens;
-          output_tokens = item.tokenUsage.completionTokens;
-        }
-
-        return {
-          input_tokens: input_tokens,
-          output_tokens: output_tokens,
-        };
+        const input_tokens = item.usage?.input_tokens || item.usage?.inputTokens || item.tokenUsage?.promptTokens;
+        const output_tokens = item.usage?.output_tokens || item.usage?.outputTokens || item.tokenUsage?.completionTokens;
+        return { input_tokens, output_tokens };
       });
 
-      this.recordCollectedUsage({
+      await this.recordCollectedUsage({
         model: clientOptions.model,
         context: 'title',
         collectedUsage,
@@ -788,8 +903,8 @@ class AgentClient extends BaseClient {
 
       return titleResult.title;
     } catch (err) {
-      logger.error('[api/server/controllers/agents/client.js #titleConvo] Error', err);
-      return;
+      logger.error('[api/server/controllers/agents/client.js #titleConvo] Error:', err);
+      return null;
     }
   }
 

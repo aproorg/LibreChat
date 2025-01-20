@@ -14,6 +14,8 @@ export default function useRequiresKey() {
   );
   const { getExpiry } = useUserKey(endpoint ?? '');
   const expiryTime = getExpiry();
-  const requiresKey = !expiryTime && userProvidesKey;
+  // Special case for bedrockAgents endpoint - don't require key
+  const requiresKey = endpoint === 'bedrockAgents' ? false : (!expiryTime && userProvidesKey);
+  console.log('useRequiresKey:', { endpoint, userProvidesKey, expiryTime, requiresKey });
   return { requiresKey };
 }

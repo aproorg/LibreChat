@@ -116,9 +116,15 @@ const ChatForm = ({ index = 0 }) => {
         !assistantMap?.[conversation?.endpoint ?? ''][conversation?.assistant_id ?? '']),
     [conversation?.assistant_id, conversation?.endpoint, assistantMap],
   );
+
+  const hasValidModel = useMemo(
+    () => conversation?.model && conversation.model !== '',
+    [conversation?.model],
+  );
+
   const disableInputs = useMemo(
-    () => !!((requiresKey ?? false) || invalidAssistant),
-    [requiresKey, invalidAssistant],
+    () => !!((requiresKey ?? false) || invalidAssistant || (!hasValidModel && conversation?.endpoint !== 'bedrockAgents')),
+    [requiresKey, invalidAssistant, hasValidModel, conversation?.endpoint],
   );
 
   const { ref, ...registerProps } = methods.register('text', {
