@@ -72,6 +72,12 @@ export const models = () => '/api/models';
  */
 export const bedrockAgents = () => '/api/endpoints/bedrockAgents';
 
+/**
+ * Chat with a Bedrock agent
+ * @returns {string} The API endpoint for Bedrock agent chat
+ */
+export const bedrockAgentsChat = () => '/api/endpoints/bedrockAgents/chat';
+
 export const tokenizer = () => '/api/tokenizer';
 
 export const login = () => '/api/auth/login';

@@ -95,13 +95,14 @@ export default function useSSE(
 
     let textIndex = null;
 
+    const chatEndpoint = payload.endpoint === 'bedrockAgents' ? '/api/endpoints/bedrockAgents/chat' : payloadData.server;
     console.log('Creating SSE connection with:', {
-      url: payloadData.server,
+      url: chatEndpoint,
       payload,
       endpoint: payload.endpoint
     });
 
-    const sse = new SSE(payloadData.server, {
+    const sse = new SSE(chatEndpoint, {
       payload: JSON.stringify(payload),
       headers: { 
         'Content-Type': 'application/json', 

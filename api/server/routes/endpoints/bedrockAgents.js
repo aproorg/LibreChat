@@ -30,7 +30,7 @@ function validateConfig() {
   };
 }
 
-router.get('/models', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const config = validateConfig();
     console.log('Fetching Bedrock agents with validated config:', {
@@ -56,7 +56,7 @@ router.get('/models', async (req, res) => {
     }));
 
     console.log('Successfully mapped agents:', agents);
-    res.json(agents);
+    res.json({ agents });
   } catch (error) {
     if (error instanceof ConfigurationError) {
       console.error('Configuration Error:', error.message);

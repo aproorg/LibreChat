@@ -91,6 +91,14 @@ function SelectDropDown({
 
   const values = availableValues ?? [];
 
+  console.log('SelectDropDown Debug:', {
+    value,
+    values,
+    disabled,
+    className,
+    showAbove
+  });
+
   // Detemine if we should to convert this component into a searchable select.  If we have enough elements, a search
   // input will appear near the top of the menu, allowing correct filtering of different model menu items. This will
   // reset once the component is unmounted (as per a normal search)

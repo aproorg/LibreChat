@@ -16,7 +16,9 @@ export default function BedrockAgents({
   const localize = useLocalize();
 
   const onSelect = (value: string | Option) => {
+    console.log('BedrockAgents onSelect called with:', value);
     if (!value) {
+      console.log('BedrockAgents: No value provided');
       return;
     }
     const modelValue = typeof value === 'object' ? value.value : value;
@@ -36,6 +38,8 @@ export default function BedrockAgents({
         setOption('conversationId')(conversationId); // Ensure conversationId persists
       }, 100);
       console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
+    } else {
+      console.log('BedrockAgents: Invalid model value:', modelValue);
     }
   };
 

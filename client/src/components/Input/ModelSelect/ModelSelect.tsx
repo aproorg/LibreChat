@@ -38,6 +38,14 @@ export default function ModelSelect({
     ? bedrockAgentsQuery?.data ?? []
     : modelsQuery?.data?.[_endpoint] ?? [];
 
+  console.log('ModelSelect Debug:', {
+    endpoint,
+    bedrockAgentsData: bedrockAgentsQuery?.data,
+    modelsData: modelsQuery?.data,
+    finalModels: models,
+    conversation
+  });
+
   const OptionComponent = multiChatOptions[endpoint];
 
   if (!OptionComponent) {

@@ -367,6 +367,13 @@ export const eModelEndpointSchema = z.nativeEnum(EModelEndpoint);
 
 export const extendedModelEndpointSchema = z.union([eModelEndpointSchema, z.string()]);
 
+export const bedrockAgentSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+
+export type TBedrockAgent = z.infer<typeof bedrockAgentSchema>;
+
 export const tPluginAuthConfigSchema = z.object({
   authField: z.string(),
   label: z.string(),
