@@ -26,17 +26,15 @@ export default function BedrockAgents({
       console.log('Setting agent model:', modelValue);
       // Initialize conversation state first
       const conversationId = `conv-${Date.now()}`;
-      // Set all options synchronously
-      setOption('conversationId')(conversationId);
-      setOption('endpointType')('bedrockAgents');
-      setOption('endpoint')('bedrockAgents');
-      setOption('model')(modelValue);
       
-      // Force a re-render by setting the model again after a short delay
-      setTimeout(() => {
-        setOption('model')(modelValue);
-        setOption('conversationId')(conversationId); // Ensure conversationId persists
-      }, 100);
+      // Set endpoint and type first
+      setOption('endpoint')('bedrockAgents');
+      setOption('endpointType')('bedrockAgents');
+      
+      // Then set model and conversation ID
+      setOption('model')(modelValue);
+      setOption('conversationId')(conversationId);
+      
       console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
     } else {
       console.log('BedrockAgents: Invalid model value:', modelValue);

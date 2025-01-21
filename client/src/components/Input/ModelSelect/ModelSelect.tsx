@@ -3,6 +3,7 @@ import type { TConversation } from 'librechat-data-provider';
 import { EModelEndpoint } from 'librechat-data-provider';
 import type { TSetOption } from '~/common';
 import { multiChatOptions } from './options';
+import { useEffect } from 'react';
 
 type TGoogleProps = {
   showExamples: boolean;
@@ -34,9 +35,18 @@ export default function ModelSelect({
   const endpoint = endpointType ?? _endpoint;
   
   // Use bedrockAgents query for the bedrockAgents endpoint
-  const models = endpoint === EModelEndpoint.bedrockAgents
+  const isBedrockAgents = endpoint === EModelEndpoint.bedrockAgents;
+  const models = isBedrockAgents
     ? bedrockAgentsQuery?.data ?? []
     : modelsQuery?.data?.[_endpoint] ?? [];
+
+  // If we're on the bedrock endpoint, check if we should switch to bedrockAgents
+  useEffect(() => {
+    if (_endpoint === 'bedrock' && bedrockAgentsQuery?.data?.length) {
+      setOption('endpoint')('bedrockAgents');
+      setOption('endpointType')('bedrockAgents');
+    }
+  }, [_endpoint, bedrockAgentsQuery?.data, setOption]);
 
   console.log('ModelSelect Debug:', {
     endpoint,

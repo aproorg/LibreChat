@@ -43,13 +43,24 @@ export const getAvailableEndpoints = (
   const defaultSet = new Set(defaultEndpoints);
   const availableEndpoints: EModelEndpoint[] = [];
 
+  console.log('Default Endpoints Set:', [...defaultSet]);
+  console.log('Endpoints Config:', endpointsConfig);
+  console.log('Filter:', filter);
+
   for (const endpoint in endpointsConfig) {
     // Check if endpoint is in the filter or its type is in defaultEndpoints
-    if (
-      filter[endpoint] ||
-      (endpointsConfig[endpoint]?.type &&
-        defaultSet.has(endpointsConfig[endpoint]?.type as EModelEndpoint))
-    ) {
+    const isInFilter = filter[endpoint];
+    const hasType = endpointsConfig[endpoint]?.type;
+    const typeInDefaultSet = hasType && defaultSet.has(endpointsConfig[endpoint]?.type as EModelEndpoint);
+    
+    console.log(`Endpoint ${endpoint}:`, {
+      isInFilter,
+      hasType,
+      typeInDefaultSet,
+      config: endpointsConfig[endpoint]
+    });
+
+    if (isInFilter || typeInDefaultSet) {
       availableEndpoints.push(endpoint as EModelEndpoint);
     }
   }
