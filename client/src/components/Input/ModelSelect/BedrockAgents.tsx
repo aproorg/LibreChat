@@ -81,7 +81,7 @@ export default function BedrockAgents({
         showLabel={false}
         className={cn(
           'rounded-md dark:border-gray-700 dark:bg-gray-850',
-          'z-50 flex h-[40px] w-full flex-none items-center justify-center px-4 hover:cursor-pointer hover:border-green-500 focus:border-gray-400',
+          'z-[9999] flex h-[40px] w-full flex-none items-center justify-center px-4 hover:cursor-pointer hover:border-green-500 focus:border-gray-400',
         )}
         optionsClass="hover:bg-gray-20/50 dark:border-gray-700"
         optionsListClass="rounded-lg shadow-lg dark:bg-gray-850 dark:border-gray-700 dark:last:border"

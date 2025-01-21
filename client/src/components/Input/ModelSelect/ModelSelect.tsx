@@ -40,14 +40,7 @@ export default function ModelSelect({
     ? bedrockAgentsQuery?.data ?? []
     : modelsQuery?.data?.[_endpoint] ?? [];
 
-  // If we're on the bedrock endpoint, check if we should switch to bedrockAgents
-  useEffect(() => {
-    if (_endpoint === 'bedrock' && bedrockAgentsQuery?.data?.length) {
-      setOption('endpoint')('bedrockAgents');
-      setOption('endpointType')('bedrockAgents');
-    }
-  }, [_endpoint, bedrockAgentsQuery?.data, setOption]);
-
+  // Removed automatic endpoint switch to prevent state updates during render
   console.log('ModelSelect Debug:', {
     endpoint,
     bedrockAgentsData: bedrockAgentsQuery?.data,
