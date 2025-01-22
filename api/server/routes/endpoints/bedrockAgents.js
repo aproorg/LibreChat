@@ -267,25 +267,34 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
             let extractedText = '';
             
             // First try to parse as JSON
-            try {
-              const jsonData = JSON.parse(decodedResponse);
-              
-              // Try to extract text from various response formats
-              if (jsonData.content?.[0]?.text) {
-                const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
-                extractedText = match ? match[1].trim() : jsonData.content[0].text;
-              } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
-                extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
-              } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
-                const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
-                extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+            // First check if response looks like JSON
+            if (decodedResponse.trim().startsWith('{')) {
+              try {
+                const jsonData = JSON.parse(decodedResponse);
+                
+                // Try to extract text from various response formats
+                if (jsonData.content?.[0]?.text) {
+                  const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
+                  extractedText = match ? match[1].trim() : jsonData.content[0].text;
+                } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
+                  extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
+                } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
+                  const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
+                  extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+                }
+              } catch (jsonErr) {
+                console.debug('JSON parsing failed for response that looked like JSON:', { 
+                  error: jsonErr.message,
+                  rawText: decodedResponse.substring(0, 100) + '...' 
+                });
+                // Even if it looked like JSON but failed to parse, use it as raw text
+                extractedText = decodedResponse;
               }
-            } catch (jsonErr) {
-              // If JSON parsing fails, use raw response
+            } else {
+              // If response doesn't look like JSON, use it directly as plain text
               extractedText = decodedResponse;
-              console.debug('Using raw text response:', { 
-                error: jsonErr.message,
-                rawText: extractedText.substring(0, 100) + '...' 
+              console.debug('Using plain text response:', {
+                preview: decodedResponse.substring(0, 100) + '...'
               });
             }
 
