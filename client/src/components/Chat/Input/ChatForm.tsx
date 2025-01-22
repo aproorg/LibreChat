@@ -5,6 +5,8 @@ import {
   mergeFileConfig,
   isAssistantsEndpoint,
   fileConfig as defaultFileConfig,
+  TConversation,
+  EModelEndpoint,
 } from 'librechat-data-provider';
 import {
   useChatContext,
@@ -76,6 +78,7 @@ const ChatForm = ({ index = 0 }) => {
     files,
     setFiles,
     conversation,
+    setConversation,
     isSubmitting,
     filesLoading,
     newConversation,
@@ -122,9 +125,58 @@ const ChatForm = ({ index = 0 }) => {
     [conversation?.model],
   );
 
+  // Initialize conversation ID for Bedrock Agents if needed
+  useEffect(() => {
+    if (
+      (conversation?.endpoint === 'bedrockAgents' || 
+       conversation?.endpointType === 'bedrockAgents' ||
+       conversation?.endpoint === 'agents')
+    ) {
+      // Always ensure we have a valid conversation ID for Bedrock Agents
+      const newConvoId = conversation?.conversationId && conversation.conversationId !== 'new' 
+        ? conversation.conversationId 
+        : `conv-${Date.now()}`;
+      
+      console.log('Initializing conversation ID for Bedrock Agents:', newConvoId);
+      setConversation((prev: TConversation | null): TConversation => {
+        if (!prev) {
+          return {
+            conversationId: newConvoId,
+            endpoint: EModelEndpoint.bedrockAgents,
+            endpointType: EModelEndpoint.bedrockAgents,
+            title: null,
+            model: conversation?.model || null,
+            messages: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            jailbreak: false
+          };
+        }
+        return {
+          ...prev,
+          conversationId: newConvoId,
+          endpoint: EModelEndpoint.bedrockAgents,
+          endpointType: EModelEndpoint.bedrockAgents,
+          updatedAt: new Date().toISOString()
+        };
+      });
+    }
+  }, [conversation?.endpoint, conversation?.endpointType, conversation?.model, setConversation]);
+
   const disableInputs = useMemo(
-    () => !!((requiresKey ?? false) || invalidAssistant || (!hasValidModel && conversation?.endpoint !== 'bedrockAgents')),
-    [requiresKey, invalidAssistant, hasValidModel, conversation?.endpoint],
+    () => {
+      // For Bedrock Agents, only check if an agent is selected
+      if (
+        conversation?.endpoint === 'bedrockAgents' || 
+        conversation?.endpointType === 'bedrockAgents' ||
+        conversation?.endpoint === 'agents'
+      ) {
+        return !!(requiresKey ?? false) || !conversation?.model;
+      }
+      // For other endpoints, use standard validation
+      return !!(requiresKey ?? false) || invalidAssistant || !hasValidModel;
+    },
+    [requiresKey, invalidAssistant, hasValidModel, conversation?.endpoint, conversation?.endpointType, conversation?.model],
   );
 
   const { ref, ...registerProps } = methods.register('text', {
@@ -167,8 +219,8 @@ const ChatForm = ({ index = 0 }) => {
         maximizeChatSpace ? 'w-full max-w-full' : 'md:max-w-2xl xl:max-w-3xl',
       )}
     >
-      <div className="relative flex h-full flex-1 items-stretch overflow-visible md:flex-col">
-        <div className="relative flex w-full items-center overflow-visible">
+      <div className="relative flex h-full flex-1 items-stretch md:flex-col overflow-visible [isolation:isolate] z-[1000]">
+        <div className="relative flex w-full items-center overflow-visible [isolation:isolate] z-[1000]">
           {showPlusPopover && !isAssistantsEndpoint(endpoint) && (
             <Mention
               setShowMentionPopover={setShowPlusPopover}

@@ -182,8 +182,15 @@ export const getAIEndpoints = (): Promise<t.TEndpointsConfig> => {
 };
 
 export const getBedrockAgents = async (): Promise<s.TBedrockAgent[]> => {
-  const response = await request.get<{ agents: s.TBedrockAgent[] }>(endpoints.bedrockAgents());
-  return response.agents;
+  console.log('Fetching Bedrock agents...');
+  try {
+    const response = await request.get<{ agents: s.TBedrockAgent[] }>(endpoints.bedrockAgents());
+    console.log('Bedrock agents response:', response);
+    return response.agents;
+  } catch (error) {
+    console.error('Error in getBedrockAgents:', error);
+    throw error;
+  }
 };
 
 export const getModels = async (): Promise<t.TModelsConfig> => {

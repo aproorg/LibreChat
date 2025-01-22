@@ -33,17 +33,21 @@ export default defineConfig({
     fs: {
       cachedChecks: false,
     },
-    host: 'localhost',
-    port: 3080,
-    strictPort: false,
+    host: '0.0.0.0',
+    port: 3081,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3080',
         changeOrigin: true,
+        secure: false,
+        ws: true,
       },
       '/oauth': {
         target: 'http://localhost:3080',
         changeOrigin: true,
+        secure: false,
+        ws: true,
       },
     },
   },

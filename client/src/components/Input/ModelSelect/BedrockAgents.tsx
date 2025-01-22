@@ -1,46 +1,117 @@
-import React from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import type { FC } from 'react';
 import type { TModelSelectProps, Option } from '~/common/types';
 import type { TBedrockAgent } from 'librechat-data-provider';
 import useLocalize from '~/hooks/useLocalize';
 import cn from '~/utils/cn';
 import SelectDropDown from '~/components/ui/SelectDropDown';
-import { Plus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
-export default function BedrockAgents({
+type BedrockAgentsProps = Omit<TModelSelectProps, 'models'> & {
+  models: Array<TBedrockAgent | string>;
+};
+
+const BedrockAgents: FC<BedrockAgentsProps> = ({
   conversation,
   setOption,
   models,
   showAbove = true,
   popover = false,
-}: TModelSelectProps & { models: Array<TBedrockAgent> }) {
+}) => {
   const localize = useLocalize();
+  const queryClient = useQueryClient();
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const initRef = useRef(false);
+  const [selectedAgent, setSelectedAgent] = useState<Option | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
 
-  const onSelect = React.useCallback((value: string | Option) => {
-    console.log('BedrockAgents onSelect called with:', value);
-    if (!value) {
-      console.log('BedrockAgents: No value provided');
-      return;
-    }
-    const modelValue = typeof value === 'object' ? value.value : value;
-    if (modelValue) {
-      console.log('Setting agent model:', modelValue);
-      // Initialize conversation state first
-      const conversationId = `conv-${Date.now()}`;
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Initialize component state
+  useEffect(() => {
+    if (!initRef.current && models.length > 0) {
+      initRef.current = true;
+      console.log('BedrockAgents initializing with models:', models);
       
-      // Use React's batch update to ensure all state updates happen together
-      React.startTransition(() => {
-        setOption('endpoint')('bedrockAgents');
-        setOption('endpointType')('bedrockAgents');
-        setOption('model')(modelValue);
-        setOption('conversationId')(conversationId);
-        console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
-      });
-    } else {
-      console.log('BedrockAgents: Invalid model value:', modelValue);
-    }
-  }, [setOption]);
+      // Find current model in conversation or use first available
+      const currentModel = conversation?.model 
+        ? models.find(model => 
+            typeof model === 'string' 
+              ? model === conversation.model 
+              : model.id === conversation.model
+          )
+        : models[0];
 
-  const formatAgentOption = (agent: TBedrockAgent): Option => {
+      if (currentModel) {
+        const formattedOption = formatAgentOption(currentModel);
+        setSelectedAgent(formattedOption);
+        if (!conversation?.model) {
+          onSelect(formattedOption);
+        }
+      }
+    }
+  }, [models, conversation?.model]);
+
+  // Force a re-fetch of agents when the component mounts
+  useEffect(() => {
+    queryClient.invalidateQueries(['bedrockAgents']);
+  }, [queryClient]);
+
+  const onSelect = useCallback((value: string | Option) => {
+    console.log('BedrockAgents onSelect called with:', value);
+    if (!value) return;
+
+    const modelValue = typeof value === 'object' ? value.value : value;
+    if (!modelValue) return;
+
+    // Only update state if necessary
+    const needsEndpointUpdate = !conversation?.endpoint || conversation.endpoint !== 'bedrockAgents';
+    const needsConversationId = !conversation?.conversationId;
+
+    // Find and format the selected model
+    const selectedModel = models.find(model => 
+      typeof model === 'string'
+        ? model === modelValue
+        : model.id === modelValue
+    );
+    
+    if (selectedModel) {
+      const formattedOption = formatAgentOption(selectedModel);
+      setSelectedAgent(formattedOption);
+      setIsOpen(false);
+      
+      // Batch state updates
+      React.startTransition(() => {
+        if (needsEndpointUpdate) {
+          setOption('endpoint')('bedrockAgents');
+          setOption('endpointType')('bedrockAgents');
+        }
+        setOption('model')(modelValue);
+        if (needsConversationId) {
+          setOption('conversationId')(`conv-${Date.now()}`);
+        }
+      });
+    }
+  }, [setOption, models, conversation?.endpoint, conversation?.conversationId, setSelectedAgent, setIsOpen]);
+
+  const formatAgentOption = (agent: TBedrockAgent | string): Option => {
+    if (typeof agent === 'string') {
+      return {
+        value: agent,
+        label: agent,
+        display: agent
+      };
+    }
     return {
       value: agent.id,
       label: agent.name,
@@ -48,7 +119,18 @@ export default function BedrockAgents({
     };
   };
 
-  const hasValue = conversation?.model != null && conversation.model !== '';
+  const hasValue = selectedAgent !== null;
+
+  // Debug logs for component props and state
+  console.log('BedrockAgents Component Props:', {
+    conversation,
+    models,
+    showAbove,
+    popover,
+    hasValue,
+    selectedAgent,
+    availableValues: Array.isArray(models) ? models.map(formatAgentOption) : [],
+  });
 
   return (
     <div className="flex w-full flex-col">
@@ -60,39 +142,37 @@ export default function BedrockAgents({
           {localize('com_ui_aws_bedrock_agent')}
         </div>
       </div>
-      <div className="relative">
+      <div 
+        ref={dropdownRef}
+        className="relative w-full" 
+        data-testid="agent-dropdown-container"
+        style={{ zIndex: 1050 }}
+      >
         <SelectDropDown
-        value={(() => {
-          if (!conversation?.model) {
-            return { value: '', label: 'Select Agent', display: 'Select Agent' };
-          }
-          const foundModel = models.find((model: TBedrockAgent) => model.id === conversation.model);
-          if (!foundModel) {
-            return { value: '', label: 'Select Agent', display: 'Select Agent' };
-          }
-          const formattedOption = formatAgentOption(foundModel);
-          console.log('Current model value:', formattedOption);
-          return formattedOption;
-        })()}
-        setValue={onSelect}
-        availableValues={Array.isArray(models) ? models.map(formatAgentOption) : []}
-        showAbove={showAbove}
-        showLabel={false}
-        className={cn(
-          'rounded-md dark:border-gray-700 dark:bg-gray-850',
-          'z-[9999] flex h-[40px] w-full flex-none items-center justify-center px-4 hover:cursor-pointer hover:border-green-500 focus:border-gray-400',
-        )}
-        optionsClass="hover:bg-gray-20/50 dark:border-gray-700"
-        optionsListClass="rounded-lg shadow-lg dark:bg-gray-850 dark:border-gray-700 dark:last:border"
-        currentValueClass={cn(
-          'text-md font-semibold text-gray-900 dark:text-white',
-          !hasValue ? 'text-gray-500' : '',
-        )}
-        searchPlaceholder={localize('com_agents_search_name')}
-        placeholder={`${localize('com_ui_select')} ${localize('com_ui_agent')}`}
-        showOptionIcon={true}
-      />
+          data-testid="bedrock-agent-select"
+          id="agent-select"
+          title="Select Bedrock Agent"
+          value={selectedAgent || { value: '', label: 'Select Agent', display: 'Select Agent' }}
+          setValue={onSelect}
+          availableValues={Array.isArray(models) ? models.map(formatAgentOption) : []}
+          showAbove={showAbove}
+          showLabel={false}
+          isOpen={isOpen}
+          onOpenChange={setIsOpen}
+          className="rounded-md border-2 border-black/10 bg-white py-2 pl-3 pr-10 text-left hover:border-green-500 dark:border-gray-600 dark:bg-gray-700"
+          optionsClass="hover:bg-gray-100 dark:hover:bg-gray-600"
+          currentValueClass={cn(
+            'text-md font-semibold text-gray-900 dark:text-white',
+            !hasValue ? 'text-gray-500' : '',
+          )}
+          searchPlaceholder={localize('com_agents_search_name')}
+          placeholder={`${localize('com_ui_select')} ${localize('com_ui_agent')}`}
+          showOptionIcon={true}
+          containerClassName="w-full"
+        />
       </div>
     </div>
   );
 }
+
+export default BedrockAgents;

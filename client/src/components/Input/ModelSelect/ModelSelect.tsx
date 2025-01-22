@@ -32,30 +32,50 @@ export default function ModelSelect({
   }
 
   const { endpoint: _endpoint, endpointType } = conversation;
-  const endpoint = endpointType ?? _endpoint;
   
-  // Use bedrockAgents query for the bedrockAgents endpoint
+  // Simplify endpoint mapping - treat 'agents' as 'bedrockAgents'
+  const endpoint = (_endpoint === 'agents' || endpointType === 'agents') 
+    ? EModelEndpoint.bedrockAgents 
+    : (endpointType ?? _endpoint);
+
+  // Use bedrockAgents query for agents endpoints
   const isBedrockAgents = endpoint === EModelEndpoint.bedrockAgents;
   const models = isBedrockAgents
     ? bedrockAgentsQuery?.data ?? []
     : modelsQuery?.data?.[_endpoint] ?? [];
 
+  // Debug logs for component state
+  console.log('ModelSelect Component State:', {
+    endpoint,
+    _endpoint,
+    endpointType,
+    isBedrockAgents,
+    models,
+    bedrockAgentsData: bedrockAgentsQuery?.data,
+    conversation,
+    hasModels: models.length > 0,
+    isLoading: bedrockAgentsQuery.isLoading,
+    isError: bedrockAgentsQuery.isError,
+    error: bedrockAgentsQuery.error
+  });
+
   // Handle endpoint switch in useEffect to prevent state updates during render
   useEffect(() => {
-    if (_endpoint === 'bedrock' && bedrockAgentsQuery?.data?.length) {
+    if (_endpoint === 'agents' && bedrockAgentsQuery?.data?.length && !conversation?.model) {
+      console.log('Initializing Bedrock Agents:', {
+        currentEndpoint: _endpoint,
+        availableAgents: bedrockAgentsQuery.data,
+        conversation
+      });
+      // Initialize conversation state for Bedrock Agents
+      const conversationId = conversation?.conversationId || `conv-${Date.now()}`;
       React.startTransition(() => {
-        setOption('endpoint')('bedrockAgents');
-        setOption('endpointType')('bedrockAgents');
+        setOption('endpoint')(EModelEndpoint.bedrockAgents);
+        setOption('endpointType')(EModelEndpoint.bedrockAgents);
+        setOption('conversationId')(conversationId);
       });
     }
-  }, [_endpoint, bedrockAgentsQuery?.data, setOption]);
-  console.log('ModelSelect Debug:', {
-    endpoint,
-    bedrockAgentsData: bedrockAgentsQuery?.data,
-    modelsData: modelsQuery?.data,
-    finalModels: models,
-    conversation
-  });
+  }, [_endpoint, bedrockAgentsQuery?.data, setOption, conversation?.model]);
 
   const OptionComponent = multiChatOptions[endpoint];
 

@@ -250,7 +250,12 @@ export const useListBedrockAgentsQuery = (
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
-    staleTime: Infinity,
+    staleTime: 1000 * 60 * 5, // Cache for 5 minutes since agent list rarely changes
+    cacheTime: 1000 * 60 * 30, // Keep in cache for 30 minutes
+    retry: 2, // Retry failed requests twice
+    onError: (error) => {
+      console.error('Error fetching Bedrock agents:', error);
+    },
     ...config,
   });
 };

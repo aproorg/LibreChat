@@ -96,13 +96,45 @@ export default function useSSE(
     let textIndex = null;
 
     const chatEndpoint = payload.endpoint === 'bedrockAgents' ? '/api/endpoints/bedrockAgents/chat' : payloadData.server;
+    const fullEndpoint = chatEndpoint.startsWith('http') ? chatEndpoint : `${window.location.origin}${chatEndpoint}`;
+
+    // For Bedrock Agents, ensure we have a valid conversation ID
+    if (payload.endpoint === 'bedrockAgents' || payload.endpoint === 'agents') {
+      if (!payload.conversationId || payload.conversationId === 'new') {
+        payload.conversationId = `conv-${Date.now()}`;
+        // Update conversation state to match
+        setConversation((prev: any) => {
+          if (!prev) {
+            return {
+              conversationId: payload.conversationId,
+              endpoint: payload.endpoint,
+              endpointType: payload.endpoint,
+              model: payload.model,
+              messages: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return {
+            ...prev,
+            conversationId: payload.conversationId,
+            updatedAt: new Date().toISOString(),
+          };
+        });
+      }
+    } else if (payload.conversationId === 'new') {
+      payload.conversationId = `conv-${Date.now()}`;
+    }
+
     console.log('Creating SSE connection with:', {
-      url: chatEndpoint,
+      url: fullEndpoint,
       payload,
-      endpoint: payload.endpoint
+      endpoint: payload.endpoint,
+      token,
+      conversationId: payload.conversationId
     });
 
-    const sse = new SSE(chatEndpoint, {
+    const sse = new SSE(fullEndpoint, {
       payload: JSON.stringify(payload),
       headers: { 
         'Content-Type': 'application/json', 
@@ -191,10 +223,16 @@ export default function useSSE(
       }
 
       setCompleted((prev) => new Set(prev.add(streamKey)));
-      const latestMessages = getMessages();
-      const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
+      const latestMessages = getMessages() ?? [];
+      // Ensure we have a valid conversation ID by checking all possible sources
+      const conversationId = 
+        latestMessages[latestMessages.length - 1]?.conversationId ?? 
+        userMessage?.conversationId ?? 
+        submission?.conversationId ?? 
+        `conv-${Date.now()}`;
+      
       return await abortConversation(
-        conversationId ?? userMessage.conversationId ?? submission.conversationId,
+        conversationId,
         submission as EventSubmission,
         latestMessages,
       );

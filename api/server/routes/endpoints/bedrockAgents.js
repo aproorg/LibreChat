@@ -4,6 +4,9 @@ const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedro
 const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 const { getResponseSender } = require('librechat-data-provider');
 const { initializeClient } = require('~/server/services/Endpoints/bedrockAgents/initializeAgents');
+const { saveMessage, getConvoTitle, saveConvo } = require('~/models');
+const { handleError } = require('~/utils');
+const passport = require('passport');
 
 // Configuration validation and setup
 class ConfigurationError extends Error {
@@ -29,6 +32,8 @@ function validateConfig() {
     },
   };
 }
+
+// Authentication middleware moved to main app.js
 
 router.get('/', async (req, res) => {
   try {
@@ -74,7 +79,18 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/chat', async (req, res) => {
+router.post('/chat', passport.authenticate('jwt', { session: false }), async (req, res) => {
+  // Verify user authentication
+  if (!req.user) {
+    const errorEvent = {
+      error: true,
+      message: 'User not authenticated'
+    };
+    res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+    res.end();
+    return;
+  }
+
   // Set SSE headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -84,9 +100,26 @@ router.post('/chat', async (req, res) => {
   });
 
   try {
+    console.log('Authenticated user:', {
+      userId: req.user.id,
+      email: req.user.email
+    });
     console.log('POST /chat - Processing chat request...');
     const { text: inputText, messages, parentMessageId, conversationId: reqConversationId, model } = req.body;
-    const conversationId = reqConversationId || `conv-${Date.now()}`;
+    
+    // Ensure we have a valid conversation ID
+    if (!reqConversationId || reqConversationId === 'new') {
+      throw new Error('Invalid conversation ID. Expected a valid conversation ID but received: ' + reqConversationId);
+    }
+    const conversationId = reqConversationId;
+
+    // Send initial state event
+    const initEvent = {
+      type: 'state',
+      conversationId,
+      messageId: parentMessageId || crypto.randomUUID(),
+    };
+    res.write(`data: ${JSON.stringify(initEvent)}\n\n`);
     
     console.log('Received request:', {
       model,
@@ -148,26 +181,56 @@ router.post('/chat', async (req, res) => {
       },
     });
 
-    const initialMessage = { text: messageText, isCreatedByUser: true };
-    const messageData = await agentClient.client.buildMessages(
-      messages || [initialMessage],
-      parentMessageId,
-      agentClient.client.getBuildMessagesOptions(),
-    );
+    // Save user message with authenticated user info
+    const messageId = crypto.randomUUID();
+    const userMessage = {
+      messageId,
+      conversationId,
+      parentMessageId: parentMessageId || messageId,
+      sender: 'User',
+      text: messageText,
+      isCreatedByUser: true,
+      error: false,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
 
-    // Generate a unique message ID if not present
-    const messageId = messageData?.messages?.[messageData.messages.length - 1]?.messageId ?? crypto.randomUUID();
+    await saveMessage(req, userMessage);
 
-    // Send created event
+    // Initialize conversation if it's new
+    if (reqConversationId === 'new' || !reqConversationId) {
+      const title = await getConvoTitle(messageText, 'Create a title for this chat');
+      await saveConvo({
+        user: req.user.id,
+        conversationId,
+        title,
+        endpoint: 'bedrockAgents',
+        model,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    // Send created event for message
     const createdEvent = {
       created: true,
       message: {
         messageId,
-        parentMessageId,
+        parentMessageId: parentMessageId || messageId,
         conversationId,
+        sender: 'User',
+        text: messageText,
+        isCreatedByUser: true,
       },
     };
     res.write(`data: ${JSON.stringify(createdEvent)}\n\n`);
+
+    const initialMessage = { text: messageText, isCreatedByUser: true };
+    const messageData = await agentClient.client.buildMessages(
+      messages || [initialMessage],
+      parentMessageId || messageId,
+      agentClient.client.getBuildMessagesOptions(),
+    );
 
     const client = new BedrockAgentRuntimeClient({
       region: process.env.BEDROCK_AWS_DEFAULT_REGION,
@@ -183,6 +246,17 @@ router.post('/chat', async (req, res) => {
       sessionId: conversationId,
       inputText: messageText
     });
+
+    // Send start event
+    const startEvent = {
+      type: 'start',
+      messageId: messageId,
+      conversationId,
+      model,
+      agentId: model,
+      parentMessageId: parentMessageId || messageId,
+    };
+    res.write(`data: ${JSON.stringify(startEvent)}\n\n`);
 
     const response = await client.send(command);
 
@@ -207,41 +281,63 @@ router.post('/chat', async (req, res) => {
               extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
             }
 
-            if (extractedText && !extractedText.includes('{') && !extractedText.includes('}')) {
+            // Handle both JSON and plain text responses
+            if (extractedText) {
               responseText += extractedText;
-              // Send message event with partial response
+              
+              // Create or update agent message
+              const agentMessageId = crypto.randomUUID();
+              const agentMessage = {
+                messageId: agentMessageId,
+                conversationId,
+                parentMessageId: messageId,
+                sender: 'Bedrock Agent',
+                text: responseText, // Use complete response text
+                isCreatedByUser: false,
+                error: false,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+
+              // Save complete message state
+              await saveMessage(req, agentMessage);
+
+              // Send content event for streaming UI update
               const messageEvent = {
                 message: extractedText,
-                messageId,
-                parentMessageId,
+                messageId: agentMessageId,
+                parentMessageId: messageId,
                 conversationId,
                 type: 'content'
               };
               res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
             }
           } catch (err) {
-            // If not JSON or parsing fails, treat as raw text
-            if (!decodedResponse.includes('{') && !decodedResponse.includes('}')) {
-              responseText += decodedResponse;
-              const messageEvent = {
-                message: decodedResponse,
-                messageId,
-                parentMessageId,
-                conversationId,
-                type: 'content'
-              };
-              res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
-            }
+            console.error('Error processing agent response:', err);
+            // If JSON parsing fails, treat as raw text
+            responseText += decodedResponse;
+            const messageEvent = {
+              message: decodedResponse,
+              messageId: crypto.randomUUID(),
+              parentMessageId: messageId,
+              conversationId,
+              type: 'content'
+            };
+            res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
           }
         }
       }
 
       // Send final event with complete response
       const finalEvent = {
+        type: 'done',
+        messageId: crypto.randomUUID(),
+        parentMessageId: messageId,
+        conversationId,
+        model,
+        agentId: model,
         final: true,
         message: responseText,
-        messageId,
-        conversationId,
       };
       res.write(`data: ${JSON.stringify(finalEvent)}\n\n`);
     }

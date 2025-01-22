@@ -13,12 +13,14 @@ import { useMultiSearch } from './MultiSearch';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils/';
 
+const { useRef, useEffect, useState } = React;
+
 type SelectDropDownProps = {
   id?: string;
   title?: string;
   disabled?: boolean;
   value: string | null | Option | OptionWithIcon;
-  setValue: DropdownValueSetter | ((value: string) => void);
+  setValue: DropdownValueSetter | ((value: string | Option | OptionWithIcon) => void);
   tabIndex?: number;
   availableValues?: string[] | Option[] | OptionWithIcon[];
   emptyTitle?: boolean;
@@ -37,6 +39,8 @@ type SelectDropDownProps = {
   searchClassName?: string;
   searchPlaceholder?: string;
   showOptionIcon?: boolean;
+  isOpen?: boolean;
+  onOpenChange?: (isOpen: boolean) => void;
 };
 
 function getOptionText(option: string | Option | OptionWithIcon): string {
@@ -52,7 +56,7 @@ function getOptionText(option: string | Option | OptionWithIcon): string {
   return '';
 }
 
-function SelectDropDown({
+const SelectDropDown: React.FC<SelectDropDownProps> = ({
   title: _title,
   value,
   disabled,
@@ -74,12 +78,53 @@ function SelectDropDown({
   searchClassName,
   searchPlaceholder,
   showOptionIcon = false,
-}: SelectDropDownProps) {
+  isOpen,
+  onOpenChange,
+}) => {
   const localize = useLocalize();
-  const transitionProps = { className: 'top-full mt-3' };
-  if (showAbove) {
-    transitionProps.className = 'bottom-full mb-3';
-  }
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    showAbove?: boolean;
+  }>({ top: 0, left: 0, width: 0 });
+
+  useEffect(() => {
+    const updatePosition = () => {
+      if (buttonRef.current) {
+        const rect = buttonRef.current.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const spaceBelow = viewportHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        const dropdownHeight = 300; // Maximum height of dropdown
+
+        // Determine if dropdown should appear above or below
+        const showAbove = spaceBelow < dropdownHeight && spaceAbove > spaceBelow;
+
+        setDropdownPosition({
+          top: showAbove 
+            ? rect.top + window.scrollY - dropdownHeight - 8
+            : rect.bottom + window.scrollY + 8,
+          left: rect.left + window.scrollX,
+          width: rect.width,
+          showAbove
+        });
+      }
+    };
+
+    updatePosition();
+    window.addEventListener('scroll', updatePosition);
+    window.addEventListener('resize', updatePosition);
+
+    return () => {
+      window.removeEventListener('scroll', updatePosition);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, []);
+  const transitionProps = { 
+    className: dropdownPosition.showAbove ? 'bottom-full mb-3' : 'top-full mt-3'
+  };
 
   let title = _title;
 
@@ -91,15 +136,7 @@ function SelectDropDown({
 
   const values = availableValues ?? [];
 
-  console.log('SelectDropDown Debug:', {
-    value,
-    values,
-    disabled,
-    className,
-    showAbove
-  });
-
-  // Detemine if we should to convert this component into a searchable select.  If we have enough elements, a search
+  // Determine if we should convert this component into a searchable select.  If we have enough elements, a search
   // input will appear near the top of the menu, allowing correct filtering of different model menu items. This will
   // reset once the component is unmounted (as per a normal search)
   const [filteredValues, searchRender] = useMultiSearch<string[] | Option[]>({
@@ -114,16 +151,71 @@ function SelectDropDown({
 
   const renderIcon = showOptionIcon && value != null && (value as OptionWithIcon).icon != null;
 
+  // Add click handler debug
+  const handleClick = (newOpen: boolean) => {
+    console.log('SelectDropDown button clicked, setting open to:', newOpen);
+    onOpenChange?.(newOpen);
+  };
+
   return (
-    <div className={cn('flex items-center justify-center gap-2 ', containerClassName ?? '')}>
-      <div className={cn('relative w-full', subContainerClassName ?? '')}>
-        <Listbox value={value} onChange={setValue} disabled={disabled}>
-          {({ open }) => (
+    <div 
+      className={cn('flex items-center justify-center gap-2 relative', containerClassName ?? '')}
+      style={{ isolation: 'isolate', zIndex: 100 }}
+      data-testid="select-dropdown-container"
+      onClick={() => console.log('Container clicked')}
+    >
+      <div 
+        className={cn('relative w-full', subContainerClassName ?? '')}
+        style={{ position: 'relative', zIndex: 'auto' }}
+        onClick={(e) => {
+          console.log('Inner container clicked');
+          e.stopPropagation();
+        }}
+      >
+        <Listbox 
+          value={value} 
+          onChange={(val: string | Option | OptionWithIcon | null) => {
+            if (val !== null) {
+              setValue(val);
+              onOpenChange?.(false);
+            }
+          }} 
+          disabled={disabled}
+        >
+          {({ open: listboxOpen }) => {
+            const open = isOpen ?? listboxOpen;
+            console.log('SelectDropDown Debug:', {
+              value,
+              values: values.length,
+              availableValues: values,
+              disabled,
+              className,
+              showAbove,
+              hasSearchRender,
+              options: options.length,
+              containerClassName,
+              subContainerClassName,
+              title,
+              placeholder,
+              renderIcon,
+              showLabel,
+              isOpen: open
+            });
+            
+            return (
             <>
               <ListboxButton
+                ref={buttonRef}
                 data-testid="select-dropdown-button"
+                aria-label={title || 'Select option'}
+                onClick={(e) => {
+                  console.log('ListboxButton clicked');
+                  handleClick(!open);
+                  e.stopPropagation();
+                }}
                 className={cn(
-                  'relative flex w-full cursor-default flex-col rounded-md border border-black/10 bg-white py-2 pl-3 pr-10 text-left disabled:bg-white dark:border-gray-600 dark:bg-gray-700 sm:text-sm',
+                  'relative flex w-full cursor-pointer flex-col rounded-md border-2 border-black/10 bg-white py-2 pl-3 pr-10 text-left hover:border-green-500 dark:border-gray-600 dark:bg-gray-700 sm:text-sm',
+                  'focus:outline-none focus:ring-2 focus:ring-green-500',
                   className ?? '',
                 )}
               >
@@ -192,16 +284,36 @@ function SelectDropDown({
               <Transition
                 show={open}
                 as={React.Fragment}
-                leave="transition ease-in duration-100"
-                leaveFrom="opacity-100"
-                leaveTo="opacity-0"
+                enter="transition ease-out duration-100"
+                enterFrom="opacity-0 -translate-y-1"
+                enterTo="opacity-100 translate-y-0"
+                leave="transition ease-in duration-75"
+                leaveFrom="opacity-100 translate-y-0"
+                leaveTo="opacity-0 -translate-y-1"
                 {...transitionProps}
               >
                 <ListboxOptions
                   className={cn(
-                    'absolute z-[9999] mt-2 max-h-60 w-full overflow-auto rounded border bg-white text-xs ring-black/10 dark:border-gray-600 dark:bg-gray-700 dark:ring-white/20 md:w-[100%]',
+                    'fixed mt-2 max-h-60 overflow-auto rounded-lg border-2 bg-white text-xs shadow-lg ring-1 ring-black/10 dark:border-gray-600 dark:bg-gray-700 dark:ring-white/20',
+                    'focus:outline-none focus:ring-2 focus:ring-green-500',
+                    'transform-gpu transition-all duration-100 ease-in-out',
                     optionsListClass ?? '',
                   )}
+                  style={{
+                    position: 'fixed',
+                    left: `${dropdownPosition.left}px`,
+                    top: `${dropdownPosition.top}px`,
+                    width: `${dropdownPosition.width}px`,
+                    maxHeight: '300px',
+                    zIndex: 99999,
+                    opacity: open ? 1 : 0,
+                    visibility: open ? 'visible' : 'hidden',
+                    transform: open ? 'translateY(0)' : dropdownPosition.showAbove ? 'translateY(10px)' : 'translateY(-10px)',
+                    pointerEvents: open ? 'auto' : 'none',
+                    backgroundColor: 'var(--background)',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                    isolation: 'isolate'
+                  }}
                 >
                   {renderOption && (
                     <ListboxOption
@@ -280,7 +392,8 @@ function SelectDropDown({
                 </ListboxOptions>
               </Transition>
             </>
-          )}
+            );
+          }}
         </Listbox>
       </div>
     </div>

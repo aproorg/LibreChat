@@ -14,7 +14,8 @@ export const options: { [key: string]: FC<TModelSelectProps> } = {
   [EModelEndpoint.openAI]: OpenAI,
   [EModelEndpoint.custom]: OpenAI,
   [EModelEndpoint.bedrock]: OpenAI,
-  [EModelEndpoint.bedrockAgents]: BedrockAgents,
+  [EModelEndpoint.bedrockAgents]: BedrockAgents as FC<TModelSelectProps>,
+  'agents': BedrockAgents as FC<TModelSelectProps>,  // Add support for 'agents' endpoint
   [EModelEndpoint.azureOpenAI]: OpenAI,
   [EModelEndpoint.bingAI]: BingAI,
   [EModelEndpoint.google]: Google,

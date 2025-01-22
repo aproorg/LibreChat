@@ -110,7 +110,7 @@ const startServer = async () => {
   app.use('/api/banner', routes.banner);
   app.use('/api/bedrock', routes.bedrock);
 
-  // Enable bedrockAgents endpoint and register route
+  // Enable bedrockAgents endpoint and register route with authentication
   app.locals[EModelEndpoint.bedrockAgents] = true;
   console.log('BedrockAgents Config:', {
     enabled: app.locals[EModelEndpoint.bedrockAgents],
@@ -120,7 +120,7 @@ const startServer = async () => {
     agentId: process.env.AWS_BEDROCK_AGENT_ID,
     agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID
   });
-  app.use('/api/endpoints/bedrockAgents', routes.bedrockAgents);
+  app.use('/api/endpoints/bedrockAgents', passport.authenticate('jwt', { session: false }), routes.bedrockAgents);
 
   app.use('/api/tags', routes.tags);
 
