@@ -367,8 +367,8 @@ export default function useEventHandlers({
 
   const finalHandler = useCallback(
     (data: TFinalResData, submission: EventSubmission) => {
-      const { requestMessage, responseMessage, conversation, runMessages } = data;
-      const { messages, conversation: submissionConvo, isRegenerate = false } = submission;
+      const { requestMessage, responseMessage, conversation = {}, runMessages } = data;
+      const { messages, conversation: submissionConvo = {}, isRegenerate = false } = submission;
 
       setShowStopButton(false);
       setCompleted((prev) => new Set(prev.add(submission.initialResponse.messageId)));
@@ -385,9 +385,11 @@ export default function useEventHandlers({
         isStatus: true,
       });
 
-      announcePolite({
-        message: getAllContentText(responseMessage),
-      });
+      if (responseMessage) {
+        announcePolite({
+          message: getAllContentText(responseMessage),
+        });
+      }
 
       /* Update messages; if assistants endpoint, client doesn't receive responseMessage */
       if (runMessages) {
@@ -398,7 +400,9 @@ export default function useEventHandlers({
         setMessages([...messages, requestMessage, responseMessage]);
       }
 
-      const isNewConvo = conversation.conversationId !== submissionConvo.conversationId;
+      const submissionConvoId = submissionConvo?.conversationId;
+      const responseConvoId = conversation?.conversationId;
+      const isNewConvo = responseConvoId && submissionConvoId && responseConvoId !== submissionConvoId;
       if (isNewConvo) {
         queryClient.setQueryData<ConversationData>([QueryKeys.allConversations], (convoData) => {
           if (!convoData) {

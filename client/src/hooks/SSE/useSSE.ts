@@ -88,6 +88,16 @@ export default function useSSE(
     const payloadData = createPayload(submission);
     let { payload } = payloadData;
     let userMessage = submission?.userMessage;
+
+    // Ensure we're using the correct agent ID for Bedrock Agents
+    if (payload.endpoint === 'bedrockAgents' && submission.conversation?.agentId) {
+      console.debug('Setting Bedrock Agent ID:', {
+        agentId: submission.conversation.agentId,
+        model: payload.model
+      });
+      payload.model = submission.conversation.agentId;
+    }
+
     if (isAssistantsEndpoint(payload.endpoint) || isAgentsEndpoint(payload.endpoint)) {
       payload = removeNullishValues(payload) as TPayload;
     }
@@ -130,12 +140,13 @@ export default function useSSE(
     }
 
     // Log SSE connection details
-    console.log('Creating SSE connection with:', {
+    console.debug('Creating SSE connection with:', {
       url: fullEndpoint,
-      payload,
       endpoint: payload.endpoint,
-      token,
-      conversationId: payload.conversationId
+      model: payload.model,
+      agentId: submission.conversation?.agentId,
+      conversationId: payload.conversationId,
+      endpointType: payload.endpointType
     });
 
     // Initialize SSE connection
@@ -233,7 +244,7 @@ export default function useSSE(
       const conversationId = 
         latestMessages[latestMessages.length - 1]?.conversationId ?? 
         userMessage?.conversationId ?? 
-        submission?.conversationId ?? 
+        (submission?.conversation?.conversationId ?? submission?.conversationId) ?? 
         `conv-${Date.now()}`;
       
       return await abortConversation(

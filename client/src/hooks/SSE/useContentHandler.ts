@@ -53,13 +53,16 @@ export default function useContentHandler({ setMessages, getMessages }: TUseCont
       }
 
       // Handle both direct text content and structured content
-      // Handle both direct text content and structured content
       const contentType = type || ContentTypes.TEXT;
       let textPart: Text | string | undefined = data[ContentTypes.TEXT];
       
       // If no TEXT content but has text field, use that
-      if (!textPart && typeof data === 'object' && 'text' in data) {
-        textPart = data.text as string;
+      if (!textPart && typeof data === 'object') {
+        if ('text' in data) {
+          textPart = data.text as string;
+        } else if ('message' in data) {
+          textPart = data.message as string;
+        }
       }
 
       console.debug('[useContentHandler] Processing content:', {
@@ -67,11 +70,13 @@ export default function useContentHandler({ setMessages, getMessages }: TUseCont
         textPart,
         messageId,
         conversationId,
-        contentLength: response.content?.length
+        contentLength: response.content?.length,
+        data
       });
 
-      const part: ContentPart =
-        textPart != null && typeof textPart === 'string' ? { value: textPart } : data[contentType];
+      const part: ContentPart = textPart != null && typeof textPart === 'string' 
+        ? { value: textPart } 
+        : (data[contentType] || { value: '' });
 
       if (type === ContentTypes.IMAGE_FILE) {
         addFileToCache(queryClient, part as ImageFile & PartMetadata);

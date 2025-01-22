@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 
 // Debug environment variables

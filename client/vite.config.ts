@@ -32,10 +32,12 @@ export default defineConfig({
   server: {
     fs: {
       cachedChecks: false,
+      allow: ['..'],
     },
-    host: '0.0.0.0',
+    host: 'localhost',
     port: 3081,
     strictPort: true,
+    cors: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3080',

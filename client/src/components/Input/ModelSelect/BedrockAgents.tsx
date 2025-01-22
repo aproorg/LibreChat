@@ -87,6 +87,14 @@ const BedrockAgents: FC<BedrockAgentsProps> = ({
     
     if (selectedModel) {
       const formattedOption = formatAgentOption(selectedModel);
+      const agentId = typeof selectedModel === 'string' ? selectedModel : selectedModel.id;
+      
+      console.log('Setting Bedrock Agent:', {
+        agentId,
+        formattedOption,
+        selectedModel
+      });
+      
       setSelectedAgent(formattedOption);
       setIsOpen(false);
       
@@ -96,7 +104,8 @@ const BedrockAgents: FC<BedrockAgentsProps> = ({
           setOption('endpoint')('bedrockAgents');
           setOption('endpointType')('bedrockAgents');
         }
-        setOption('model')(modelValue);
+        setOption('model')(agentId);
+        setOption('agentId')(agentId);
         if (needsConversationId) {
           setOption('conversationId')(`conv-${Date.now()}`);
         }
