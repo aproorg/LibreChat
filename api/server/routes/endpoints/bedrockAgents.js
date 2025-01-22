@@ -38,10 +38,8 @@ function validateConfig() {
 router.get('/', async (req, res) => {
   try {
     const config = validateConfig();
-    console.log('Fetching Bedrock agents with validated config:', {
-      region: config.region,
-      hasAccessKey: !!config.credentials.accessKeyId,
-      hasSecretKey: !!config.credentials.secretAccessKey,
+    console.log('Initializing Bedrock agents service:', {
+      isConfigured: !!(config.region && config.credentials),
     });
 
     const client = new BedrockAgentClient(config);
@@ -166,8 +164,7 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
       conversationId,
       messageLength: messageText.length,
       totalMessages: messages?.length,
-      hasCredentials: !!process.env.BEDROCK_AWS_ACCESS_KEY_ID && !!process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
-      region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+      isConfigured: !!(process.env.BEDROCK_AWS_ACCESS_KEY_ID && process.env.BEDROCK_AWS_SECRET_ACCESS_KEY && process.env.BEDROCK_AWS_DEFAULT_REGION),
     });
 
     const agentClient = await initializeClient({
@@ -267,21 +264,31 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
         if (chunk.chunk?.bytes) {
           const decodedResponse = new TextDecoder().decode(chunk.chunk.bytes);
           try {
-            const jsonData = JSON.parse(decodedResponse);
             let extractedText = '';
             
-            // Try to extract text from various response formats
-            if (jsonData.content?.[0]?.text) {
-              const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
-              extractedText = match ? match[1].trim() : jsonData.content[0].text;
-            } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
-              extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
-            } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
-              const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
-              extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+            // First try to parse as JSON
+            try {
+              const jsonData = JSON.parse(decodedResponse);
+              
+              // Try to extract text from various response formats
+              if (jsonData.content?.[0]?.text) {
+                const match = jsonData.content[0].text.match(/<answer>(.*?)<\/answer>/s);
+                extractedText = match ? match[1].trim() : jsonData.content[0].text;
+              } else if (jsonData.trace?.orchestrationTrace?.observation?.finalResponse?.text) {
+                extractedText = jsonData.trace.orchestrationTrace.observation.finalResponse.text;
+              } else if (jsonData.trace?.orchestrationTrace?.modelInvocationOutput?.text) {
+                const match = jsonData.trace.orchestrationTrace.modelInvocationOutput.text.match(/<answer>(.*?)<\/answer>/s);
+                extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
+              }
+            } catch (jsonErr) {
+              // If JSON parsing fails, use raw response
+              extractedText = decodedResponse;
+              console.debug('Using raw text response:', { 
+                error: jsonErr.message,
+                rawText: extractedText.substring(0, 100) + '...' 
+              });
             }
 
-            // Handle both JSON and plain text responses
             if (extractedText) {
               responseText += extractedText;
               
@@ -292,7 +299,7 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
                 conversationId,
                 parentMessageId: messageId,
                 sender: 'Bedrock Agent',
-                text: responseText, // Use complete response text
+                text: responseText,
                 isCreatedByUser: false,
                 error: false,
                 createdAt: new Date(),
@@ -313,9 +320,8 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
               res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
             }
           } catch (err) {
-            console.error('Error processing agent response:', err);
-            // If JSON parsing fails, treat as raw text
-            responseText += decodedResponse;
+            console.error('Error handling agent response:', err);
+            // If we encounter any other errors, still try to send the response
             const messageEvent = {
               message: decodedResponse,
               messageId: crypto.randomUUID(),

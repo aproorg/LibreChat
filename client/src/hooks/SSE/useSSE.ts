@@ -1,4 +1,4 @@
-import type { EventSubmission, TMessage, TPayload, TSubmission } from 'librechat-data-provider';
+import type { EventSubmission, TMessage, TPayload, TSubmission, TConversation, EModelEndpoint } from 'librechat-data-provider';
 import {
   /* @ts-ignore */
   createPayload,
@@ -85,10 +85,9 @@ export default function useSSE(
       return;
     }
 
-    let { userMessage } = submission;
-
     const payloadData = createPayload(submission);
     let { payload } = payloadData;
+    let userMessage = submission?.userMessage;
     if (isAssistantsEndpoint(payload.endpoint) || isAgentsEndpoint(payload.endpoint)) {
       payload = removeNullishValues(payload) as TPayload;
     }
@@ -98,34 +97,39 @@ export default function useSSE(
     const chatEndpoint = payload.endpoint === 'bedrockAgents' ? '/api/endpoints/bedrockAgents/chat' : payloadData.server;
     const fullEndpoint = chatEndpoint.startsWith('http') ? chatEndpoint : `${window.location.origin}${chatEndpoint}`;
 
-    // For Bedrock Agents, ensure we have a valid conversation ID
-    if (payload.endpoint === 'bedrockAgents' || payload.endpoint === 'agents') {
-      if (!payload.conversationId || payload.conversationId === 'new') {
-        payload.conversationId = `conv-${Date.now()}`;
-        // Update conversation state to match
-        setConversation((prev: any) => {
-          if (!prev) {
-            return {
-              conversationId: payload.conversationId,
-              endpoint: payload.endpoint,
-              endpointType: payload.endpoint,
-              model: payload.model,
-              messages: [],
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-          }
-          return {
-            ...prev,
-            conversationId: payload.conversationId,
-            updatedAt: new Date().toISOString(),
-          };
-        });
-      }
-    } else if (payload.conversationId === 'new') {
-      payload.conversationId = `conv-${Date.now()}`;
+    // Ensure we have a valid conversation ID for all endpoints
+    const generateConvId = () => `conv-${Date.now()}`;
+    const validateConvId = (id: string | null | undefined): boolean => 
+      !!id && id !== 'new' && (id.startsWith('conv-') || /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id));
+
+    if (!validateConvId(payload.conversationId)) {
+      payload.conversationId = generateConvId();
+      // Update conversation state to match
+      setConversation?.((prev: TConversation | null) => {
+        const newState: TConversation = {
+          conversationId: payload.conversationId ?? '',
+          endpoint: payload.endpoint as EModelEndpoint,
+          endpointType: payload.endpoint as EModelEndpoint,
+          model: payload.model ?? null,
+          messages: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          title: null,
+          jailbreak: false,
+        };
+        
+        if (!prev) {
+          return newState;
+        }
+        
+        return {
+          ...prev,
+          ...newState,
+        };
+      });
     }
 
+    // Log SSE connection details
     console.log('Creating SSE connection with:', {
       url: fullEndpoint,
       payload,
@@ -134,6 +138,7 @@ export default function useSSE(
       conversationId: payload.conversationId
     });
 
+    // Initialize SSE connection
     const sse = new SSE(fullEndpoint, {
       payload: JSON.stringify(payload),
       headers: { 

@@ -2,7 +2,8 @@ const { z } = require('zod');
 const Message = require('./schema/messageSchema');
 const { logger } = require('~/config');
 
-const idSchema = z.string().uuid();
+const idSchema = z.string().uuid()
+  .or(z.string().regex(/^conv-\d+$/, { message: 'Must be a valid UUID or conv-timestamp format' }));
 
 /**
  * Saves a message in the database.
