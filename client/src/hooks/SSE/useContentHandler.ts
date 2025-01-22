@@ -52,10 +52,26 @@ export default function useContentHandler({ setMessages, getMessages }: TUseCont
         messageMap.set(messageId, response);
       }
 
-      // TODO: handle streaming for non-text
-      const textPart: Text | string | undefined = data[ContentTypes.TEXT];
+      // Handle both direct text content and structured content
+      // Handle both direct text content and structured content
+      const contentType = type || ContentTypes.TEXT;
+      let textPart: Text | string | undefined = data[ContentTypes.TEXT];
+      
+      // If no TEXT content but has text field, use that
+      if (!textPart && typeof data === 'object' && 'text' in data) {
+        textPart = data.text as string;
+      }
+
+      console.debug('[useContentHandler] Processing content:', {
+        contentType,
+        textPart,
+        messageId,
+        conversationId,
+        contentLength: response.content?.length
+      });
+
       const part: ContentPart =
-        textPart != null && typeof textPart === 'string' ? { value: textPart } : data[type];
+        textPart != null && typeof textPart === 'string' ? { value: textPart } : data[contentType];
 
       if (type === ContentTypes.IMAGE_FILE) {
         addFileToCache(queryClient, part as ImageFile & PartMetadata);

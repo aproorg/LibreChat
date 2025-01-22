@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { BedrockAgentClient, ListAgentsCommand } = require('@aws-sdk/client-bedrock-agent');
 const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
-const { getResponseSender } = require('librechat-data-provider');
+const { getResponseSender, ContentTypes } = require('librechat-data-provider');
 const { initializeClient } = require('~/server/services/Endpoints/bedrockAgents/initializeAgents');
 const { saveMessage, getConvoTitle, saveConvo } = require('~/models');
 const { handleError } = require('~/utils');
@@ -266,9 +266,11 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
           try {
             let extractedText = '';
             
-            // First try to parse as JSON
-            // First check if response looks like JSON
-            if (decodedResponse.trim().startsWith('{')) {
+            // Handle both JSON and plain text responses
+            let isJsonResponse = decodedResponse.trim().startsWith('{');
+            extractedText = decodedResponse;
+
+            if (isJsonResponse) {
               try {
                 const jsonData = JSON.parse(decodedResponse);
                 
@@ -283,16 +285,12 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
                   extractedText = match ? match[1].trim() : jsonData.trace.orchestrationTrace.modelInvocationOutput.text;
                 }
               } catch (jsonErr) {
-                console.debug('JSON parsing failed for response that looked like JSON:', { 
+                console.debug('Using raw text for JSON-like response:', { 
                   error: jsonErr.message,
-                  rawText: decodedResponse.substring(0, 100) + '...' 
+                  preview: decodedResponse.substring(0, 100) + '...' 
                 });
-                // Even if it looked like JSON but failed to parse, use it as raw text
-                extractedText = decodedResponse;
               }
             } else {
-              // If response doesn't look like JSON, use it directly as plain text
-              extractedText = decodedResponse;
               console.debug('Using plain text response:', {
                 preview: decodedResponse.substring(0, 100) + '...'
               });
@@ -320,11 +318,13 @@ router.post('/chat', passport.authenticate('jwt', { session: false }), async (re
 
               // Send content event for streaming UI update
               const messageEvent = {
-                message: extractedText,
+                type: 'content',
+                text: extractedText,
                 messageId: agentMessageId,
                 parentMessageId: messageId,
                 conversationId,
-                type: 'content'
+                [ContentTypes.TEXT]: extractedText,
+                content: [{ type: ContentTypes.TEXT, text: { value: extractedText } }]
               };
               res.write(`data: ${JSON.stringify(messageEvent)}\n\n`);
             }

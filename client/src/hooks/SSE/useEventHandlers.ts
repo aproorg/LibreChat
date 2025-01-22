@@ -78,7 +78,12 @@ export default function useEventHandlers({
   const { conversationId: paramId } = useParams();
   const { token } = useAuthContext();
 
-  const contentHandler = useContentHandler({ setMessages, getMessages });
+  const contentHandler = useContentHandler({ 
+    setMessages, 
+    getMessages,
+    announcePolite,
+    lastAnnouncementTimeRef,
+  });
   const stepHandler = useStepHandler({
     setMessages,
     getMessages,
@@ -99,6 +104,12 @@ export default function useEventHandlers({
         isRegenerate = false,
       } = submission;
       const text = data ?? '';
+      console.debug('[messageHandler] Processing message:', {
+        textLength: text?.length,
+        hasUserMessage: !!userMessage,
+        messageCount: messages?.length,
+        isRegenerate
+      });
       setIsSubmitting(true);
 
       const currentTime = Date.now();
