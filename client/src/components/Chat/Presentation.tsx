@@ -85,7 +85,7 @@ export default function Presentation({
 
   if (useSidePanel && !hideSidePanel && interfaceConfig.sidePanel === true) {
     return (
-      <DragDropWrapper className="relative flex w-full grow bg-presentation">
+      <DragDropWrapper className="relative flex w-full grow overflow-visible bg-presentation">
         <SidePanel
           defaultLayout={defaultLayout}
           defaultCollapsed={defaultCollapsed}
@@ -107,7 +107,7 @@ export default function Presentation({
   }
 
   return (
-    <DragDropWrapper className="relative flex w-full grow overflow-hidden bg-presentation">
+    <DragDropWrapper className="relative flex w-full grow overflow-visible bg-presentation">
       {layout()}
       {panel != null && panel}
     </DragDropWrapper>

@@ -15,7 +15,7 @@ export default function BedrockAgents({
 }: TModelSelectProps & { models: Array<TBedrockAgent> }) {
   const localize = useLocalize();
 
-  const onSelect = (value: string | Option) => {
+  const onSelect = React.useCallback((value: string | Option) => {
     console.log('BedrockAgents onSelect called with:', value);
     if (!value) {
       console.log('BedrockAgents: No value provided');
@@ -27,19 +27,18 @@ export default function BedrockAgents({
       // Initialize conversation state first
       const conversationId = `conv-${Date.now()}`;
       
-      // Set endpoint and type first
-      setOption('endpoint')('bedrockAgents');
-      setOption('endpointType')('bedrockAgents');
-      
-      // Then set model and conversation ID
-      setOption('model')(modelValue);
-      setOption('conversationId')(conversationId);
-      
-      console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
+      // Use React's batch update to ensure all state updates happen together
+      React.startTransition(() => {
+        setOption('endpoint')('bedrockAgents');
+        setOption('endpointType')('bedrockAgents');
+        setOption('model')(modelValue);
+        setOption('conversationId')(conversationId);
+        console.log('Agent model set to:', modelValue, 'with conversationId:', conversationId);
+      });
     } else {
       console.log('BedrockAgents: Invalid model value:', modelValue);
     }
-  };
+  }, [setOption]);
 
   const formatAgentOption = (agent: TBedrockAgent): Option => {
     return {

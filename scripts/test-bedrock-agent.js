@@ -1,11 +1,19 @@
 const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
 
+// Debug environment variables
+console.log('Environment Variables:', {
+  region: process.env.BEDROCK_AWS_DEFAULT_REGION,
+  accessKeyId: process.env.BEDROCK_AWS_ACCESS_KEY_ID ? '***' : undefined,
+  secretAccessKey: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY ? '***' : undefined,
+  agentId: process.env.AWS_BEDROCK_AGENT_ID
+});
+
 // Initialize the client with AWS credentials
 const client = new BedrockAgentRuntimeClient({
-  region: process.env.AWS_REGION || 'eu-central-1',
+  region: process.env.BEDROCK_AWS_DEFAULT_REGION || 'eu-central-1',
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    accessKeyId: process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
   },
 });
 
@@ -20,10 +28,16 @@ async function testAgentResponse({ agentId, sessionId, inputText }) {
 
     const command = new InvokeAgentCommand({
       agentId,
-      agentAliasId: '1', // Use latest agent version as alias
+      agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID || '1',
       sessionId,
       inputText,
       enableTrace: true
+    });
+    
+    console.log('Invoking agent with:', {
+      agentId,
+      agentAliasId: process.env.AWS_BEDROCK_AGENT_ALIAS_ID || '1',
+      sessionId
     });
 
     console.log('Sending request to AWS Bedrock...');
@@ -119,7 +133,7 @@ async function testAgentResponse({ agentId, sessionId, inputText }) {
 async function main() {
   try {
     const testInput = {
-      agentId: process.env.AWS_BEDROCK_AGENT_ID || 'mock-agent-001',
+      agentId: process.env.AWS_BEDROCK_AGENT_ID,
       sessionId: 'test-session-' + Date.now(),
       inputText: 'Hello, can you tell me what capabilities you have as an agent?'
     };

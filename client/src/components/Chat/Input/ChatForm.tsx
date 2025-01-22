@@ -167,8 +167,8 @@ const ChatForm = ({ index = 0 }) => {
         maximizeChatSpace ? 'w-full max-w-full' : 'md:max-w-2xl xl:max-w-3xl',
       )}
     >
-      <div className="relative flex h-full flex-1 items-stretch md:flex-col">
-        <div className="flex w-full items-center">
+      <div className="relative flex h-full flex-1 items-stretch overflow-visible md:flex-col">
+        <div className="relative flex w-full items-center overflow-visible">
           {showPlusPopover && !isAssistantsEndpoint(endpoint) && (
             <Mention
               setShowMentionPopover={setShowPlusPopover}
