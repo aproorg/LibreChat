@@ -67,7 +67,7 @@
     "html-to-image": "^1.11.11",
     "image-blob-reduce": "^4.1.0",
     "js-cookie": "^3.0.5",
-    "librechat-data-provider": "workspace:*",
+    "librechat-data-provider": "*",
     "lodash": "^4.17.21",
     "lucide-react": "^0.394.0",
     "match-sorter": "^6.3.4",
