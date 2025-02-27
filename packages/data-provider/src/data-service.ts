@@ -181,6 +181,10 @@ export const getAIEndpoints = (): Promise<t.TEndpointsConfig> => {
   return request.get(endpoints.aiEndpoints());
 };
 
+export const getBedrockAgents = async (): Promise<t.TModelsConfig> => {
+  return request.get(endpoints.bedrockAgents());
+};
+
 export const getModels = async (): Promise<t.TModelsConfig> => {
   return request.get(endpoints.models());
 };

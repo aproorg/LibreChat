@@ -14,6 +14,8 @@ const defaultConfig: TEndpointsConfig = {
   [EModelEndpoint.google]: null,
   [EModelEndpoint.anthropic]: null,
   [EModelEndpoint.custom]: null,
+  [EModelEndpoint.bedrock]: null,
+  [EModelEndpoint.bedrockAgents]: null,
 };
 
 const endpointsConfig = atom<TEndpointsConfig>({
