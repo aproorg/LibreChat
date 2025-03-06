@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/application-terraform
+      - debugging-build
   workflow_dispatch:
 
 permissions:
