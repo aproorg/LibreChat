@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/application-terraform
+  workflow_dispatch:
 
 permissions:
   id-token: write # This is required for requesting the JWT
@@ -18,10 +19,10 @@ jobs:
         include:
           - target: api-build
             file: Dockerfile.multi
-            image_name: frontend
+            image_name: api
           - target: node
             file: Dockerfile
-            image_name: api
+            image_name: frontend
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
