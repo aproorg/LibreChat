@@ -12,7 +12,9 @@ permissions:
   id-token: write # This is required for requesting the JWT
   contents: read
 env:
-  AWS_REGION: eu-west-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
 
 jobs:
   build:
@@ -38,7 +40,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::533267242259:role/github-oidc-genai
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-oidc-genai
           aws-region: eu-west-1
 
       - name: Log in to Amazon ECR
@@ -73,8 +75,8 @@ jobs:
           file: ${{ matrix.file }}
           push: true
           tags: |
-            533267242259.dkr.ecr.eu-west-1.amazonaws.com/genai/${{ matrix.image_name }}:${{ env.SHORT_SHA }}
-            533267242259.dkr.ecr.eu-west-1.amazonaws.com/genai/${{ matrix.image_name }}:latest
+            ${{ env.ECR_REPO }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}
+            ${{ env.ECR_REPO }}/${{ matrix.image_name }}:latest
           platforms: linux/arm64
           target: ${{ matrix.target }}
           cache-from: type=local,src=/tmp/.buildx-cache
