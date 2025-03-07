@@ -40,6 +40,18 @@ module "ecr" {
   context                    = module.label.context
 }
 
+data "aws_iam_policy_document" "cache_bucket" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.genai.arn]
+    }
+    actions   = local.s3.cache.actions
+    resources = local.s3.cache.resources
+  }
+}
+
 data "aws_iam_policy_document" "librechat_config" {
   statement {
     sid    = "Statement1"
@@ -64,12 +76,25 @@ data "aws_iam_policy_document" "librechat_config" {
 
 module "config_bucket" {
   source  = "cloudposse/s3-bucket/aws"
-  version = "4.2.0"
+  version = "4.10.0"
   name    = "config"
 
   s3_object_ownership     = "BucketOwnerEnforced"
   source_policy_documents = [data.aws_iam_policy_document.librechat_config.json]
 
   versioning_enabled = true
+  context            = module.label.context
+}
+
+
+module "cache_bucket" {
+  source  = "cloudposse/s3-bucket/aws"
+  version = "4.10.0"
+  name    = "github-cache"
+
+  s3_object_ownership     = "BucketOwnerEnforced"
+  source_policy_documents = [data.aws_iam_policy_document.cache_bucket.json]
+
+  versioning_enabled = false
   context            = module.label.context
 }
