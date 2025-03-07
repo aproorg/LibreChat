@@ -1,18 +1,6 @@
-provider "aws" {
-  region = var.region
-}
-
-data "aws_availability_zones" "available" {}
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
-terraform {
-  backend "s3" {
-    region  = "eu-west-1"
-    bucket  = "shared-apro-accelerator-terraform-state"
-    key     = "genai/ecr_repositories/terraform.tfstate"
-    encrypt = true
-  }
-}
 
 module "label" {
   source  = "cloudposse/label/null"
@@ -62,15 +50,8 @@ data "aws_iam_policy_document" "librechat_config" {
       identifiers = local.principals
     }
 
-    actions = [
-      "s3:Get*",
-      "s3:List*"
-    ]
-
-    resources = [
-      "arn:aws:s3:::genai-shared-config/*",
-      "arn:aws:s3:::genai-shared-config"
-    ]
+    actions   = local.s3.config.actions
+    resources = local.s3.config.resources
   }
 }
 
