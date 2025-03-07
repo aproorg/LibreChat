@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/application-terraform
+      - docker-layer-cache
 
 permissions:
   id-token: write # This is required for requesting the JWT
@@ -49,7 +50,6 @@ jobs:
           cp .env.example .env
           cat .env
 
-      # Setup local cache instead of registry cache
       - name: Setup Docker layer cache
         uses: runs-on/cache@v4
         with:
