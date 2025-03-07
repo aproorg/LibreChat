@@ -9,6 +9,9 @@ on:
 permissions:
   id-token: write # This is required for requesting the JWT
   contents: read
+env:
+  RUNS_ON_S3_BUCKET_CACHE: ${{ secrets.RUNS_ON_S3_BUCKET_CACHE }}
+  AWS_REGION: eu-west-1
 
 jobs:
   build:
@@ -48,7 +51,7 @@ jobs:
 
       # Setup local cache instead of registry cache
       - name: Setup Docker layer cache
-        uses: actions/cache@v3
+        uses: runs-on/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ matrix.image_name }}-${{ github.sha }}
