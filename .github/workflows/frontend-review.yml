@@ -9,6 +9,7 @@ on:
     paths:
       - 'client/**'
       - 'packages/**'
+      - '.github/**'
 
 jobs:
   tests_frontend_ubuntu:
@@ -65,4 +66,3 @@ jobs:
         run: '[[ ${{ needs.tests_frontend_ubuntu.result }} == "success" ]] || exit 1'
       - name: Announce success
         run: echo "Test is successful"
-
