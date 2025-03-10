@@ -161,8 +161,8 @@ export default function Fork({
       <Popover.Trigger asChild>
         <button
           className={cn(
-            'hover-button active rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-500 dark:text-gray-400/70 dark:hover:bg-gray-700 dark:hover:text-gray-200 disabled:dark:hover:text-gray-400 md:invisible md:group-hover:visible ',
-            'data-[state=open]:active focus:opacity-100 data-[state=open]:bg-gray-100 data-[state=open]:text-gray-500 data-[state=open]:dark:bg-gray-700  data-[state=open]:dark:text-gray-200',
+            'hover-button active rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-500 md:invisible md:group-hover:visible ',
+            'data-[state=open]:active focus:opacity-100 data-[state=open]:bg-gray-100 data-[state=open]:text-gray-500',
             !isLast ? 'data-[state=open]:opacity-100 md:opacity-0 md:group-hover:opacity-100' : '',
           )}
           onClick={(e) => {
@@ -180,7 +180,7 @@ export default function Fork({
           type="button"
           title={localize('com_ui_fork')}
         >
-          <GitFork className="h-4 w-4 hover:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200 disabled:dark:hover:text-gray-400" />
+          <GitFork className="h-4 w-4 hover:text-gray-500" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -188,17 +188,17 @@ export default function Fork({
           <Popover.Content
             side="top"
             role="menu"
-            className="bg-token-surface-primary flex min-h-[120px] min-w-[215px] flex-col gap-3 overflow-hidden rounded-lg bg-white p-2 px-3 shadow-lg dark:bg-gray-700"
+            className="bg-token-surface-primary flex min-h-[120px] min-w-[215px] flex-col gap-3 overflow-hidden rounded-lg bg-white p-2 px-3 shadow-lg"
             style={{ outline: 'none', pointerEvents: 'auto', boxSizing: 'border-box' }}
             tabIndex={-1}
             sideOffset={5}
             align="center"
           >
-            <div className="flex h-6 w-full items-center justify-center text-sm dark:text-gray-200">
+            <div className="flex h-6 w-full items-center justify-center text-sm">
               {localize(activeSetting )}
               <HoverCard openDelay={50}>
                 <HoverCardTrigger asChild>
-                  <InfoIcon className="ml-auto flex h-4 w-4 gap-2 text-gray-500 dark:text-white/50" />
+                  <InfoIcon className="ml-auto flex h-4 w-4 gap-2 text-gray-500" />
                 </HoverCardTrigger>
                 <HoverCardPortal>
                   <HoverCardContent
@@ -206,7 +206,7 @@ export default function Fork({
                     className="z-[999] w-80 dark:bg-gray-700"
                     sideOffset={19}
                   >
-                    <div className="flex flex-col gap-2 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                    <div className="flex flex-col gap-2 space-y-2 text-sm text-gray-600">
                       <span>{localize('com_ui_fork_info_1')}</span>
                       <span>{localize('com_ui_fork_info_2')}</span>
                       <span>
@@ -279,7 +279,7 @@ export default function Fork({
             </div>
             <HoverCard openDelay={50}>
               <HoverCardTrigger asChild>
-                <div className="flex h-6 w-full items-center justify-start text-sm dark:text-gray-300 dark:hover:text-gray-200">
+                <div className="flex h-6 w-full items-center justify-start text-sm">
                   <Checkbox
                     checked={splitAtTarget}
                     onCheckedChange={(checked: boolean) => setSplitAtTarget(checked)}
@@ -297,7 +297,7 @@ export default function Fork({
             </HoverCard>
             <HoverCard openDelay={50}>
               <HoverCardTrigger asChild>
-                <div className="flex h-6 w-full items-center justify-start text-sm dark:text-gray-300 dark:hover:text-gray-200">
+                <div className="flex h-6 w-full items-center justify-start text-sm">
                   <Checkbox
                     checked={remember}
                     onCheckedChange={(checked: boolean) => {

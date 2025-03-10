@@ -44,7 +44,7 @@ export const TemporaryChat = () => {
       <div className="flex items-center justify-between">
         <div className={cn('flex items-center gap-2', isActiveConvo && 'opacity-40')}>
           <MessageCircleDashed className="icon-sm" aria-hidden="true" />
-          <span className="truncate text-sm text-text-primary">
+          <span className="truncate text-sm">
             {localize('com_ui_temporary_chat')}
           </span>
         </div>

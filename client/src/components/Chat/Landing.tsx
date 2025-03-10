@@ -8,7 +8,7 @@ import {
   useGetEndpointsQuery,
   useGetStartupConfig,
 } from '~/data-provider';
-import ConvoIcon from '~/components/Endpoints/ConvoIcon';
+import Logo from '~/../public/assets/logo.svg';
 import { getIconEndpoint, getEntity, cn } from '~/utils';
 import { useLocalize, useSubmitMessage } from '~/hooks';
 import { TooltipAnchor } from '~/components/ui';
@@ -78,7 +78,7 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
   }, [documentsMap, isAgent, entity]);
 
   const containerClassName =
-    'shadow-stroke relative flex h-full items-center justify-center rounded-full bg-white text-black';
+    'shadow-stroke relative flex h-full items-center justify-center rounded-full bg-transparent text-secondary';
 
   const { submitMessage } = useSubmitMessage();
   const sendConversationStarter = (text: string) => submitMessage({ text });
@@ -106,16 +106,7 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
       <div className="absolute left-0 right-0">{Header != null ? Header : null}</div>
       <div className="flex h-full flex-col items-center justify-center">
         <div className={cn('relative h-12 w-12', name && avatar ? 'mb-0' : 'mb-3')}>
-          <ConvoIcon
-            agentsMap={agentsMap}
-            assistantMap={assistantMap}
-            conversation={conversation}
-            endpointsConfig={endpointsConfig}
-            containerClassName={containerClassName}
-            context="landing"
-            className="h-2/3 w-2/3"
-            size={41}
-          />
+          <img src={Logo} style={{ backgroundColor: 'var(--primary)', padding: '6px', maxHeight: '40px' }} />
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"
@@ -127,19 +118,19 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
         </div>
         {name ? (
           <div className="flex flex-col items-center gap-0 p-2">
-            <div className="text-center text-2xl font-medium dark:text-white">{name}</div>
-            <div className="max-w-md text-center text-sm font-normal text-text-primary">
+            <div className="text-center text-2xl font-medium text-text-primary">{name}</div>
+            <div className="max-w-md text-center text-sm font-normal text-heading">
               {description ||
                 (typeof startupConfig?.interface?.customWelcome === 'string'
                   ? startupConfig?.interface?.customWelcome
                   : localize('com_nav_welcome_message'))}
             </div>
             {/* <div className="mt-1 flex items-center gap-1 text-token-text-tertiary">
-             <div className="text-sm text-token-text-tertiary">By Daniel Avila</div>
+            <div className="text-sm text-token-text-tertiary">By Daniel Avila</div>
           </div> */}
           </div>
         ) : (
-          <h2 className="mb-5 max-w-[75vh] px-12 text-center text-lg font-medium dark:text-white md:px-0 md:text-2xl">
+          <h2 className="mb-5 max-w-[75vh] px-12 text-center text-lg font-medium text-heading md:px-0 md:text-2xl">
             {welcomeMessage}
           </h2>
         )}

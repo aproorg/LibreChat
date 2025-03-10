@@ -34,24 +34,27 @@ export const ThemeProvider = ({ initialTheme, children }) => {
     const root = window.document.documentElement;
     const darkMode = isDark(rawTheme);
 
+    if (!darkMode) {
+      return;
+    }
     root.classList.remove(darkMode ? 'light' : 'dark');
     root.classList.add(darkMode ? 'dark' : 'light');
 
     localStorage.setItem('color-theme', rawTheme);
   };
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const changeThemeOnSystemChange = () => {
-      rawSetTheme(mediaQuery.matches ? 'dark' : 'light');
-    };
+  // useEffect(() => {
+  //   const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  //   const changeThemeOnSystemChange = () => {
+  //     rawSetTheme(mediaQuery.matches ? 'dark' : 'light');
+  //   };
 
-    mediaQuery.addEventListener('change', changeThemeOnSystemChange);
+  //   mediaQuery.addEventListener('change', changeThemeOnSystemChange);
 
-    return () => {
-      mediaQuery.removeEventListener('change', changeThemeOnSystemChange);
-    };
-  }, []);
+  //   return () => {
+  //     mediaQuery.removeEventListener('change', changeThemeOnSystemChange);
+  //   };
+  // }, []);
 
   useEffect(() => {
     const fontSize = localStorage.getItem('fontSize');

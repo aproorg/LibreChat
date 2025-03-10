@@ -14,7 +14,7 @@ export default function Footer({ className }: { className?: string }) {
 
   const privacyPolicyRender = privacyPolicy?.externalUrl != null && (
     <a
-      className="text-text-secondary underline"
+      className="text-primary underline"
       href={privacyPolicy.externalUrl}
       target={privacyPolicy.openNewTab === true ? '_blank' : undefined}
       rel="noreferrer"
@@ -25,7 +25,7 @@ export default function Footer({ className }: { className?: string }) {
 
   const termsOfServiceRender = termsOfService?.externalUrl != null && (
     <a
-      className="text-text-secondary underline"
+      className="text-primary underline"
       href={termsOfService.externalUrl}
       target={termsOfService.openNewTab === true ? '_blank' : undefined}
       rel="noreferrer"
@@ -60,7 +60,7 @@ export default function Footer({ className }: { className?: string }) {
           a: ({ node: _n, href, children, ...otherProps }) => {
             return (
               <a
-                className="text-text-secondary underline"
+                className="text-primary underline"
                 href={href}
                 target="_blank"
                 rel="noreferrer"
@@ -87,7 +87,7 @@ export default function Footer({ className }: { className?: string }) {
     <div
       className={
         className ??
-        'relative flex items-center justify-center gap-2 px-2 py-2 text-center text-xs text-text-primary md:px-[60px]'
+        'relative flex items-center justify-center gap-2 px-2 py-2 text-center text-xs text-primary md:px-[60px]'
       }
       role="contentinfo"
     >

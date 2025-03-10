@@ -187,17 +187,11 @@ export default function Conversation({
           data-testid="convo-item"
           onClick={clickHandler}
           className={cn(
-            'flex grow cursor-pointer items-center gap-2 overflow-hidden whitespace-nowrap break-all rounded-lg px-2 py-2',
+            'flex grow cursor-pointer items-center gap-2 overflow-hidden whitespace-nowrap break-all rounded-lg px-2 py-2 text-text-primary',
             isActiveConvo ? 'bg-surface-active-alt' : '',
           )}
           title={title ?? ''}
         >
-          <EndpointIcon
-            conversation={conversation}
-            endpointsConfig={endpointsConfig}
-            size={20}
-            context="menu-item"
-          />
           <div
             className="relative line-clamp-1 flex-1 grow overflow-hidden"
             onDoubleClick={(e) => {

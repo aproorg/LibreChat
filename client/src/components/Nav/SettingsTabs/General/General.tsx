@@ -51,20 +51,17 @@ export const LangSelector = ({
   const languageOptions = [
     { value: 'auto', label: localize('com_nav_lang_auto') },
     { value: 'en-US', label: localize('com_nav_lang_english') },
-    { value: 'zh-Hans', label: localize('com_nav_lang_chinese') },
-    { value: 'zh-Hant', label: localize('com_nav_lang_traditional_chinese') },
+    { value: 'zh-CN', label: localize('com_nav_lang_chinese') },
+    { value: 'zh-TW', label: localize('com_nav_lang_traditionalchinese') },
     { value: 'ar-EG', label: localize('com_nav_lang_arabic') },
     { value: 'de-DE', label: localize('com_nav_lang_german') },
     { value: 'es-ES', label: localize('com_nav_lang_spanish') },
-    { value: 'et-EE', label: localize('com_nav_lang_estonian') },
     { value: 'fr-FR', label: localize('com_nav_lang_french') },
     { value: 'it-IT', label: localize('com_nav_lang_italian') },
     { value: 'pl-PL', label: localize('com_nav_lang_polish') },
     { value: 'pt-BR', label: localize('com_nav_lang_brazilian_portuguese') },
-    { value: 'pt-PT', label: localize('com_nav_lang_portuguese') },
     { value: 'ru-RU', label: localize('com_nav_lang_russian') },
     { value: 'ja-JP', label: localize('com_nav_lang_japanese') },
-    { value: 'ka-GE', label: localize('com_nav_lang_georgian') },
     { value: 'sv-SE', label: localize('com_nav_lang_swedish') },
     { value: 'ko-KR', label: localize('com_nav_lang_korean') },
     { value: 'vi-VN', label: localize('com_nav_lang_vietnamese') },
@@ -119,9 +116,6 @@ function General() {
 
   return (
     <div className="flex flex-col gap-3 p-1 text-sm text-text-primary">
-      <div className="pb-3">
-        <ThemeSelector theme={theme} onChange={changeTheme} />
-      </div>
       <div className="pb-3">
         <LangSelector langcode={langcode} onChange={changeLang} />
       </div>

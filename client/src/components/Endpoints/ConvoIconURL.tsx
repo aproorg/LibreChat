@@ -62,7 +62,7 @@ const ConvoIconURL: React.FC<ConvoIconURLProps> = ({
   }
 
   return (
-    <div className="shadow-stroke relative flex h-full items-center justify-center rounded-full bg-white text-black">
+    <div className="shadow-stroke relative flex h-full items-center justify-center rounded-full bg-transparent text-black">
       <Icon
         size={41}
         context={context}

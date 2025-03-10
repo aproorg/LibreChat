@@ -34,31 +34,7 @@ const NewChatButtonIcon = ({ conversation }: { conversation: TConversation | nul
   const iconKey = getIconKey({ endpoint, endpointsConfig, endpointType, endpointIconURL });
   const Icon = icons[iconKey];
 
-  return (
-    <div className="h-7 w-7 flex-shrink-0">
-      {iconURL && iconURL.includes('http') ? (
-        <ConvoIconURL
-          iconURL={iconURL}
-          modelLabel={conversation?.chatGptLabel ?? conversation?.modelLabel ?? ''}
-          endpointIconURL={iconURL}
-          context="nav"
-        />
-      ) : (
-        <div className="shadow-stroke relative flex h-full items-center justify-center rounded-full bg-white text-black">
-          {endpoint && Icon != null && (
-            <Icon
-              size={41}
-              context="nav"
-              className="h-2/3 w-2/3"
-              endpoint={endpoint}
-              endpointType={endpointType}
-              iconURL={endpointIconURL}
-            />
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return null;
 };
 
 export default function NewChat({
