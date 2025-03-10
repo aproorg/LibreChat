@@ -11,6 +11,9 @@ on:
       - 'packages/**'
       - '.github/**'
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
 jobs:
   tests_frontend_ubuntu:
     name: Run frontend unit tests on Ubuntu

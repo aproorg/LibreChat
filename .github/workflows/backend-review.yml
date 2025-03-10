@@ -8,6 +8,9 @@ on:
     paths:
       - 'api/**'
       - '.github/**'
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
 jobs:
   tests_Backend:
     name: Run Backend unit tests
