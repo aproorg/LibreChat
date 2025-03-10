@@ -10,6 +10,7 @@ on:
       - '.github/**'
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
 
 jobs:
   tests_Backend:
@@ -32,6 +33,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-oidc-genai
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Get npm cache directory
         id: npm-cache-dir
