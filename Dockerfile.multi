@@ -50,7 +50,10 @@ COPY config ./config
 COPY --from=data-provider-build /app/packages/data-provider/dist ./packages/data-provider/dist
 COPY --from=mcp-build /app/packages/mcp/dist ./packages/mcp/dist
 COPY --from=client-build /app/client/dist ./client/dist
+COPY entrypoint.sh ./
+RUN chmod +x ./entrypoint.sh
 WORKDIR /app/api
 EXPOSE 3080
 ENV HOST=0.0.0.0
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["node", "server/index.js"]
