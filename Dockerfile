@@ -8,7 +8,7 @@ RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
 
 USER node
-# COPY librechat.apro.yaml ./api/librechat.yaml
+
 COPY entrypoint.sh ./entrypoint.sh
 COPY --chown=node:node . .
 RUN \
