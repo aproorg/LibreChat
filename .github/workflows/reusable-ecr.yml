@@ -39,7 +39,6 @@ env:
   AWS_ACCOUNT_ID: ${{ inputs.aws-account-id }}
   ECR_REPO: ${{ inputs.aws-account-id }}.dkr.ecr.${{ inputs.aws-region }}.amazonaws.com/genai
   SHOULD_PUSH_TO_ECR: ${{ inputs.push-to-ecr }}
-  RUNS_ON_S3_BUCKET_CACHE: ${{ secrets.s3-cache-bucket }}
 
 jobs:
   build:
@@ -70,7 +69,7 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Genrate Short SHA
         id: set_shortSHA
