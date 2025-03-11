@@ -3,7 +3,9 @@
 # Base node image
 FROM node:20-alpine AS node
 
-RUN apk --no-cache add curl aws-cli
+RUN apk --no-cache add curl
+# Seperate for merge conflict purposes
+RUN apk --no-cache add aws-cli
 RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
 
