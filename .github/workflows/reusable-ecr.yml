@@ -1,23 +1,33 @@
-name: Build and Push Docker Image to ECR
+# TODO: move this to a shared reusable workflows repo
+
+name: ECR docker build
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - Dockerfile
-      - Dockerfile.multi
-      - 'api/**'
-      - 'client/**'
-      - 'packages/**'
-      - '.github/**'
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+      aws-region:
+        required: false
+        type: string
+        default: 'eu-west-1'
+      aws-account-id:
+        required: true
+        type: string
+      aws-ecr-repo:
+        required: true
+        type: string
+      push-to-ecr:
+        required: false
+        type: string
+        default: 'false'
+      s3-cache-bucket:
+        required: true
+        type: string
 
-  merge_group:
-    branches:
-      - main
 permissions:
-  id-token: write # This is required for requesting the JWT
+  id-token: write
   contents: read
 
 concurrency:
@@ -25,11 +35,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-  ECR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
+  AWS_REGION: ${{ inputs.aws-region }}
+  AWS_ACCOUNT_ID: ${{ inputs.aws-account-id }}
+  ECR_REPO: ${{ inputs.aws-account-id }}.dkr.ecr.${{ inputs.aws-region }}.amazonaws.com/genai
   IS_PR: ${{ github.event_name == 'pull_request' }}
   SHOULD_PUSH_TO_ECR: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
+  RUNS_ON_S3_BUCKET_CACHE: ${{ inputs.s3-cache-bucket }}
 
 jobs:
   build:
@@ -76,7 +87,7 @@ jobs:
       - name: Setup Docker layer cache
         uses: runs-on/cache@v4
         env:
-          RUNS_ON_S3_BUCKET_CACHE: ${{ secrets.RUNS_ON_S3_BUCKET_CACHE }}
+          RUNS_ON_S3_BUCKET_CACHE: ${{ env.RUNS_ON_S3_BUCKET_CACHE }}
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ matrix.image_name }}-${{ github.sha }}

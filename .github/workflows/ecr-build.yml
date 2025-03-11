@@ -1,0 +1,64 @@
+name: ECR docker build
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+      aws-region:
+        required: false
+        type: string
+        default: 'eu-west-1'
+      aws-account-id:
+        required: true
+        type: string
+      aws-ecr-repo:
+        required: true
+        type: string
+      push-to-ecr:
+        required: false
+        type: string
+        default: 'false'
+      s3-cache-bucket:
+        required: true
+        type: string
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - Dockerfile.multi
+      - 'api/**'
+      - 'client/**'
+      - 'packages/**'
+      - '.github/**'
+
+  merge_group:
+    branches:
+      - main
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read
+
+concurrency:
+  group: ecr-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
+  IS_PR: ${{ github.event_name == 'pull_request' }}
+  SHOULD_PUSH_TO_ECR: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
+  S3_CACHE_BUCKET: ${{ secrets.S3_CACHE_BUCKET }}
+
+jobs:
+  docker-build:
+    uses: ./.github/workflows/reusable-ecr.yml
+    with:
+      env: dev
+      aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+      aws-ecr-repo: ${{ env.ECR_REPO }}
+      push-to-ecr: ${{ env.SHOULD_PUSH_TO_ECR }}
+      s3-cache-bucket: ${{ env.S3_CACHE_BUCKET }}
