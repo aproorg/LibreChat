@@ -48,11 +48,12 @@
   --font-size-base: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
-  --primary: #121212;
-  --primary-highlight: #6737F5;
-  --secondary: #F1F9FF;
-  --heading-text: #060606;
+  --primary: #00416a;
+  --primary-highlight: #006eb3;
+  --secondary: #f6f6f6;
+  --heading-text: #00416a;
   --text-secondary: #ffffff;
+  --logo-background-color: #00416a;
 }
 html {
   --presentation: var(--secondary);

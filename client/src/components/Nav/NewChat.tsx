@@ -19,7 +19,7 @@ const NewChatButtonIcon = ({ conversation }: { conversation: TConversation | nul
 
   if (searchQuery) {
     return (
-      <div className="shadow-stroke relative flex h-7 w-7 items-center justify-center rounded-full bg-white text-black dark:bg-white">
+      <div className="shadow-stroke relative flex h-7 w-7 items-center justify-center rounded-full bg-white">
         <Search className="h-5 w-5" />
       </div>
     );
@@ -81,6 +81,7 @@ export default function NewChat({
             'group flex h-10 items-center gap-2 rounded-lg px-2 font-medium transition-colors duration-200 hover:bg-surface-hover',
             isSmallScreen ? 'h-14' : '',
           )}
+          style={{ color: 'var(--text-secondary)' }}
           aria-label={localize('com_ui_new_chat')}
         >
           <NewChatButtonIcon conversation={conversation} />
@@ -89,7 +90,7 @@ export default function NewChat({
           </div>
           <div className="flex gap-3">
             <span className="flex items-center" data-state="closed">
-              <NewChatIcon className="size-5" />
+              <NewChatIcon className="size-5 text-white" />
             </span>
           </div>
         </a>
