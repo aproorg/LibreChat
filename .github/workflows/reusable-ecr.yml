@@ -141,6 +141,8 @@ jobs:
           # Remove the container
           docker rm $CONTAINER_ID
 
+          ls -al /tmp/extracted-dist
+
           echo "Successfully extracted dist directory from the frontend image"
 
       - name: Upload dist as artifact
