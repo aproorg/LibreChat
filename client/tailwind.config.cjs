@@ -126,7 +126,7 @@ module.exports = {
         },
       },
       textColor: {
-        heading: 'var(--primary)',
+        heading: 'var(--heading-text)',
       },
       borderRadius: {
         lg: 'var(--radius)',

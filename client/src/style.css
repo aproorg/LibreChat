@@ -48,9 +48,10 @@
   --font-size-base: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.25rem;
-  --primary: #00416a;
-  --primary-lighter: #00609c;
-  --secondary: #f5f5f5;
+  --primary: #121212;
+  --primary-highlight: #6737F5;
+  --secondary: #F1F9FF;
+  --heading-text: #060606;
   --text-secondary: #ffffff;
 }
 html {
@@ -64,8 +65,8 @@ html {
   --header-hover: var(--gray-50);
   --header-button-hover: var(--gray-50);
   --surface-active: var(--gray-100);
-  --surface-active-alt: var(--primary-lighter);
-  --surface-hover: var(--primary-lighter);
+  --surface-active-alt: var(--primary-highlight);
+  --surface-hover: var(--primary-highlight);
   --surface-hover-alt: var(--gray-300);
   --surface-primary: var(--primary-ligther);
   --surface-primary-alt: var(--primary);
@@ -102,9 +103,10 @@ html {
   --chart-3: 197 37% 24%;
   --chart-4: 43 74% 66%;
   --chart-5: 27 87% 67%;
-  --switch-unchecked: var(--primary-lighter) !important;
+  --switch-unchecked: var(--primary-highlight) !important;
 }
 .dark {
+  --surface-tertiary-alt: --white;
 }
 .gizmo {
   --text-primary: var(--gizmo-gray-950);
@@ -2283,9 +2285,9 @@ button.scroll-convo {
 }
 
 .tooltip:where(.dark, .dark *) {
-  background-color: var(--surface-primary);
+  /* background-color: var(--surface-primary);
   color: white;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35); */
 }
 
 :focus {

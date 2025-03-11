@@ -105,8 +105,8 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
     <div className="relative h-full">
       <div className="absolute left-0 right-0">{Header != null ? Header : null}</div>
       <div className="flex h-full flex-col items-center justify-center">
-        <div className={cn('relative h-12 w-12', name && avatar ? 'mb-0' : 'mb-3')}>
-          <img src={Logo} style={{ backgroundColor: 'var(--primary)', padding: '6px', maxHeight: '40px' }} />
+        <div className={cn('relative w-[100px]', name && avatar ? 'mb-0' : 'mb-3')}>
+          <img src={Logo} />
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"

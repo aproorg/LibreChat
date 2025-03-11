@@ -18,7 +18,7 @@ export default function HeaderNewChat() {
       data-testid="wide-header-new-chat-button"
       aria-label={localize('com_ui_new_chat')}
       type="button"
-      className="btn btn-neutral btn-small border-token-border-medium focus:border-black-500 dark:focus:border-white-500 relative ml-2 flex h-9 w-9 items-center justify-center whitespace-nowrap rounded-lg border md:flex"
+      className="btn btn-neutral btn-small border-token-border-medium focus:border-black-500 relative ml-2 flex h-9 w-9 items-center justify-center whitespace-nowrap rounded-lg border md:flex"
       onClick={() => {
         queryClient.setQueryData<TMessage[]>(
           [QueryKeys.messages, conversation?.conversationId ?? Constants.NEW_CONVO],
