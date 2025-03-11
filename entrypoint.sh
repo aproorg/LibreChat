@@ -15,6 +15,8 @@ PREFIX=$S3_prefix
 echo "Syncing files from S3 bucket $S3_BUCKET to $CONTAINER_DIR"
 aws s3 sync s3://"$S3_BUCKET"/"$PREFIX"/librechat.yml $CONTAINER_DIR/api/
 
+#TODO: Pull a zipped /dist from S3 and unzip it.
+
 # Run container command
 echo "Running container command: $CONTAINER_RUN_COMMAND"
 exec "$@"
