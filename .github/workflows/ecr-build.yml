@@ -32,4 +32,5 @@ jobs:
       aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
       aws-ecr-repo: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
       push-to-ecr: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
+    secrets:
       s3-cache-bucket: ${{ secrets.S3_CACHE_BUCKET }}

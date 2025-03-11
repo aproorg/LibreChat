@@ -22,9 +22,9 @@ on:
         required: false
         type: string
         default: 'false'
+    secrets:
       s3-cache-bucket:
         required: true
-        type: string
 
 permissions:
   id-token: write
