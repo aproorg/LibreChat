@@ -2,20 +2,36 @@
   /* BRAND COLORS START */
   --primary: #00416a;
   --primary-lighter: #00609c;
-  --secondary: #f5f5f5;
-  --text-secondary: #ffffff;
-  /* BRAND COLORS END */
+  --background-lighter: #f5f5f5;
+  --text-on-dark: #ffffff;
+  --highlight: #ffe866;
+  /* BRAND COLORS START */
 
-  --presentation: var(--secondary);
-  --text-primary: var(--gray-800);
-  --text-secondary: var(--white);
-  --text-secondary-alt: var(--white);
-  --text-tertiary: var(--white);
+  --presentation: var(--background-lighter);
+  --text-primary: var(--primary);
+  --text-secondary: var(--text-on-dark);
+  --text-secondary-alt: var(--text-on-dark);
+  --text-tertiary: var(--text-on-dark);
   --ring-primary: var(--white);
   --surface-active-alt: var(--primary-lighter);
-  --surface-hover: var(--primary-lighter);
-  --surface-primary: var(--primary-ligther);
+  --surface-hover: var(--highlight);
   --surface-primary-alt: var(--primary);
+  --surface-tertiary: var(--white);
+  --border-xheavy: var(--white);
+  --switch-unchecked: var(--primary-lighter);
+}
+
+[data-testid='nav-new-chat-button']:hover {
+  background-color: var(--primary-lighter);
+}
+
+textarea,
+.font-normal {
+  color: var(--gray-800);
+}
+
+svg {
+  color: var(--gray-800);
 }
 
 .text-token-text-primary {
@@ -27,15 +43,11 @@
   background-color: var(--primary);
 }
 
-#temporary-chat-switch[data-state='unchecked'] {
-  background-color: var(--gray-400);
-}
-
 /* Apro specific text color for branding */
 [data-testid='convo-item'] *,
 [data-testid='nav-new-chat-button'] *,
 [data-testid='nav-user'] * {
-  color: var(--text-secondary);
+  color: var(--text-on-dark);
 }
 
 /* Apro specific hiding elements */
@@ -47,7 +59,7 @@
 /* Apro specific color for top element model selector */
 .absolute.left-0.right-0 > *,
 .sticky.top-0.z-10.flex.h-14.w-full {
-  background-color: var(--secondary);
+  background-color: var(--background-lighter);
 }
 
 /* Apro color for footer linke */
