@@ -38,8 +38,7 @@ env:
   AWS_REGION: ${{ inputs.aws-region }}
   AWS_ACCOUNT_ID: ${{ inputs.aws-account-id }}
   ECR_REPO: ${{ inputs.aws-account-id }}.dkr.ecr.${{ inputs.aws-region }}.amazonaws.com/genai
-  IS_PR: ${{ github.event_name == 'pull_request' }}
-  SHOULD_PUSH_TO_ECR: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
+  SHOULD_PUSH_TO_ECR: ${{ inputs.push-to-ecr }}
   RUNS_ON_S3_BUCKET_CACHE: ${{ secrets.s3-cache-bucket }}
 
 jobs:
