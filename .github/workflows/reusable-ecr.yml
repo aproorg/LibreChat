@@ -127,28 +127,20 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Extract dist directory
-        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+        if: ${{ matrix.image_name == 'frontend' }}
         run: |
-          # Create a container from the image we just built
-          CONTAINER_ID=$(docker create ${{ env.ECR_REPOSITORY }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }})
-
-          # Create a directory to copy files to
+          echo "Using image ID: ${{ steps.docker_build.outputs.imageid }}"
+          CONTAINER_ID=$(docker create ${{ steps.docker_build.outputs.imageid }})
           mkdir -p /tmp/extracted-dist
-
-          # Copy the dist directory from the container to the host
           docker cp $CONTAINER_ID:/app/client/dist /tmp/extracted-dist
-
-          # Remove the container
+          ls -la /tmp/extracted-dist/dist/
           docker rm $CONTAINER_ID
-
-          ls -al /tmp/extracted-dist
-
           echo "Successfully extracted dist directory from the frontend image"
 
       - name: Upload dist as artifact
-        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+        if: ${{ matrix.image_name == 'frontend' }}
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: /tmp/extracted-dist/dist/
-          retention-days: 1
+          retention-days: k
