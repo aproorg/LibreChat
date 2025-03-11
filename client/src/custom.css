@@ -34,9 +34,9 @@ svg {
   color: var(--gray-800);
 }
 
-.text-token-text-primary {
-  /* color: #171717; */
-  color: var(--gray-900);
+.text-token-text-primary,
+.select-item {
+  color: var(--gray-900) !important;
 }
 
 .submitting .result-thinking:empty:last-child:after {
@@ -48,6 +48,10 @@ svg {
 [data-testid='nav-new-chat-button'] *,
 [data-testid='nav-user'] * {
   color: var(--text-on-dark);
+}
+
+[data-testid='nav-user']:hover {
+  background-color: var(--primary-lighter);
 }
 
 /* Apro specific hiding elements */
