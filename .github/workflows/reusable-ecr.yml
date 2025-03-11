@@ -26,6 +26,14 @@ on:
         required: false
         type: string
         default: '{"include":[{"target":"api-build","file":"Dockerfile.multi","image_name":"api"},{"target":"node","file":"Dockerfile","image_name":"frontend"}]}'
+      repository:
+        required: false
+        type: string
+        default: ${{ github.repository }}
+      ref:
+        required: false
+        type: string
+        default: ${{ github.ref }}
     secrets:
       s3-cache-bucket:
         required: true
@@ -48,6 +56,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
 
       - name: Debug
         id: debug
