@@ -5,7 +5,7 @@ name: ECR docker build
 on:
   workflow_call:
     inputs:
-      env:
+      environment:
         required: true
         type: string
       aws-region:

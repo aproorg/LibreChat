@@ -36,7 +36,7 @@ jobs:
   docker-build:
     uses: ./.github/workflows/reusable-ecr.yml
     with:
-      env: dev
+      environment: dev
       aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
       aws-ecr-repo: ${{ env.ECR_REPO }}
       push-to-ecr: ${{ env.SHOULD_PUSH_TO_ECR }}
