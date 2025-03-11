@@ -112,6 +112,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.file }}
+          if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
           push: ${{ env.SHOULD_PUSH_TO_ECR }}
           tags: |
             ${{ env.ECR_REPO }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}
@@ -127,20 +128,25 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Extract dist directory
-        if: ${{ matrix.image_name == 'frontend' }}
+        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
         run: |
-          echo "Using image ID: ${{ steps.docker_build.outputs.imageid }}"
-          CONTAINER_ID=$(docker create ${{ steps.docker_build.outputs.imageid }})
+          IMAGE_TAG="${{ env.ECR_REPOSITORY }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}"
+          echo "Using image: $IMAGE_TAG"
+          docker image inspect $IMAGE_TAG
+          CONTAINER_ID=$(docker create $IMAGE_TAG)
+          echo "Created container: $CONTAINER_ID"
           mkdir -p /tmp/extracted-dist
-          docker cp $CONTAINER_ID:/app/client/dist /tmp/extracted-dist
-          ls -la /tmp/extracted-dist/dist/
+          docker cp $CONTAINER_ID:/app/client/dist /tmp/extracted-dist/
+          ls -al /tmp/extracted-dist
           docker rm $CONTAINER_ID
+          echo "Extracted files:"
+          ls -la /tmp/extracted-dist/dist/
           echo "Successfully extracted dist directory from the frontend image"
 
       - name: Upload dist as artifact
-        if: ${{ matrix.image_name == 'frontend' }}
+        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: /tmp/extracted-dist/dist/
-          retention-days: k
+          retention-days: 1
