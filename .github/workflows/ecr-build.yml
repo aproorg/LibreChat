@@ -34,3 +34,14 @@ jobs:
       push-to-ecr: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
     secrets:
       s3-cache-bucket: ${{ secrets.S3_CACHE_BUCKET }}
+
+  success:
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    needs:
+      - docker-build
+    steps:
+      - name: Check build success
+        run: '[[ ${{ needs.docker-build.result }} == "success" ]] || exit 1'
+      - name: Announce success
+        run: echo "Build is successful"
