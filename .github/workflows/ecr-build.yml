@@ -24,20 +24,12 @@ concurrency:
   group: ecr-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-  ECR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
-  IS_PR: ${{ github.event_name == 'pull_request' }}
-  SHOULD_PUSH_TO_ECR: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
-  S3_CACHE_BUCKET: ${{ secrets.S3_CACHE_BUCKET }}
-
 jobs:
   docker-build:
     uses: ./.github/workflows/reusable-ecr.yml
     with:
       environment: dev
-      aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-      aws-ecr-repo: ${{ env.ECR_REPO }}
-      push-to-ecr: ${{ env.SHOULD_PUSH_TO_ECR }}
-      s3-cache-bucket: ${{ env.S3_CACHE_BUCKET }}
+      aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+      aws-ecr-repo: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/genai
+      push-to-ecr: ${{ contains(github.event.pull_request.labels.*.name, 'ecr-push') || github.event_name == 'merge_group' }}
+      s3-cache-bucket: ${{ secrets.S3_CACHE_BUCKET }}
