@@ -9,6 +9,7 @@ WORKDIR /app
 
 USER node
 COPY librechat.apro.yaml ./api/librechat.yaml
+COPY entrypoint.sh ./entrypoint.sh
 COPY --chown=node:node . .
 RUN \
   # Allow mounting of these files, which have no default
@@ -29,6 +30,10 @@ RUN mkdir -p /app/client/public/images /app/api/logs
 # Node API setup
 EXPOSE 3080
 ENV HOST=0.0.0.0
+
+RUN ["chmod", "+x", "./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
+
 CMD ["npm", "run", "backend"]
 
 # Optional: for client with nginx routing
