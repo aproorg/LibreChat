@@ -146,7 +146,7 @@ jobs:
           echo "Successfully extracted dist directory from the frontend image"
 
       - name: Upload dist as artifact
-        if: ${{ matrix.image_name == 'frontend' }}
+        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
