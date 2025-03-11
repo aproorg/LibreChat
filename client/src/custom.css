@@ -1,0 +1,56 @@
+:root {
+  /* BRAND COLORS START */
+  --primary: #00416a;
+  --primary-lighter: #00609c;
+  --secondary: #f5f5f5;
+  --text-secondary: #ffffff;
+  /* BRAND COLORS END */
+
+  --presentation: var(--secondary);
+  --text-primary: var(--gray-800);
+  --text-secondary: var(--white);
+  --text-secondary-alt: var(--white);
+  --text-tertiary: var(--white);
+  --ring-primary: var(--white);
+  --surface-active-alt: var(--primary-lighter);
+  --surface-hover: var(--primary-lighter);
+  --surface-primary: var(--primary-ligther);
+  --surface-primary-alt: var(--primary);
+}
+
+.text-token-text-primary {
+  /* color: #171717; */
+  color: var(--gray-900);
+}
+
+.submitting .result-thinking:empty:last-child:after {
+  background-color: var(--primary);
+}
+
+#temporary-chat-switch[data-state='unchecked'] {
+  background-color: var(--gray-400);
+}
+
+/* Apro specific text color for branding */
+[data-testid='convo-item'] *,
+[data-testid='nav-new-chat-button'] *,
+[data-testid='nav-user'] * {
+  color: var(--text-secondary);
+}
+
+/* Apro specific hiding elements */
+[data-testid='convo-icon'],
+.h-7.w-7.flex-shrink-0 {
+  display: none;
+}
+
+/* Apro specific color for top element model selector */
+.absolute.left-0.right-0 > *,
+.sticky.top-0.z-10.flex.h-14.w-full {
+  background-color: var(--secondary);
+}
+
+/* Apro color for footer linke */
+.text-text-secondary.underline {
+  color: var(--gray-800);
+}
