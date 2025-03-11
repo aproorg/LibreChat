@@ -49,10 +49,13 @@ data "aws_iam_policy_document" "genai_assume" {
 
 data "aws_iam_policy_document" "genai_s3" {
   statement {
-    sid       = "S3Write"
-    effect    = "Allow"
-    actions   = local.s3.config.actions
-    resources = local.s3.config.resources
+    sid     = "S3Write"
+    effect  = "Allow"
+    actions = local.s3.config.actions
+    resources = [
+      module.config_bucket.bucket_arn,
+      "${module.config_bucket.bucket_arn}/*"
+    ]
   }
 
   statement {

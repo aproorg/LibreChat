@@ -50,16 +50,11 @@ data "aws_iam_policy_document" "librechat_config" {
       identifiers = [each.value]
     }
 
-    actions   = local.s3.config.actions
-    resources = local.s3.config.resources
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-
-      values = [each.key]
-    }
-
+    actions = local.s3.config.actions
+    resources = [
+      "${module.config_bucket.bucket_arn}/${each.key}",
+      "${module.config_bucket.bucket_arn}/${each.key}/*"
+    ]
   }
 }
 

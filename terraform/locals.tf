@@ -5,10 +5,6 @@ locals {
         "s3:Get*",
         "s3:List*"
       ]
-      resources = [
-        module.config_bucket.bucket_arn,
-        "${module.config_bucket.bucket_arn}/*"
-      ]
     }
     cache = {
       actions = [
