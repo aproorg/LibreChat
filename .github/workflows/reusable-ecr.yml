@@ -22,6 +22,10 @@ on:
         required: false
         type: string
         default: 'false'
+      build-matrix:
+        required: false
+        type: string
+        default: '{"include":[{"target":"api-build","file":"Dockerfile.multi","image_name":"api"},{"target":"node","file":"Dockerfile","image_name":"frontend"}]}'
     secrets:
       s3-cache-bucket:
         required: true
@@ -41,14 +45,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     strategy:
-      matrix:
-        include:
-          - target: api-build
-            file: Dockerfile.multi
-            image_name: api
-          - target: node
-            file: Dockerfile
-            image_name: frontend
+      matrix: ${{ fromJson(inputs.build-matrix) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
