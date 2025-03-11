@@ -86,7 +86,7 @@ jobs:
       - name: Setup Docker layer cache
         uses: runs-on/cache@v4
         env:
-          RUNS_ON_S3_BUCKET_CACHE: ${{ env.RUNS_ON_S3_BUCKET_CACHE }}
+          RUNS_ON_S3_BUCKET_CACHE: ${{ secrets.s3-cache-bucket }}
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ matrix.image_name }}-${{ github.sha }}
