@@ -34,6 +34,10 @@ on:
         required: false
         type: string
         default: ${{ github.ref }}
+      s3-upload:
+        required: false
+        type: string
+        default: 'false'
     secrets:
       s3-cache-bucket:
         required: true
@@ -121,3 +125,28 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Extract dist directory
+        if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+        run: |
+          # Create a container from the image we just built
+          CONTAINER_ID=$(docker create ${{ env.ECR_REPOSITORY }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }})
+
+          # Create a directory to copy files to
+          mkdir -p /tmp/extracted-dist
+
+          # Copy the dist directory from the container to the host
+          docker cp $CONTAINER_ID:/app/client/dist /tmp/extracted-dist
+
+          # Remove the container
+          docker rm $CONTAINER_ID
+
+          echo "Successfully extracted dist directory from the frontend image"
+
+      - name: Upload dist as artifact
+        if: ${{ matrix.image_name == 'frontend' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: /tmp/extracted-dist/dist/
+          retention-days: 1
