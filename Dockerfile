@@ -3,12 +3,12 @@
 # Base node image
 FROM node:20-alpine AS node
 
-RUN apk --no-cache add curl
+RUN apk --no-cache add curl aws-cli
 RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
 
 USER node
-COPY librechat.apro.yaml ./api/librechat.yaml
+# COPY librechat.apro.yaml ./api/librechat.yaml
 COPY entrypoint.sh ./entrypoint.sh
 COPY --chown=node:node . .
 RUN \
@@ -31,8 +31,8 @@ RUN mkdir -p /app/client/public/images /app/api/logs
 EXPOSE 3080
 ENV HOST=0.0.0.0
 
-RUN ["chmod", "+x", "./entrypoint.sh"]
-ENTRYPOINT ["./entrypoint.sh"]
+RUN ["chmod", "+x", "/app/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 CMD ["npm", "run", "backend"]
 

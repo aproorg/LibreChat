@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # This script is an endpoint used to check if container is running in ECS and if so copy files from S3 bucket to container
 
