@@ -14,7 +14,7 @@ PREFIX=$S3_prefix
 
 # Sync files from an S3 bucket to a docker volume
 echo "Syncing files from S3 bucket $S3_BUCKET to $CONTAINER_DIR"
-aws s3 cp s3://"$S3_BUCKET"/"$PREFIX"/librechat.yml $CONTAINER_DIR/api/
+aws s3 cp s3://"$S3_BUCKET"/"$PREFIX"/librechat.yaml $CONTAINER_DIR/api/
 
 #TODO: Pull a zipped /dist from S3 and unzip it.
 
