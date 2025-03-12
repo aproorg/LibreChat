@@ -2,7 +2,7 @@
  * Wrapper for postcss.config.cjs that adds support for @config directive
  * Usage:
  * - Import this file instead of the original postcss.config.cjs
- * - Set TENANT environment variable before building
+ * - Set CONFIG_ID environment variable before building
  */
 
 // Import the original PostCSS config
