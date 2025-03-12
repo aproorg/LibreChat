@@ -67,9 +67,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
         
+      - name: Generate tenant CSS
+        run: |
+          cd client
+          mkdir -p src/tenant-styles
+          node scripts/tenant-styling/build-tenant.mjs ${{ matrix.tenant }}
+          
       - name: Build client for tenant
         env:
           TENANT: ${{ matrix.tenant }}
+          POSTCSS_CONFIG_PATH: './scripts/tenant-styling/postcss.config.wrapper.js'
         run: |
           cd client
           npm ci

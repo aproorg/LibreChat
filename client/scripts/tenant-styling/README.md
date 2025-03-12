@@ -1,40 +1,94 @@
-# Multi-Tenant Styling
+# Multi-Tenant Styling with @config Directive
 
-This directory contains scripts for implementing multi-tenant styling configuration in LibreChat. These scripts allow developers to use a `TENANT` environment variable to extend and override the LibreChat client styling config.
+This directory contains scripts for implementing multi-tenant styling configuration in LibreChat using Tailwind's @config directive. These scripts allow developers to use a `TENANT` environment variable to extend and override the LibreChat client styling config.
+
+## How It Works
+
+The multi-tenant styling system uses Tailwind's @config directive to specify different Tailwind configurations per tenant. Each tenant has its own CSS file that imports the base styles and applies tenant-specific customizations.
 
 ## Scripts
 
 - `loadTenantConfig.js`: Loads tenant-specific styling configuration from the librechat-config repository
-- `generateTenantCSS.js`: Generates CSS variables from tenant configuration
+- `generateTenantCSS.mjs`: Generates tenant-specific CSS files with @config directive
 - `vitePluginTenantStyling.js`: Vite plugin for applying tenant styling during the build process
 - `configureTenantBuild.js`: Modifies the Vite configuration for tenant-specific builds
 - `configureTenantTailwind.js`: Updates the Tailwind configuration for tenant-specific extensions
+- `postcss.config.wrapper.js`: Wrapper for postcss.config.cjs that adds support for @config directive
 - `vite.config.wrapper.js`: Wrapper for vite.config.ts that applies tenant-specific configuration
 - `tailwind.config.wrapper.js`: Wrapper for tailwind.config.cjs that applies tenant-specific configuration
-- `build-tenant.js`: Script to build the client with tenant-specific styling
+- `build-tenant.mjs`: Script to build the client with tenant-specific styling
+
+## Directory Structure
+
+```
+librechat-config/tenant-styles/
+├── default/
+│   ├── theme.json
+│   └── tailwind.config.mjs
+├── apro/
+│   ├── theme.json
+│   └── tailwind.config.mjs
+└── byko/
+    ├── theme.json
+    └── tailwind.config.mjs
+```
+
+## Configuration Format
+
+The `theme.json` file contains CSS variable overrides and Tailwind extensions:
+
+```json
+{
+  "cssVariables": {
+    "--text-primary": "#123456",
+    "--surface-primary": "#654321"
+  },
+  "tailwindExtensions": {
+    "theme": {
+      "extend": {
+        "colors": {
+          "custom-color": "#abcdef"
+        },
+        "fontFamily": {
+          "custom": ["CustomFont", "sans-serif"]
+        }
+      }
+    }
+  }
+}
+```
+
+The `tailwind.config.mjs` file extends the base Tailwind configuration with tenant-specific customizations.
 
 ## Usage
 
-To use these scripts without modifying the original configuration files, you can use the wrapper files:
+### Option 1: Use the build-tenant.mjs script (Recommended)
 
-### Option 1: Use wrapper files directly
+```bash
+# Run the build script with the tenant name
+node ./scripts/tenant-styling/build-tenant.mjs your-tenant-name
+```
+
+This will generate a tenant-specific CSS file with the @config directive and build the client with the tenant's styling.
+
+### Option 2: Use wrapper files directly
 
 ```bash
 # Set the TENANT environment variable
 export TENANT=your-tenant-name
 
 # Build using the wrapper configuration files
-VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build
+POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build
 ```
 
-### Option 2: Create npm scripts in package.json
+### Option 3: Create npm scripts in package.json
 
 Add these scripts to your package.json:
 
 ```json
 "scripts": {
-  "build:tenant": "VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build",
-  "dev:tenant": "VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run dev"
+  "build:tenant": "POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build",
+  "dev:tenant": "POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run dev"
 }
 ```
 
@@ -48,44 +102,14 @@ export TENANT=your-tenant-name
 npm run build:tenant
 ```
 
-### Option 3: Use the build-tenant.js script
+## Benefits of @config Directive
 
-```bash
-# Run the build script with the tenant name
-node ./scripts/tenant-styling/build-tenant.js your-tenant-name
-```
+The @config directive approach offers several benefits:
 
-### Option 4: Modify the original configuration files (not recommended)
+1. **Declarative Configuration**: Each CSS file explicitly declares which Tailwind configuration to use.
 
-If you prefer to modify the original configuration files, you can import the tenant styling functions:
+2. **Simplified Build Process**: No need to programmatically modify configurations at build time.
 
-```javascript
-// vite.config.ts
-import { configureTenantBuild } from './scripts/tenant-styling';
+3. **Better Separation of Concerns**: Tenant-specific styles are clearly separated from the core application styles.
 
-export default defineConfig((env) => {
-  const config = {
-    // Your existing Vite configuration
-  };
-  
-  return configureTenantBuild(config);
-});
-```
-
-```javascript
-// tailwind.config.cjs
-const { configureTenantTailwind } = require('./scripts/tenant-styling');
-
-const config = {
-  // Your existing Tailwind configuration
-};
-
-module.exports = configureTenantTailwind(config);
-```
-
-Then, set the `TENANT` environment variable before building the client:
-
-```bash
-export TENANT=your-tenant-name
-npm run build
-```
+4. **Improved Developer Experience**: More intuitive and follows modern best practices for CSS and Tailwind configuration.

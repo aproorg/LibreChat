@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { generateTenantCSS } from './generateTenantCSS.js';
+import { generateTenantCSS } from './generateTenantCSS.mjs';
 
 /**
- * Vite plugin for applying tenant-specific styling
+ * Vite plugin for applying tenant-specific styling with @config directive
  * @param {Object} options - Plugin options
  * @returns {Object} Vite plugin
  */
@@ -15,6 +15,19 @@ const vitePluginTenantStyling = (options = {}) => {
     
     configResolved(config) {
       console.log(`Building client for tenant: ${tenant || 'default'}`);
+      
+      // Copy tenant-specific CSS file from librechat-config
+      if (tenant) {
+        const tenantStylesDir = path.resolve(process.cwd(), 'src/tenant-styles');
+        
+        // Create directory if it doesn't exist
+        if (!fs.existsSync(tenantStylesDir)) {
+          fs.mkdirSync(tenantStylesDir, { recursive: true });
+        }
+        
+        // Copy CSS file from librechat-config
+        generateTenantCSS(tenant, tenantStylesDir);
+      }
     },
     
     transformIndexHtml(html) {
@@ -26,29 +39,32 @@ const vitePluginTenantStyling = (options = {}) => {
       return html.replace('<html', `<html data-tenant="${tenant}"`);
     },
     
-    generateBundle(options, bundle) {
-      const cssContent = generateTenantCSS(tenant);
-      
-      if (!cssContent) {
-        return;
+    config(config) {
+      if (!tenant) {
+        return config;
       }
       
-      // Add tenant CSS to the bundle
-      this.emitFile({
-        type: 'asset',
-        fileName: 'tenant-styles.css',
-        source: cssContent
-      });
+      // Update the CSS entry point to use tenant-specific CSS
+      const tenantCssPath = path.resolve(process.cwd(), `src/tenant-styles/${tenant}.css`);
       
-      // Find the main CSS file in the bundle
-      const mainCssFile = Object.keys(bundle).find(
-        fileName => fileName.endsWith('.css') && bundle[fileName].isEntry
-      );
-      
-      if (mainCssFile && bundle[mainCssFile]) {
-        // Append tenant CSS to the main CSS file
-        bundle[mainCssFile].source += `\n/* Tenant-specific styles for ${tenant} */\n${cssContent}`;
+      if (fs.existsSync(tenantCssPath)) {
+        // Replace the main CSS entry with the tenant-specific one
+        return {
+          ...config,
+          css: {
+            ...config.css,
+            preprocessorOptions: {
+              ...config.css?.preprocessorOptions,
+              scss: {
+                ...config.css?.preprocessorOptions?.scss,
+                additionalData: `@import "${tenantCssPath}";`
+              }
+            }
+          }
+        };
       }
+      
+      return config;
     }
   };
 };
