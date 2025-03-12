@@ -5,13 +5,13 @@ import path from 'path';
  * @param {Object} options - Plugin options
  * @returns {Object} Vite plugin
  */
-const vitePluginCustomStyling = (options = {}) => {
+const vitePluginCustomStyling = (_options = {}) => {
   const configId = process.env.CONFIG_ID || '';
 
   return {
     name: 'vite-plugin-custom-styling',
 
-    configResolved(config) {
+    configResolved(_config) {
       console.log(`Building client for configuration: ${configId || 'default'}`);
     },
 
