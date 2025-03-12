@@ -23,7 +23,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          repository: aproorg/librechat-config
+          repository: config1org/librechat-config
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Set configuration matrix
@@ -48,13 +48,13 @@ jobs:
       - name: Checkout LibreChat
         uses: actions/checkout@v4
         with:
-          repository: aproorg/LibreChat
+          repository: config1org/LibreChat
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Checkout librechat-config
         uses: actions/checkout@v4
         with:
-          repository: aproorg/librechat-config
+          repository: config1org/librechat-config
           token: ${{ secrets.GITHUB_TOKEN }}
           path: ../librechat-config
           
