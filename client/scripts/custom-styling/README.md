@@ -6,6 +6,14 @@ This directory contains scripts for implementing custom styling configuration in
 
 The custom styling system uses Tailwind's @config directive to specify different Tailwind configurations. Each configuration has its own CSS file that imports the base styles and applies customizations.
 
+## Extension Mechanism
+
+The custom styling system supports extending LibreChat's base Tailwind configuration and CSS files:
+
+1. **Tailwind Configuration Extension**: Each configuration in librechat-config can extend LibreChat's base Tailwind configuration using the `presets` feature.
+
+2. **CSS Extension**: Each configuration's CSS file imports LibreChat's base styles and can override specific properties.
+
 ## Scripts
 
 - `loadConfig.js`: Loads custom styling configuration from the librechat-config repository
@@ -30,9 +38,35 @@ librechat-config/custom-styles/
         └── style.css
 ```
 
+## Tailwind Configuration Format
+
+Each configuration's tailwind.config.mjs file should extend the base LibreChat configuration:
+
+```javascript
+/** @type {import('tailwindcss').Config} */
+export default {
+  // Use LibreChat's base configuration as a preset
+  presets: [require('@librechat-tailwind-preset')],
+  content: ['./src/**/*.{js,jsx,ts,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        primary: {
+          DEFAULT: '#38B2AC',
+          dark: '#2C7A7B',
+          light: '#4FD1C5',
+        },
+        // Add more custom colors or override existing ones
+      },
+    },
+  },
+  plugins: [],
+};
+```
+
 ## CSS File Format
 
-Each configuration's CSS file should use the @config directive to specify which Tailwind configuration to use:
+Each configuration's CSS file should use the @config directive to specify which Tailwind configuration to use and import the base styles:
 
 ```css
 @config "../tailwind.config.mjs";
@@ -65,10 +99,6 @@ Each configuration's CSS file should use the @config directive to specify which 
 # Set the CONFIG_ID environment variable
 export CONFIG_ID=your-config-id
 
-# Copy the CSS file to the client
-mkdir -p client/src/styles
-cp librechat-config/custom-styles/your-config-id/css/style.css client/src/styles/custom.css
-
 # Build using the PostCSS wrapper
 POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run build
 ```
@@ -82,16 +112,37 @@ node ./scripts/custom-styling/build-custom.mjs your-config-id
 
 This will create a CSS file that imports the configuration-specific CSS using the @config directive and build the client with the custom styling.
 
-## Benefits of @config Directive
+### Development Server
 
-The @config directive approach offers several benefits:
+To use custom styling with the development server:
 
-1. **Declarative Configuration**: Each CSS file explicitly declares which Tailwind configuration to use.
+```bash
+# Set the CONFIG_ID environment variable
+export CONFIG_ID=your-config-id
 
-2. **No File Copying**: Configuration files remain in the librechat-config repository, maintaining a single source of truth.
+# Run the development server with the PostCSS wrapper
+POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run frontend:dev
+```
 
-3. **Simplified Build Process**: No need to programmatically modify configurations at build time.
+Alternatively, you can use the run-dev.mjs script:
 
-4. **Better Separation of Concerns**: Custom styles are clearly separated from the core application styles.
+```bash
+# Run the dev server script with the configuration ID
+node ./scripts/custom-styling/run-dev.mjs your-config-id
+```
 
-5. **Improved Developer Experience**: More intuitive and follows modern best practices for CSS and Tailwind configuration.
+This will create a CSS file that imports the configuration-specific CSS using the @config directive and start the development server with the custom styling.
+
+## Benefits of Extension Mechanism
+
+The extension mechanism offers several benefits:
+
+1. **Single Source of Truth**: LibreChat's base configuration remains the single source of truth.
+
+2. **Simplified Maintenance**: Changes to the base configuration are automatically reflected in all extended configurations.
+
+3. **Reduced Duplication**: No need to duplicate common configuration properties.
+
+4. **Cleaner Overrides**: Only override the specific properties that need to be customized.
+
+5. **Better Separation of Concerns**: Custom styles are clearly separated from the core application styles.
