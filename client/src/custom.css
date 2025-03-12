@@ -1,11 +1,11 @@
 :root {
   /* BRAND COLORS START */
-  --primary: #00416a;
-  --primary-lighter: #00609c;
-  --background-lighter: #f5f5f5;
+  --primary: #121212;
+  --primary-lighter: #6737f5;
+  --background-lighter: #f1f9ff;
   --text-on-dark: #ffffff;
-  --highlight: #ffe866;
-  /* BRAND COLORS START */
+  --highlight: #d1c3fc;
+  /* BRAND COLORS END */
 
   --presentation: var(--background-lighter);
   --text-primary: var(--primary);
@@ -23,6 +23,14 @@
 
 [data-testid='nav-new-chat-button']:hover {
   background-color: var(--primary-lighter);
+}
+
+button[data-state='checked'] {
+  background-color: var(--primary-lighter) !important;
+}
+
+button[data-state='unchecked'] {
+  background-color: var(--gray-200) !important;
 }
 
 textarea,
