@@ -67,11 +67,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
         
-      - name: Generate tenant CSS
+      - name: Prepare tenant CSS
         run: |
           cd client
           mkdir -p src/tenant-styles
-          node scripts/tenant-styling/build-tenant.mjs ${{ matrix.tenant }}
+          cp ../librechat-config/tenant-styles/${{ matrix.tenant }}/css/${{ matrix.tenant }}.css src/tenant-styles/
           
       - name: Build client for tenant
         env:

@@ -8,7 +8,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { generateTenantCSS } from './generateTenantCSS.mjs';
 
 // Get tenant name from command line arguments
 const tenant = process.argv[2];
@@ -43,7 +42,11 @@ const tenantStylesDir = path.resolve(process.cwd(), 'src/tenant-styles');
 if (!fs.existsSync(tenantStylesDir)) {
   fs.mkdirSync(tenantStylesDir, { recursive: true });
 }
-generateTenantCSS(tenant, tenantStylesDir);
+
+// Copy CSS file to output directory
+const outputPath = path.join(tenantStylesDir, `${tenant}.css`);
+fs.copyFileSync(tenantCssPath, outputPath);
+console.log(`Copied CSS file for tenant ${tenant} from ${tenantCssPath} to ${outputPath}`);
 
 // Set environment variables
 const env = {

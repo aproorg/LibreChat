@@ -9,13 +9,7 @@ The multi-tenant styling system uses Tailwind's @config directive to specify dif
 ## Scripts
 
 - `loadTenantConfig.js`: Loads tenant-specific styling configuration from the librechat-config repository
-- `generateTenantCSS.mjs`: Generates tenant-specific CSS files with @config directive
-- `vitePluginTenantStyling.js`: Vite plugin for applying tenant styling during the build process
-- `configureTenantBuild.js`: Modifies the Vite configuration for tenant-specific builds
-- `configureTenantTailwind.js`: Updates the Tailwind configuration for tenant-specific extensions
 - `postcss.config.wrapper.js`: Wrapper for postcss.config.cjs that adds support for @config directive
-- `vite.config.wrapper.js`: Wrapper for vite.config.ts that applies tenant-specific configuration
-- `tailwind.config.wrapper.js`: Wrapper for tailwind.config.cjs that applies tenant-specific configuration
 - `build-tenant.mjs`: Script to build the client with tenant-specific styling
 
 ## Directory Structure
@@ -24,83 +18,72 @@ The multi-tenant styling system uses Tailwind's @config directive to specify dif
 librechat-config/tenant-styles/
 ├── default/
 │   ├── theme.json
-│   └── tailwind.config.mjs
+│   ├── tailwind.config.mjs
+│   └── css/
+│       └── default.css
 ├── apro/
 │   ├── theme.json
-│   └── tailwind.config.mjs
+│   ├── tailwind.config.mjs
+│   └── css/
+│       └── apro.css
 └── byko/
     ├── theme.json
-    └── tailwind.config.mjs
+    ├── tailwind.config.mjs
+    └── css/
+        └── byko.css
 ```
 
-## Configuration Format
+## CSS File Format
 
-The `theme.json` file contains CSS variable overrides and Tailwind extensions:
+Each tenant's CSS file should use the @config directive to specify which Tailwind configuration to use:
 
-```json
-{
-  "cssVariables": {
-    "--text-primary": "#123456",
-    "--surface-primary": "#654321"
-  },
-  "tailwindExtensions": {
-    "theme": {
-      "extend": {
-        "colors": {
-          "custom-color": "#abcdef"
-        },
-        "fontFamily": {
-          "custom": ["CustomFont", "sans-serif"]
-        }
-      }
-    }
-  }
+```css
+@config "../../../librechat-config/tenant-styles/tenant-name/tailwind.config.mjs";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import base styles */
+@import "../style.css";
+
+/* Tenant-specific styles */
+:root {
+  /* CSS variables from theme.json */
+  --text-primary: #123456;
+  --surface-primary: #654321;
+}
+
+/* Additional tenant-specific styles */
+.tenant-name {
+  /* Custom styles for this tenant */
 }
 ```
 
-The `tailwind.config.mjs` file extends the base Tailwind configuration with tenant-specific customizations.
-
 ## Usage
 
-### Option 1: Use the build-tenant.mjs script (Recommended)
+### Development
+
+```bash
+# Set the TENANT environment variable
+export TENANT=your-tenant-name
+
+# Copy the tenant CSS file to the client
+mkdir -p client/src/tenant-styles
+cp librechat-config/tenant-styles/your-tenant-name/css/your-tenant-name.css client/src/tenant-styles/
+
+# Build using the PostCSS wrapper
+POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js npm run build
+```
+
+### Using the build-tenant.mjs script
 
 ```bash
 # Run the build script with the tenant name
 node ./scripts/tenant-styling/build-tenant.mjs your-tenant-name
 ```
 
-This will generate a tenant-specific CSS file with the @config directive and build the client with the tenant's styling.
-
-### Option 2: Use wrapper files directly
-
-```bash
-# Set the TENANT environment variable
-export TENANT=your-tenant-name
-
-# Build using the wrapper configuration files
-POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build
-```
-
-### Option 3: Create npm scripts in package.json
-
-Add these scripts to your package.json:
-
-```json
-"scripts": {
-  "build:tenant": "POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run build",
-  "dev:tenant": "POSTCSS_CONFIG_PATH=./scripts/tenant-styling/postcss.config.wrapper.js VITE_CONFIG_PATH=./scripts/tenant-styling/vite.config.wrapper.js npm run dev"
-}
-```
-
-Then run:
-
-```bash
-# Set the TENANT environment variable
-export TENANT=your-tenant-name
-
-# Build using the tenant configuration
-npm run build:tenant
-```
+This will copy the tenant-specific CSS file from librechat-config and build the client with the tenant's styling.
 
 ## Benefits of @config Directive
 
