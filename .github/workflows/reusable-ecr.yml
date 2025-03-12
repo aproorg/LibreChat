@@ -127,10 +127,13 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
+      - name: List Docker images
+        run: docker images
+
       - name: Extract dist directory
         if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
         run: |
-          IMAGE_TAG="${{ env.ECR_REPOSITORY }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}"
+          IMAGE_TAG="${{ env.ECR_REPO }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}"
           echo "Using image: $IMAGE_TAG"
           docker image inspect $IMAGE_TAG
           CONTAINER_ID=$(docker create $IMAGE_TAG)
