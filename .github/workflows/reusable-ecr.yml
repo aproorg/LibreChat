@@ -153,3 +153,35 @@ jobs:
           name: frontend-dist
           path: /tmp/extracted-dist/dist/
           retention-days: 1
+
+  upload-config:
+    name: Upload styling to S3
+    needs: build
+    if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for AWS authentication
+      contents: read
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: /tmp/dist
+
+      - name: Zip dist directory
+        run: |
+          cd /tmp/dist
+          zip -r frontend-dist.zip .
+          echo "Created /tmp/dist/frontend-dist.zip"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp /tmp/dist/frontend-dist.zip s3://${{ secrets.S3_BUCKET_NAME }}/frontend-dist-${{ github.sha }}.zip
+          echo "Successfully uploaded frontend-dist-${{ github.sha }}.zip to S3"
