@@ -9,11 +9,13 @@ The `tenant-styling` directory contains scripts for implementing multi-tenant st
 ### Usage
 
 1. Set the `TENANT` environment variable to the name of your tenant:
+
    ```bash
    export TENANT=your-tenant-name
    ```
 
 2. Run the build with the tenant-specific styling:
+
    ```bash
    npm run build
    ```
