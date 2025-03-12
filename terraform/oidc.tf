@@ -25,7 +25,7 @@ resource "aws_iam_role" "genai" {
 }
 
 data "aws_iam_policy_document" "customer_deployer_access" {
-  for_each = local.principals_account_ids
+  for_each = var.principal_account_ids
   statement {
     effect = "Allow"
     actions = [

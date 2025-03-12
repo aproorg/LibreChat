@@ -27,7 +27,7 @@ locals {
       ]
     }
   }
-  principals_account_ids = {
-    for key, arn in var.principals_readonly_access_all : key => regex("arn:aws:iam::(\\d+):root", arn)[0]
+  principals_readonly_access_all = {
+    for tenant, account in var.principal_account_ids : tenant => format("arn:aws:iam::%s:root", account)
   }
 }
