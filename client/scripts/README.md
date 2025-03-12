@@ -4,21 +4,21 @@ This directory contains scripts for extending and customizing the LibreChat clie
 
 ## Multi-Tenant Styling
 
-The `tenant-styling` directory contains scripts for implementing multi-tenant styling configuration. These scripts allow developers to use a `TENANT` environment variable to extend and override the LibreChat client styling config.
+The `custom-styling` directory contains scripts for implementing custom styling configuration. These scripts allow developers to use a `CONFIG_ID` environment variable to extend and override the LibreChat client styling config.
 
 ### Usage
 
-1. Set the `TENANT` environment variable to the name of your tenant:
+1. Set the `CONFIG_ID` environment variable to the name of your configuration:
    ```bash
-   export TENANT=your-tenant-name
+   export CONFIG_ID=your-config-name
    ```
 
-2. Run the build with the tenant-specific styling:
+2. Run the build with the configuration-specific styling:
    ```bash
    npm run build
    ```
 
-The build process will automatically load the tenant-specific styling configuration from the `librechat-config` repository's `tenant-styles/{tenant-name}/theme.json` file and apply it to the client build.
+The build process will automatically load the configuration-specific styling configuration from the `librechat-config` repository's `custom-styles/{config-name}/theme.json` file and apply it to the client build.
 
 ### Configuration
 
@@ -26,10 +26,10 @@ Tenant-specific styling configurations should be placed in the `librechat-config
 
 ```
 librechat-config/
-└── tenant-styles/
+└── custom-styles/
     ├── default/
     │   └── theme.json
-    └── your-tenant-name/
+    └── your-config-name/
         └── theme.json
 ```
 

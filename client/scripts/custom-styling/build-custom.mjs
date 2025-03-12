@@ -41,16 +41,29 @@ if (!fs.existsSync(cssPath)) {
 
 console.log(`Building client with configuration ID: ${configId}`);
 
-// Create styles directory and copy CSS from librechat-config
-const stylesDir = path.resolve(process.cwd(), 'src/styles');
+// Create custom-styles directory if it doesn't exist
+const stylesDir = path.resolve(process.cwd(), 'src/custom-styles');
 if (!fs.existsSync(stylesDir)) {
   fs.mkdirSync(stylesDir, { recursive: true });
 }
 
-// Copy CSS file to output directory with a generic name
-const outputPath = path.join(stylesDir, 'custom.css');
-fs.copyFileSync(cssPath, outputPath);
-console.log(`Copied CSS file from ${cssPath} to ${outputPath}`);
+// Create a CSS file that imports the configuration-specific CSS
+const customCssPath = path.join(stylesDir, `${configId}.css`);
+const cssContent = `@config "../../../librechat-config/custom-styles/${configId}/tailwind.config.mjs";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import base styles */
+@import "../style.css";
+
+/* Import configuration-specific styles */
+@import "../../../librechat-config/custom-styles/${configId}/css/style.css";
+`;
+
+fs.writeFileSync(customCssPath, cssContent);
+console.log(`Created custom CSS file for configuration ID: ${configId}`);
 
 // Set environment variables
 const env = {

@@ -1,0 +1,7 @@
+/* This file dynamically imports the appropriate custom styling based on CONFIG_ID */
+@import "../style.css";
+
+/* If CONFIG_ID is set, import the corresponding CSS file */
+@import "@librechat-config/custom-styles/default/css/style.css" layer(default-config);
+
+/* The specific configuration CSS will be imported at build time based on CONFIG_ID */
