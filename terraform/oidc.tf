@@ -31,10 +31,9 @@ data "aws_iam_policy_document" "customer_deployer_access" {
     actions = [
       "sts:AssumeRole",
     ]
-    principals {
-      type        = "AWS"
-      identifiers = [format("arn:aws:iam::%s:role/ecs-deployment-role", each.value)]
-    }
+    resources = [
+      format("arn:aws:iam::%s:role/ecs-deployment-role", each.value),
+    ]
   }
 }
 
