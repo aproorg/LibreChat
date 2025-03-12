@@ -112,7 +112,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.file }}
-          if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+          load: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
           push: ${{ env.SHOULD_PUSH_TO_ECR }}
           tags: |
             ${{ env.ECR_REPO }}/${{ matrix.image_name }}:${{ env.SHORT_SHA }}
