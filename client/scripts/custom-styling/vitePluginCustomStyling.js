@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 /**
@@ -5,18 +6,50 @@ import path from 'path';
  * @param {Object} options - Plugin options
  * @returns {Object} Vite plugin
  */
-const vitePluginCustomStyling = (_options = {}) => {
+const vitePluginCustomStyling = (options = {}) => {
   const configId = process.env.CONFIG_ID || '';
+  const isDev = process.env.NODE_ENV !== 'production';
 
   return {
     name: 'vite-plugin-custom-styling',
 
-    configResolved(_config) {
-      console.log(`Building client for configuration: ${configId || 'default'}`);
+    configResolved(config) {
+      console.log(
+        `${isDev ? 'Running' : 'Building'} client for configuration: ${configId || 'default'}`,
+      );
+
+      // In development mode, ensure the custom CSS file exists
+      if (isDev && configId) {
+        const stylesDir = path.resolve(process.cwd(), 'src/custom-styles');
+        const customCssPath = path.join(stylesDir, `${configId}.css`);
+
+        // Create the CSS file if it doesn't exist
+        if (!fs.existsSync(customCssPath)) {
+          if (!fs.existsSync(stylesDir)) {
+            fs.mkdirSync(stylesDir, { recursive: true });
+          }
+
+          const cssContent = `@config "../../../librechat-config/custom-styles/${configId}/tailwind.config.mjs";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import base styles */
+@import "../style.css";
+
+/* Import configuration-specific styles */
+@import "../../../librechat-config/custom-styles/${configId}/css/style.css";
+`;
+
+          fs.writeFileSync(customCssPath, cssContent);
+          console.log(`Created custom CSS file for development: ${customCssPath}`);
+        }
+      }
     },
 
     config(config) {
-      // Add alias for librechat-config repository
+      // Add alias for librechat-config repository and base Tailwind preset
       return {
         ...config,
         resolve: {
@@ -24,6 +57,7 @@ const vitePluginCustomStyling = (_options = {}) => {
           alias: {
             ...config.resolve?.alias,
             '@librechat-config': path.resolve(process.cwd(), '../../librechat-config'),
+            '@librechat-tailwind-preset': path.resolve(process.cwd(), './tailwind.preset.cjs'),
           },
         },
       };
