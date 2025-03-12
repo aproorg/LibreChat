@@ -157,7 +157,7 @@ jobs:
   upload-config:
     name: Upload styling to S3
     needs: build
-    if: ${{ matrix.image_name == 'frontend' && inputs.s3-upload == 'true' }}
+    if: ${{ inputs.s3-upload == 'true' }}
     runs-on: ubuntu-latest
     env:
       SHARED_CONFIG_BUCKET: genai-shared-config
