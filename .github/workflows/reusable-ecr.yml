@@ -185,5 +185,5 @@ jobs:
 
       - name: Upload to S3
         run: |
-          REMOTE_PATH="dist-test/${{ github.sha }}/dist.zip"
-          aws s3 cp /tmp/dist/frontend-dist.zip s3://${{ env.SHARED_CONFIG_BUCKET }}/"${REMOTE_PATH}"
+          aws s3 cp /tmp/dist/frontend-dist.zip s3://${{ env.SHARED_CONFIG_BUCKET }}/frontend/dist/${{ github.sha }}/dist.zip"
+          aws s3 cp /tmp/dist/frontend-dist.zip s3://${{ env.SHARED_CONFIG_BUCKET }}/frontend/dist/latest/dist.zip"
