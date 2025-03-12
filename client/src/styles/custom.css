@@ -1,0 +1,27 @@
+@config "../tailwind.config.mjs";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+:root {
+  --text-primary: #2D3748;
+  --text-secondary: #4A5568;
+  --text-tertiary: #718096;
+  --surface-primary: #FFFFFF;
+  --surface-secondary: #F7FAFC;
+  --surface-tertiary: #EDF2F7;
+  --border-light: #E2E8F0;
+  --border-medium: #CBD5E0;
+  --border-heavy: #A0AEC0;
+  --accent-primary: #38B2AC;
+  --accent-secondary: #2C7A7B;
+  --accent-tertiary: #285E61;
+  --ring-primary: rgba(56, 178, 172, 0.5);
+}
+
+/* Additional custom styles */
+.custom-apro {
+  /* Custom styles for this configuration */
+}

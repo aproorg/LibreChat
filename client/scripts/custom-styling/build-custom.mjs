@@ -24,12 +24,12 @@ if (!configId) {
 
 // Check if configuration exists
 const configRepoPath = path.resolve(process.cwd(), '../../librechat-config');
-const configPath = path.join(configRepoPath, 'custom-styles', configId, 'theme.json');
-const cssPath = path.join(configRepoPath, 'custom-styles', configId, 'css', `${configId}.css`);
+const tailwindConfigPath = path.join(configRepoPath, 'custom-styles', configId, 'tailwind.config.mjs');
+const cssPath = path.join(configRepoPath, 'custom-styles', configId, 'css', 'style.css');
 
-if (!fs.existsSync(configPath)) {
-  console.error(`Error: Configuration not found for ID: ${configId}`);
-  console.error(`Expected path: ${configPath}`);
+if (!fs.existsSync(tailwindConfigPath)) {
+  console.error(`Error: Tailwind configuration not found for ID: ${configId}`);
+  console.error(`Expected path: ${tailwindConfigPath}`);
   process.exit(1);
 }
 

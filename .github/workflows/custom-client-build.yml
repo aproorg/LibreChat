@@ -71,7 +71,7 @@ jobs:
         run: |
           cd client
           mkdir -p src/styles
-          cp ../librechat-config/custom-styles/${{ matrix.config_id }}/css/${{ matrix.config_id }}.css src/styles/custom.css
+          cp ../librechat-config/custom-styles/${{ matrix.config_id }}/css/style.css src/styles/custom.css
           
       - name: Build client with custom styling
         env:

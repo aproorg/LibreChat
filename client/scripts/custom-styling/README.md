@@ -17,20 +17,17 @@ The custom styling system uses Tailwind's @config directive to specify different
 ```
 librechat-config/custom-styles/
 ├── default/
-│   ├── theme.json
 │   ├── tailwind.config.mjs
 │   └── css/
-│       └── default.css
+│       └── style.css
 ├── config1/
-│   ├── theme.json
 │   ├── tailwind.config.mjs
 │   └── css/
-│       └── config1.css
+│       └── style.css
 └── config2/
-    ├── theme.json
     ├── tailwind.config.mjs
     └── css/
-        └── config2.css
+        └── style.css
 ```
 
 ## CSS File Format
@@ -38,7 +35,7 @@ librechat-config/custom-styles/
 Each configuration's CSS file should use the @config directive to specify which Tailwind configuration to use:
 
 ```css
-@config "../../../librechat-config/custom-styles/config-id/tailwind.config.mjs";
+@config "../tailwind.config.mjs";
 
 @tailwind base;
 @tailwind components;
@@ -49,7 +46,7 @@ Each configuration's CSS file should use the @config directive to specify which 
 
 /* Custom styles */
 :root {
-  /* CSS variables from theme.json */
+  /* CSS variables */
   --text-primary: #123456;
   --surface-primary: #654321;
 }
@@ -70,7 +67,7 @@ export CONFIG_ID=your-config-id
 
 # Copy the CSS file to the client
 mkdir -p client/src/styles
-cp librechat-config/custom-styles/your-config-id/css/your-config-id.css client/src/styles/custom.css
+cp librechat-config/custom-styles/your-config-id/css/style.css client/src/styles/custom.css
 
 # Build using the PostCSS wrapper
 POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run build
