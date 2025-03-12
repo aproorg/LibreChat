@@ -7,6 +7,7 @@ const {
   ListAgentAliasesCommand,
 } = require('@aws-sdk/client-bedrock-agent');
 const User = require('~/models/User');
+const { logger } = require('~/config');
 
 /**
  * @param {ServerRequest} req
@@ -99,8 +100,13 @@ async function loadModels(req) {
 }
 
 async function modelController(req, res) {
-  const modelConfig = await loadModels(req);
-  res.send(modelConfig);
+  try {
+    const modelConfig = await loadModels(req);
+    res.send(modelConfig);
+  } catch (error) {
+    logger.error('Error fetching models:', error);
+    res.status(500).send({ error: error.message });
+  }
 }
 
 module.exports = { modelController, loadModels, getModelsConfig, setCurrentModel, getCurrentModel };
