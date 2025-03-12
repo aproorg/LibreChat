@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 
 /**
@@ -8,14 +7,14 @@ import path from 'path';
  */
 const vitePluginCustomStyling = (options = {}) => {
   const configId = process.env.CONFIG_ID || '';
-  
+
   return {
     name: 'vite-plugin-custom-styling',
-    
+
     configResolved(config) {
       console.log(`Building client for configuration: ${configId || 'default'}`);
     },
-    
+
     config(config) {
       // Add alias for librechat-config repository
       return {
@@ -29,15 +28,15 @@ const vitePluginCustomStyling = (options = {}) => {
         },
       };
     },
-    
+
     transformIndexHtml(html) {
       if (!configId) {
         return html;
       }
-      
+
       // Add a configuration-specific class to the html element
       return html.replace('<html', `<html data-config="${configId}"`);
-    }
+    },
   };
 };
 

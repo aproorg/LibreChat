@@ -42,7 +42,7 @@ Each configuration's CSS file should use the @config directive to specify which 
 @tailwind utilities;
 
 /* Import base styles */
-@import "../style.css";
+@import '../style.css';
 
 /* Custom styles */
 :root {
