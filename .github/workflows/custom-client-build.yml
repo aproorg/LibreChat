@@ -67,12 +67,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
         
-      - name: Prepare custom CSS
-        run: |
-          cd client
-          mkdir -p src/styles
-          cp ../librechat-config/custom-styles/${{ matrix.config_id }}/css/style.css src/styles/custom.css
-          
       - name: Build client with custom styling
         env:
           CONFIG_ID: ${{ matrix.config_id }}
@@ -80,7 +74,7 @@ jobs:
         run: |
           cd client
           npm ci
-          npm run build
+          node ./scripts/custom-styling/build-custom.mjs ${{ matrix.config_id }}
           
       - name: Upload client build
         uses: actions/upload-artifact@v4

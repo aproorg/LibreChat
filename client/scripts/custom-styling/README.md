@@ -80,7 +80,7 @@ POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run b
 node ./scripts/custom-styling/build-custom.mjs your-config-id
 ```
 
-This will copy the custom CSS file from librechat-config and build the client with the custom styling.
+This will create a CSS file that imports the configuration-specific CSS using the @config directive and build the client with the custom styling.
 
 ## Benefits of @config Directive
 
@@ -88,8 +88,10 @@ The @config directive approach offers several benefits:
 
 1. **Declarative Configuration**: Each CSS file explicitly declares which Tailwind configuration to use.
 
-2. **Simplified Build Process**: No need to programmatically modify configurations at build time.
+2. **No File Copying**: Configuration files remain in the librechat-config repository, maintaining a single source of truth.
 
-3. **Better Separation of Concerns**: Custom styles are clearly separated from the core application styles.
+3. **Simplified Build Process**: No need to programmatically modify configurations at build time.
 
-4. **Improved Developer Experience**: More intuitive and follows modern best practices for CSS and Tailwind configuration.
+4. **Better Separation of Concerns**: Custom styles are clearly separated from the core application styles.
+
+5. **Improved Developer Experience**: More intuitive and follows modern best practices for CSS and Tailwind configuration.
