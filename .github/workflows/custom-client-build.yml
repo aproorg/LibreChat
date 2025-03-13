@@ -23,7 +23,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          repository: config1org/librechat-config
+          repository: aproorg/librechat-config
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Set configuration matrix
@@ -48,13 +48,13 @@ jobs:
       - name: Checkout LibreChat
         uses: actions/checkout@v4
         with:
-          repository: config1org/LibreChat
+          repository: aproorg/LibreChat
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Checkout librechat-config
         uses: actions/checkout@v4
         with:
-          repository: config1org/librechat-config
+          repository: aproorg/librechat-config
           token: ${{ secrets.GITHUB_TOKEN }}
           path: ../librechat-config
           
@@ -68,17 +68,14 @@ jobs:
         run: npm ci
         
       - name: Build client with custom styling
-        env:
-          CONFIG_ID: ${{ matrix.config_id }}
-          POSTCSS_CONFIG_PATH: './scripts/custom-styling/postcss.config.wrapper.js'
         run: |
           cd client
           npm ci
-          node ./scripts/custom-styling/build-custom.mjs ${{ matrix.config_id }}
+          node ./scripts/custom-styling/custom-styling.mjs ${{ matrix.config_id }}
           
       - name: Upload client build
         uses: actions/upload-artifact@v4
         with:
           name: librechat-client-${{ matrix.config_id }}
-          path: client/dist/${{ matrix.config_id || 'default' }}
+          path: client/dist
           retention-days: 7

@@ -1,24 +1,24 @@
-# Custom Styling with @config Directive
+# Custom Styling Configuration
 
-This directory contains scripts for implementing custom styling configuration in LibreChat using Tailwind's @config directive. These scripts allow developers to use a `CONFIG_ID` environment variable to extend and override the LibreChat client styling config.
+This directory contains scripts for implementing custom styling configuration in LibreChat. These scripts allow developers to use a `CONFIG_ID` environment variable to extend and override the LibreChat client styling config.
 
 ## How It Works
 
-The custom styling system uses Tailwind's @config directive to specify different Tailwind configurations. Each configuration has its own CSS file that imports the base styles and applies customizations.
+The custom styling system uses CSS layers and imports to apply configuration-specific styles. Each configuration has its own CSS file that defines custom variables and styles.
 
 ## Extension Mechanism
 
-The custom styling system supports extending LibreChat's base Tailwind configuration and CSS files:
+The custom styling system supports extending LibreChat's base styles:
 
-1. **Tailwind Configuration Extension**: Each configuration in librechat-config can extend LibreChat's base Tailwind configuration using the `presets` feature.
+1. **CSS Extension**: Each configuration's CSS file can override specific CSS variables and add custom styles.
 
-2. **CSS Extension**: Each configuration's CSS file imports LibreChat's base styles and can override specific properties.
+2. **Tailwind Configuration Extension**: Each configuration in librechat-config can extend LibreChat's base Tailwind configuration using the `presets` feature.
 
 ## Scripts
 
-- `loadConfig.js`: Loads custom styling configuration from the librechat-config repository
-- `postcss.config.wrapper.js`: Wrapper for postcss.config.cjs that adds support for @config directive
-- `build-custom.mjs`: Script to build the client with custom styling
+- `custom-styling.mjs`: Script to build or run the development server with custom styling
+- `postcss.config.wrapper.js`: Wrapper for postcss.config.cjs that adds support for CSS nesting and custom properties
+- `vitePluginCustomStyling.js`: Vite plugin that adds aliases and injects configuration ID as a CSS variable
 
 ## Directory Structure in librechat-config
 
@@ -66,19 +66,10 @@ export default {
 
 ## CSS File Format
 
-Each configuration's CSS file should use the @config directive to specify which Tailwind configuration to use and import the base styles:
+Each configuration's CSS file should contain custom variables and styles that override the base styles:
 
 ```css
-@config "../tailwind.config.mjs";
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* Import base styles */
-@import "../style.css";
-
-/* Custom styles */
+/* Custom styles for a specific configuration */
 :root {
   /* CSS variables */
   --text-primary: #123456;
@@ -89,49 +80,28 @@ Each configuration's CSS file should use the @config directive to specify which 
 .custom-style {
   /* Custom styles for this configuration */
 }
+
+/* Dark mode overrides */
+.dark {
+  --text-primary: #E2E8F0;
+  --text-secondary: #CBD5E0;
+  --text-tertiary: #A0AEC0;
+}
 ```
 
 ## Usage
 
-### Development
+### Building with Custom Styling
 
 ```bash
-# Set the CONFIG_ID environment variable
-export CONFIG_ID=your-config-id
+# Build with a specific configuration
+node ./scripts/custom-styling/custom-styling.mjs your-config-id
 
-# Build using the PostCSS wrapper
-POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run build
+# Run development server with a specific configuration
+node ./scripts/custom-styling/custom-styling.mjs your-config-id dev
 ```
 
-### Using the build-custom.mjs script
-
-```bash
-# Run the build script with the configuration ID
-node ./scripts/custom-styling/build-custom.mjs your-config-id
-```
-
-This will create a CSS file that imports the configuration-specific CSS using the @config directive and build the client with the custom styling.
-
-### Development Server
-
-To use custom styling with the development server:
-
-```bash
-# Set the CONFIG_ID environment variable
-export CONFIG_ID=your-config-id
-
-# Run the development server with the PostCSS wrapper
-POSTCSS_CONFIG_PATH=./scripts/custom-styling/postcss.config.wrapper.js npm run frontend:dev
-```
-
-Alternatively, you can use the run-dev.mjs script:
-
-```bash
-# Run the dev server script with the configuration ID
-node ./scripts/custom-styling/run-dev.mjs your-config-id
-```
-
-This will create a CSS file that imports the configuration-specific CSS using the @config directive and start the development server with the custom styling.
+The script will verify that the configuration exists in the librechat-config repository before running the build or development server. It injects the configuration ID as a CSS variable that is used by the CSS layers to import the appropriate styles.
 
 ## Benefits of Extension Mechanism
 
