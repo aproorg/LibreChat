@@ -1,0 +1,13 @@
+/* Custom styles for default configuration */
+:root {
+  --text-primary: #374151;
+  --text-secondary: #6B7280;
+  --text-tertiary: #9CA3AF;
+  --surface-primary: #FFFFFF;
+  --surface-secondary: #F9FAFB;
+  --surface-tertiary: #F3F4F6;
+}
+
+.custom-default {
+  /* Custom styles for this configuration */
+}
