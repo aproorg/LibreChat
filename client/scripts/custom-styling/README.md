@@ -6,6 +6,15 @@ This directory contains scripts for implementing custom styling configuration in
 
 The custom styling system uses CSS layers and imports to apply configuration-specific styles. Each configuration has its own CSS file that defines custom variables and styles.
 
+## Git Submodule
+
+The librechat-config repository is included as a git submodule, providing direct access to configuration files without complex path resolution or copying files between repositories. This approach ensures version control consistency and simplifies the build process.
+
+To clone the repository with the submodule:
+```bash
+git clone --recurse-submodules https://github.com/aproorg/LibreChat.git
+```
+
 ## Extension Mechanism
 
 The custom styling system supports extending LibreChat's base styles:

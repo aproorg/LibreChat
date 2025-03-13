@@ -7,7 +7,7 @@ const configId = process.argv[2] || process.env.CONFIG_ID || 'default';
 const isDev = process.argv[3] === 'dev';
 
 // Verify configuration exists in librechat-config repository
-const configPath = path.resolve(process.cwd(), '../../librechat-config/custom-styles', configId);
+const configPath = path.resolve(process.cwd(), '../librechat-config/custom-styles', configId);
 if (!fs.existsSync(configPath)) {
   console.error(`Error: Configuration '${configId}' not found at ${configPath}`);
   console.error(`Please create the configuration directory in librechat-config/custom-styles/`);

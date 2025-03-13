@@ -50,13 +50,14 @@ jobs:
         with:
           repository: aproorg/LibreChat
           token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: true
           
-      - name: Checkout librechat-config
-        uses: actions/checkout@v4
-        with:
-          repository: aproorg/librechat-config
-          token: ${{ secrets.GITHUB_TOKEN }}
-          path: ../librechat-config
+      - name: Update librechat-config submodule
+        run: |
+          git submodule update --init --recursive
+          cd librechat-config
+          git checkout main
+          git pull
           
       - name: Setup Node.js
         uses: actions/setup-node@v4

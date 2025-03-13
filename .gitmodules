@@ -1,0 +1,3 @@
+[submodule "librechat-config"]
+	path = librechat-config
+	url = ../librechat-config

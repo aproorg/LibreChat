@@ -24,7 +24,7 @@ const vitePluginCustomStyling = (options = {}) => {
           ...config.resolve,
           alias: {
             ...config.resolve?.alias,
-            '@librechat-config': path.resolve(process.cwd(), '../../librechat-config'),
+            '@librechat-config': path.resolve(process.cwd(), '../librechat-config'),
             '@librechat-tailwind-preset': path.resolve(process.cwd(), './tailwind.preset.cjs'),
           },
         },
