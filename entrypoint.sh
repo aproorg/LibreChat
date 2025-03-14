@@ -16,11 +16,12 @@ echo "Syncing files from S3 bucket $S3_BUCKET to $CONTAINER_DIR"
 echo "S3 bucket: $S3_BUCKET"
 echo "Prefix: $PREFIX"
 echo "Container directory: $CONTAINER_DIR"
+echo "Version: $VERSION"
 
 #Librechat Config file
-aws s3 cp s3://"$S3_BUCKET"/"$PREFIX"/librechat.yaml "$CONTAINER_DIR/api/"
+aws s3 cp s3://"$S3_BUCKET"/"$PREFIX"/version/"$VERSION"/librechat.yaml "$CONTAINER_DIR/api/"
 #Assets
-aws s3 sync s3://"$S3_BUCKET"/"$PREFIX"/assets "$CONTAINER_DIR/client/dist/assets"
+aws s3 sync s3://"$S3_BUCKET"/"$PREFIX"/version/"$VERSION"/assets "$CONTAINER_DIR/client/dist/assets"
 
 # Run container command
 echo "Running container command: $CONTAINER_RUN_COMMAND"
