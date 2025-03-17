@@ -89,6 +89,9 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
   const { submitMessage } = useSubmitMessage();
   const sendConversationStarter = (text: string) => submitMessage({ text });
 
+  // Timestamp to fetch logo within this hour
+  const timestamp = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, '');
+
   const getWelcomeMessage = async () => {
     const greeting = conversation?.greeting ?? '';
     if (greeting) {
@@ -115,7 +118,7 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
           id="landing-company-logo"
           className={cn('relative w-[100px]', name && avatar ? 'mb-0' : 'mb-3')}
         >
-          <img src={Logo} alt="Logo"></img>
+          <img src={`${Logo}?v=${timestamp}`} alt="Logo"></img>
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"
