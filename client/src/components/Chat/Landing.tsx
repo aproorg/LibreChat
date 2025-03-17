@@ -115,7 +115,7 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
       <div className="absolute left-0 right-0">{Header != null ? Header : null}</div>
       <div className="flex h-full flex-col items-center justify-center">
         <div id="landing-company-logo" className="mb-3 w-40 md:w-40 lg:w-48">
-          <img className="h-auto w-full" src={`${Logo}${timestamp}`} alt="Logo"></img>
+          <img className="h-auto w-full" src={`${Logo}?timestamp=${timestamp}`} alt="Logo"></img>
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"
