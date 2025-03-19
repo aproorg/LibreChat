@@ -33,13 +33,23 @@ self.addEventListener('activate', (event) => {
 // Athugar hvort ný útgáfa sé til
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        return caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, response.clone());
-          return response;
-        });
-      })
-      .catch(() => caches.match(event.request)),
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.match(event.request).then((cachedResponse) => {
+        const fetchPromise = fetch(event.request)
+          .then((networkResponse) => {
+            // Update cache with fresh response
+            cache.put(event.request, networkResponse.clone());
+            return networkResponse;
+          })
+          .catch((error) => {
+            console.error('Fetch failed:', error);
+            // Return cached response as fallback
+            return cachedResponse;
+          });
+
+        // Return cached response immediately if available, otherwise wait for network
+        return cachedResponse || fetchPromise;
+      });
+    }),
   );
 });
