@@ -89,6 +89,9 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
   const { submitMessage } = useSubmitMessage();
   const sendConversationStarter = (text: string) => submitMessage({ text });
 
+  // Timestamp to fetch logo within this hour
+  const timestamp = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, '');
+
   const getWelcomeMessage = async () => {
     const greeting = conversation?.greeting ?? '';
     if (greeting) {
@@ -111,11 +114,8 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
     <div className="relative h-full">
       <div className="absolute left-0 right-0">{Header != null ? Header : null}</div>
       <div className="flex h-full flex-col items-center justify-center">
-        <div
-          id="landing-company-logo"
-          className={cn('relative w-[100px]', name && avatar ? 'mb-0' : 'mb-3')}
-        >
-          <img src={Logo} alt="Logo"></img>
+        <div id="landing-company-logo" className="mb-3 w-40 md:w-40 lg:w-48">
+          <img className="h-auto w-full" src={`${Logo}?timestamp=${timestamp}`} alt="Logo"></img>
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"
