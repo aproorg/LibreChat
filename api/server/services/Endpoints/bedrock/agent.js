@@ -86,7 +86,12 @@ class BedrockAgentClient {
             }
 
             // Only append non-empty, non-JSON-like text
-            if (extractedText && !extractedText.includes('{') && !extractedText.includes('}')) {
+            if (
+              !jsonData.bytes &&
+              extractedText &&
+              !extractedText.includes('{') &&
+              !extractedText.includes('}')
+            ) {
               text += extractedText;
             }
           } catch (err) {
