@@ -8,7 +8,8 @@ export default function useGetSender() {
   return useCallback(
     (endpointOption: TEndpointOption) => {
       const { modelDisplayLabel } = endpointsConfig?.[endpointOption.endpoint ?? ''] ?? {};
-      return getResponseSender({ ...endpointOption, modelDisplayLabel });
+      const modelLabel = endpointOption.model;
+      return getResponseSender({ ...endpointOption, modelLabel, modelDisplayLabel });
     },
     [endpointsConfig],
   );

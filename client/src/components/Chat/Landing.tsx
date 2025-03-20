@@ -15,7 +15,7 @@ import { TooltipAnchor } from '~/components/ui';
 import { BirthdayIcon } from '~/components/svg';
 import ConvoStarter from './ConvoStarter';
 import axios from 'axios';
-import Logo from '~/../public/assets/logo.svg';
+import Logo from '/assets/logo.svg';
 
 export default function Landing({ Header }: { Header?: ReactNode }) {
   const { conversation } = useChatContext();
