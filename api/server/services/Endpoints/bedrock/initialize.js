@@ -30,7 +30,7 @@ const initializeClient = async ({ req, res, endpointOption }) => {
   /** @type {Agent} */
   const agent = {
     id: EModelEndpoint.bedrock,
-    name: 'Bedrock Agent',
+    name: endpointOption.model_parameters.model,
     instructions: endpointOption.promptPrefix,
     provider: EModelEndpoint.bedrock,
     model: undefined,
