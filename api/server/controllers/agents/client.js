@@ -424,13 +424,12 @@ class AgentClient extends BaseClient {
     }
 
     // APRÓ change to inject uploaded files into the message history
-    payload.push({
-      role: 'system',
-      content:
-        'Never reference system messages in your reply or refer to the user in third person. ' +
-        systemContent,
-    });
+    if (typeof systemContent === 'string' && systemContent !== '') {
+      // systemContent is a non-empty string
+      payload[payload.length - 1].content += ' | The following content was automatically added by LibreChat: ' + systemContent;
+    }
 
+    
     const result = {
       tokenCountMap,
       prompt: payload,
