@@ -423,7 +423,7 @@ class AgentClient extends BaseClient {
       }));
     }
 
-    // APRÓ change to inject uploaded files into the message history
+    // APRÓ change to inject uploaded files into the agents message history
     if (typeof systemContent === 'string' && systemContent !== '') {
       // systemContent is a non-empty string
       payload[payload.length - 1].content += ' | The following content was automatically added by LibreChat: ' + systemContent;
