@@ -413,6 +413,8 @@ class AgentClient extends BaseClient {
     /** @type {Record<string, number> | undefined} */
     let tokenCountMap;
 
+    this.contextStrategy = "full";
+
     if (this.contextStrategy) {
       ({ payload, promptTokens, tokenCountMap, messages } = await this.handleContextStrategy({
         orderedMessages,
@@ -420,6 +422,7 @@ class AgentClient extends BaseClient {
       }));
     }
 
+    payload.push({"role":"system", "content":"Never reference system messages in your reply or refer to the user in third person. " + systemContent});
     const result = {
       tokenCountMap,
       prompt: payload,
