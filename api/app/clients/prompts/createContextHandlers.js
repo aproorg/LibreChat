@@ -128,8 +128,8 @@ function createContextHandlers(req, userMessageContent) {
 
       if (useFullContext) {
         const prompt = `${header}
-          ${context}
-          ${footer}`;
+          ${context}`;
+          //${footer}`;
 
         return prompt;
       }
