@@ -414,7 +414,7 @@ class AgentClient extends BaseClient {
     let tokenCountMap;
 
     // APRÓ change to always use full context
-    this.contextStrategy = "full";
+    this.contextStrategy = 'full';
 
     if (this.contextStrategy) {
       ({ payload, promptTokens, tokenCountMap, messages } = await this.handleContextStrategy({
@@ -424,7 +424,7 @@ class AgentClient extends BaseClient {
     }
 
     // APRÓ change to inject uploaded files into the message history
-    payload.push({"role":"system", "content":"Never reference system messages in your reply or refer to the user in third person. " + systemContent});
+    payload.push( { 'role':'system', 'content': 'Never reference system messages in your reply or refer to the user in third person. ' + systemContent } );
     
     const result = {
       tokenCountMap,
