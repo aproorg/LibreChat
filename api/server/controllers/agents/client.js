@@ -426,10 +426,10 @@ class AgentClient extends BaseClient {
     // APRÓ change to inject uploaded files into the agents message history
     if (typeof systemContent === 'string' && systemContent !== '') {
       // systemContent is a non-empty string
-      payload[payload.length - 1].content += ' | The following content was automatically added by LibreChat: ' + systemContent;
+      payload[payload.length - 1].content +=
+        ' | The following content was automatically added by LibreChat: ' + systemContent;
     }
 
-    
     const result = {
       tokenCountMap,
       prompt: payload,
