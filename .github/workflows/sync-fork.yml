@@ -62,6 +62,7 @@ jobs:
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
 
       - name: Enable auto-merge
+        if: false
         run: |
           # Enable auto-merge (requires appropriate permissions)
           gh pr merge ${{ env.PR_NUMBER }} --auto --merge --repo ${{ github.repository }}
