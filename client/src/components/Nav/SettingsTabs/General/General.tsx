@@ -59,6 +59,7 @@ export const LangSelector = ({
     { value: 'et-EE', label: localize('com_nav_lang_estonian') },
     { value: 'fr-FR', label: localize('com_nav_lang_french') },
     { value: 'it-IT', label: localize('com_nav_lang_italian') },
+    { value: 'is-IS', label: localize('com_nav_lang_icelandic') },
     { value: 'pl-PL', label: localize('com_nav_lang_polish') },
     { value: 'pt-BR', label: localize('com_nav_lang_brazilian_portuguese') },
     { value: 'pt-PT', label: localize('com_nav_lang_portuguese') },
@@ -120,9 +121,10 @@ function General() {
 
   return (
     <div className="flex flex-col gap-3 p-1 text-sm text-text-primary">
-      <div className="pb-3">
+      {/* Apro only uses the customer specific theme, dark theme is not available. */}
+      {/* <div className="pb-3">
         <ThemeSelector theme={theme} onChange={changeTheme} />
-      </div>
+      </div> */}
       <div className="pb-3">
         <LangSelector langcode={langcode} onChange={changeLang} />
       </div>

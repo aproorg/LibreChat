@@ -413,11 +413,21 @@ class AgentClient extends BaseClient {
     /** @type {Record<string, number> | undefined} */
     let tokenCountMap;
 
+    // APRÓ change to always use full context
+    this.contextStrategy = 'full';
+
     if (this.contextStrategy) {
       ({ payload, promptTokens, tokenCountMap, messages } = await this.handleContextStrategy({
         orderedMessages,
         formattedMessages,
       }));
+    }
+
+    // APRÓ change to inject uploaded files into the agents message history
+    if (typeof systemContent === 'string' && systemContent !== '') {
+      // systemContent is a non-empty string
+      payload[payload.length - 1].content +=
+        ' | The following content was automatically added by LibreChat: ' + systemContent;
     }
 
     const result = {

@@ -15,6 +15,7 @@ import { TooltipAnchor } from '~/components/ui';
 import { BirthdayIcon } from '~/components/svg';
 import ConvoStarter from './ConvoStarter';
 import axios from 'axios';
+import Logo from '/assets/logo.svg';
 
 export default function Landing({ Header }: { Header?: ReactNode }) {
   const { conversation } = useChatContext();
@@ -22,7 +23,12 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
   const assistantMap = useAssistantsMapContext();
   const { data: startupConfig } = useGetStartupConfig();
   const { data: endpointsConfig } = useGetEndpointsQuery();
-  const [welcomeMessage, setWelcomeMessage] = useState<string>('');
+  interface WelcomeMessage {
+    description?: string;
+    agentName?: string;
+  }
+
+  const [welcomeMessage, setWelcomeMessage] = useState<WelcomeMessage>({});
   let { endpoint = '' } = conversation ?? {};
 
   if (
@@ -41,8 +47,8 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
 
   useEffect(() => {
     const fetchWelcomeMessage = async () => {
-      const message = await getWelcomeMessage();
-      setWelcomeMessage(message);
+      const agent = await getWelcomeMessage();
+      setWelcomeMessage(agent);
     };
 
     fetchWelcomeMessage();
@@ -83,6 +89,9 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
   const { submitMessage } = useSubmitMessage();
   const sendConversationStarter = (text: string) => submitMessage({ text });
 
+  // Timestamp to fetch logo within this hour
+  const timestamp = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, '');
+
   const getWelcomeMessage = async () => {
     const greeting = conversation?.greeting ?? '';
     if (greeting) {
@@ -98,24 +107,15 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
     }
 
     const currentAgent = await axios.get('/api/models/current');
-    return currentAgent.data?.description ?? localize('com_nav_welcome_message');
+    return currentAgent.data;
   };
 
   return (
     <div className="relative h-full">
       <div className="absolute left-0 right-0">{Header != null ? Header : null}</div>
       <div className="flex h-full flex-col items-center justify-center">
-        <div className={cn('relative h-12 w-12', name && avatar ? 'mb-0' : 'mb-3')}>
-          <ConvoIcon
-            agentsMap={agentsMap}
-            assistantMap={assistantMap}
-            conversation={conversation}
-            endpointsConfig={endpointsConfig}
-            containerClassName={containerClassName}
-            context="landing"
-            className="h-2/3 w-2/3"
-            size={41}
-          />
+        <div id="landing-company-logo" className="mb-3 w-40 md:w-40 lg:w-48">
+          <img className="h-auto w-full" src={`${Logo}?timestamp=${timestamp}`} alt="Logo"></img>
           {startupConfig?.showBirthdayIcon === true ? (
             <TooltipAnchor
               className="absolute bottom-8 right-2.5"
@@ -139,9 +139,17 @@ export default function Landing({ Header }: { Header?: ReactNode }) {
           </div> */}
           </div>
         ) : (
-          <h2 className="mb-5 max-w-[75vh] px-12 text-center text-lg font-medium dark:text-white md:px-0 md:text-2xl">
-            {welcomeMessage}
-          </h2>
+          <div className="mb-5 max-w-[75vh] px-12 text-center">
+            <h2
+              className="font-medium dark:text-white md:px-0 md:text-2xl"
+              style={{ color: 'var(--primary)' }}
+            >
+              {welcomeMessage?.agentName}
+            </h2>
+            <span className="text-lg font-medium">
+              {welcomeMessage?.description ?? localize('com_nav_welcome_message')}
+            </span>
+          </div>
         )}
         <div className="mt-8 flex flex-wrap justify-center gap-3 px-4">
           {conversation_starters.length > 0 &&

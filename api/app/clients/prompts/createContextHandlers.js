@@ -126,10 +126,11 @@ function createContextHandlers(req, userMessageContent) {
             })
             .join('');
 
+      // APRÓ change - remove trailing system instructions as they are counter productive
       if (useFullContext) {
         const prompt = `${header}
-          ${context}
-          ${footer}`;
+          ${context}`;
+          //${footer}`;
 
         return prompt;
       }

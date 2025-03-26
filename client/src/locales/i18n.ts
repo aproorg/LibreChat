@@ -10,6 +10,7 @@ import translationEs from './es/translation.json';
 import translationEt from './et/translation.json';
 import translationFr from './fr/translation.json';
 import translationIt from './it/translation.json';
+import translationIs from './is/translation.json';
 import translationPl from './pl/translation.json';
 import translationPt_BR from './pt-BR/translation.json';
 import translationPt_PT from './pt-PT/translation.json';
@@ -40,6 +41,7 @@ export const resources = {
   et: { translation: translationEt },
   fr: { translation: translationFr },
   it: { translation: translationIt },
+  is: { translation: translationIs },
   pl: { translation: translationPl },
   'pt-BR': { translation: translationPt_BR },
   'pt-PT': { translation: translationPt_PT },
