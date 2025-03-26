@@ -32,6 +32,7 @@ export interface IUser extends Document {
   termsAccepted?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
+  lastSelectedModel?: string;
 }
 
 // Session sub-schema
@@ -67,7 +68,7 @@ const User = new Schema<IUser>(
     },
     email: {
       type: String,
-      required: [true, 'can\'t be blank'],
+      required: [true, "can't be blank"],
       lowercase: true,
       unique: true,
       match: [/\S+@\S+\.\S+/, 'is invalid'],
@@ -155,6 +156,10 @@ const User = new Schema<IUser>(
     termsAccepted: {
       type: Boolean,
       default: false,
+    },
+    lastSelectedModel: {
+      type: String,
+      default: '',
     },
   },
   { timestamps: true },
