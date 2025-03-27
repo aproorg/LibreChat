@@ -39,7 +39,7 @@ jobs:
       - name: Check for existing sync PR
         id: check_pr
         run: |
-          PR_DATA=$(gh pr list --repo ${{ github.repository }} --base main --head "upstream-sync/" --json number,headRefName --jq '.[0]')
+          PR_DATA=$(gh pr list --repo ${{ github.repository }} --base main --head "sync-fork/" --json number,headRefName --jq '.[0]')
           if [ -n "$PR_DATA" ]; then
             echo "existing_pr=$(echo $PR_DATA | jq -r .number)" >> $GITHUB_OUTPUT
             echo "existing_branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
@@ -57,7 +57,7 @@ jobs:
             BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
             git checkout $BRANCH
           else
-            BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
+            BRANCH="sync-fork/$(date +%Y%m%d-%H%M%S)"
             git checkout -b $BRANCH
           fi
 
@@ -78,7 +78,7 @@ jobs:
           fi
 
           # Push the branch (this will be a no-op if there are no changes)
-          git push origin $BRANCH
+          git push origin $BRANCH --force
 
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "merge_status=$MERGE_STATUS" >> $GITHUB_OUTPUT
