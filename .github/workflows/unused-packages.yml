@@ -158,7 +158,7 @@ jobs:
     needs:
       - detect-unused-packages
     steps:
-      - name: Check job success
+      - name: Check scripts success
         run: '[[ ${{ needs.detect-unused-packages.result }} == "success" ]] || exit 1'
       - name: Announce success
         run: echo "Test is successful"

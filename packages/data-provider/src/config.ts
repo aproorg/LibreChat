@@ -531,6 +531,7 @@ export type TStartupConfig = {
   publicSharedLinksEnabled: boolean;
   analyticsGtmId?: string;
   instanceProjectId: string;
+  bundlerURL?: string;
 };
 
 export const configSchema = z.object({
@@ -811,6 +812,9 @@ export const supportsBalanceCheck = {
 };
 
 export const visionModels = [
+  'grok-3',
+  'grok-2-vision',
+  'grok-vision',
   'gpt-4.5',
   'gpt-4o',
   'gpt-4o-mini',
@@ -1169,7 +1173,7 @@ export enum TTSProviders {
 /** Enum for app-wide constants */
 export enum Constants {
   /** Key for the app's version. */
-  VERSION = 'v0.7.7-rc1',
+  VERSION = 'v0.7.7',
   /** Key for the Custom Config's version (librechat.yaml). */
   CONFIG_VERSION = '1.2.1',
   /** Standard value for the first message's `parentMessageId` value, to indicate no parent exists. */
