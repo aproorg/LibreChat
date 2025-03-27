@@ -59,16 +59,14 @@ jobs:
           EXISTING_BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
           git checkout $EXISTING_BRANCH
 
-          # Create a temporary branch from upstream/main
-          git checkout -b temp_branch upstream/main
+          # Merge upstream changes
+          git merge upstream/main --no-commit --no-ff
 
-          # Remove .github/workflows directory from tracking
-          git rm -r --cached .github/workflows
+          # Remove .github/workflows changes
+          git restore --staged .github/workflows
+          git restore .github/workflows
 
-          # Stage all changes except .github/workflows
-          git add -A
-          git reset -- .github/workflows
-
+          # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to sync (excluding workflows)"
             echo "merge_status=no_changes" >> $GITHUB_OUTPUT
@@ -86,10 +84,18 @@ jobs:
         run: |
           SYNC_BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
           git checkout -b $SYNC_BRANCH upstream/main
-          git rm -r --cached .github/workflows
-          git add -A
-          git reset -- .github/workflows
-          git commit -m "Sync with upstream/main (excluding workflow files)"
+
+          # Remove .github/workflows changes
+          git restore --staged .github/workflows
+          git restore .github/workflows
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to sync (excluding workflows)"
+          else
+            git commit -m "Sync with upstream/main (excluding workflow files)"
+          fi
+
           echo "SYNC_BRANCH=$SYNC_BRANCH" >> $GITHUB_ENV
 
       - name: Push new sync branch
