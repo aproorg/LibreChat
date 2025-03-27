@@ -1,68 +1,120 @@
-name: Sync Fork and Create PR
+name: Sync Fork and Manage PR
 
 on:
+  schedule:
+    - cron: '0 0 * * *' # Run daily at midnight UTC
+  workflow_dispatch:
   push:
     branches:
-      - sync-fork
-  schedule:
-    # Run daily at midnight
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+      - ci-improve-sync
 
 jobs:
   sync-fork:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup GitHub CLI
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/danny-avila/LibreChat.git
 
-      - name: Fetch upstream
+      - name: Fetch upstream and origin
         run: |
           git fetch upstream
+          git fetch origin
 
-      - name: Create sync branch
+      - name: Check for existing sync PR
+        id: check_pr
         run: |
-          SYNC_BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
-          git checkout -b $SYNC_BRANCH
+          PR_DATA=$(gh pr list --repo ${{ github.repository }} --base main --head "sync-fork/" --json number,headRefName --jq '.[0]')
+          if [ -n "$PR_DATA" ]; then
+            echo "existing_pr=$(echo $PR_DATA | jq -r .number)" >> $GITHUB_OUTPUT
+            echo "existing_branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
+            echo "An existing sync PR was found: #$(echo $PR_DATA | jq -r .number)"
+          else
+            echo "No existing sync PR found."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Merge upstream changes
+      - name: Sync changes
+        id: sync
         run: |
-          git merge upstream/main -m "Sync with upstream main branch"
+          if [ -n "${{ steps.check_pr.outputs.existing_branch }}" ]; then
+            BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
+            git checkout $BRANCH
+          else
+            BRANCH="sync-fork/$(date +%Y%m%d-%H%M%S)"
+            git checkout -b $BRANCH
+          fi
 
-      - name: Push changes
-        run: |
-          git push origin HEAD
+          # Attempt to merge upstream changes
+          if git merge upstream/main --no-commit --no-ff; then
+            MERGE_STATUS="clean"
+            # Remove changes to workflow files
+            git restore --staged .github/workflows
+            git checkout -- .github/workflows
+            # Commit changes if any remain after excluding workflows
+            if ! git diff --staged --quiet; then
+              git commit -m "Sync with upstream/main (excluding workflow files)"
+            fi
+          else
+            MERGE_STATUS="conflicts"
+            # Abort the merge to keep the branch clean
+            git merge --abort
+          fi
 
-      - name: Create Pull Request
-        id: create-pr
-        run: |
-          # Create PR and capture PR number
-          PR_URL=$(gh pr create --title "Sync with upstream main branch" \
-            --body "This PR syncs the fork with the upstream main branch. Automatically created by GitHub Actions." \
-            --base main \
-            --head $(git branch --show-current) \
-            --repo ${{ github.repository }})
-          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
-          PR_NUMBER=$(echo $PR_URL | awk -F/ '{print $NF}')
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          # Push the branch (this will be a no-op if there are no changes)
+          git push origin $BRANCH --force
 
-      - name: Enable auto-merge
-        if: false
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "merge_status=$MERGE_STATUS" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or Update Pull Request
         run: |
-          # Enable auto-merge (requires appropriate permissions)
-          gh pr merge ${{ env.PR_NUMBER }} --auto --merge --repo ${{ github.repository }}
+          TITLE="auto: sync fork with upstream"
+          BODY="This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically managed by GitHub Actions."
+
+          if [ "${{ steps.sync.outputs.merge_status }}" = "conflicts" ]; then
+            TITLE="$TITLE (conflicts detected)"
+            BODY="$BODY\n\n⚠️ Conflicts were detected when trying to merge upstream changes. This PR may not include all upstream changes. Manual intervention is required to resolve conflicts and complete the sync."
+          fi
+
+          if [ -n "${{ steps.check_pr.outputs.existing_pr }}" ]; then
+            gh pr edit ${{ steps.check_pr.outputs.existing_pr }} \
+              --title "$TITLE" \
+              --body "$BODY"
+            echo "Updated existing PR #${{ steps.check_pr.outputs.existing_pr }}"
+          else
+            NEW_PR=$(gh pr create \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --base main \
+              --head ${{ steps.sync.outputs.branch }})
+            echo "Created new PR: $NEW_PR"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for PR
+        if: steps.sync.outputs.merge_status == 'clean'
+        run: |
+          PR_NUMBER=$(gh pr list --head ${{ steps.sync.outputs.branch }} --json number --jq '.[0].number')
+          gh pr merge $PR_NUMBER --auto --merge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
