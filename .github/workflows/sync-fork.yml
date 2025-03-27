@@ -1,0 +1,68 @@
+name: Sync Fork and Create PR
+
+on:
+  push:
+    branches:
+      - sync-fork
+  schedule:
+    # Run daily at midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/danny-avila/LibreChat.git
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream
+
+      - name: Create sync branch
+        run: |
+          SYNC_BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b $SYNC_BRANCH
+
+      - name: Merge upstream changes
+        run: |
+          git merge upstream/main -m "Sync with upstream main branch"
+
+      - name: Push changes
+        run: |
+          git push origin HEAD
+
+      - name: Create Pull Request
+        id: create-pr
+        run: |
+          # Create PR and capture PR number
+          PR_URL=$(gh pr create --title "Sync with upstream main branch" \
+            --body "This PR syncs the fork with the upstream main branch. Automatically created by GitHub Actions." \
+            --base main \
+            --head $(git branch --show-current) \
+            --repo ${{ github.repository }})
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          PR_NUMBER=$(echo $PR_URL | awk -F/ '{print $NF}')
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+
+      - name: Enable auto-merge
+        if: false
+        run: |
+          # Enable auto-merge (requires appropriate permissions)
+          gh pr merge ${{ env.PR_NUMBER }} --auto --merge --repo ${{ github.repository }}
