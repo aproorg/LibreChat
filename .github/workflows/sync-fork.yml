@@ -1,13 +1,12 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
 name: Sync Fork and Manage PR
 
 on:
-  push:
-    branches:
-      - ci-improve-sync
   schedule:
     - cron: '0 0 * * *' # Run daily at midnight UTC
   workflow_dispatch:
+  push:
+    branches:
+      - ci-improve-sync
 
 jobs:
   sync-fork:
@@ -51,114 +50,59 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update existing PR
-        if: steps.check_pr.outputs.existing_pr
-        id: update_existing_pr
+      - name: Sync changes
+        id: sync
         run: |
-          EXISTING_PR="${{ steps.check_pr.outputs.existing_pr }}"
-          EXISTING_BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
-          git checkout $EXISTING_BRANCH
+          if [ -n "${{ steps.check_pr.outputs.existing_branch }}" ]; then
+            BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
+          else
+            BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
+          fi
+
+          git checkout -b $BRANCH
 
           # Merge upstream changes
           git merge upstream/main --no-commit --no-ff
 
-          # Remove .github/workflows changes
+          # Remove changes to workflow files
           git restore --staged .github/workflows
-          git restore .github/workflows
+          git checkout -- .github/workflows
 
           # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to sync (excluding workflows)"
-            echo "merge_status=no_changes" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             git commit -m "Sync with upstream/main (excluding workflow files)"
-            git push origin $EXISTING_BRANCH --force
-            echo "Updated existing PR #$EXISTING_PR"
-            echo "merge_status=success" >> $GITHUB_OUTPUT
+            git push origin $BRANCH --force
+            echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create new sync branch
-        if: '!steps.check_pr.outputs.existing_pr'
+      - name: Create or Update Pull Request
+        if: steps.sync.outputs.has_changes == 'true'
         run: |
-          SYNC_BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
-          git checkout -b $SYNC_BRANCH upstream/main
-
-          # Remove .github/workflows changes
-          git restore --staged .github/workflows
-          git restore .github/workflows
-
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to sync (excluding workflows)"
+          if [ -n "${{ steps.check_pr.outputs.existing_pr }}" ]; then
+            gh pr edit ${{ steps.check_pr.outputs.existing_pr }} \
+              --title "auto: sync fork with upstream" \
+              --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically updated by GitHub Actions."
           else
-            git commit -m "Sync with upstream/main (excluding workflow files)"
-          fi
-
-          echo "SYNC_BRANCH=$SYNC_BRANCH" >> $GITHUB_ENV
-
-      - name: Push new sync branch
-        if: '!steps.check_pr.outputs.existing_pr'
-        run: |
-          git push origin ${{ env.SYNC_BRANCH }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
-
-      - name: Create Pull Request
-        if: '!steps.check_pr.outputs.existing_pr'
-        run: |
-          PR_URL=$(gh pr create --title "auto: sync fork with upstream" \
-            --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically created by GitHub Actions." \
-            --base main \
-            --head ${{ env.SYNC_BRANCH }} \
-            --repo ${{ github.repository }})
-          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
-          echo "PR_NUMBER=$(echo $PR_URL | awk -F/ '{print $NF}')" >> $GITHUB_ENV
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Enable auto-merge for new PR
-        if: '!steps.check_pr.outputs.existing_pr'
-        run: |
-          gh pr merge ${{ env.PR_NUMBER }} --auto --merge --repo ${{ github.repository }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Notify about conflicts in existing PR
-        if: steps.update_existing_pr.outputs.merge_status == 'conflict'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: ${{ steps.check_pr.outputs.existing_pr }},
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '⚠️ Conflicts detected while attempting to sync with upstream/main. Please resolve these conflicts manually to update the PR.'
-            })
-
-      - name: Check for conflicts in new PR
-        if: '!steps.check_pr.outputs.existing_pr'
-        id: check_conflicts
-        run: |
-          if gh pr view ${{ env.PR_NUMBER }} --json mergeStateStatus -q .mergeStateStatus | grep -q "CONFLICTING"; then
-            echo "has_conflicts=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_conflicts=false" >> $GITHUB_OUTPUT
+            gh pr create \
+              --title "auto: sync fork with upstream" \
+              --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically created by GitHub Actions." \
+              --base main \
+              --head ${{ steps.sync.outputs.branch }}
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Notify if conflicts exist in new PR
-        if: "!steps.check_pr.outputs.existing_pr && steps.check_conflicts.outputs.has_conflicts == 'true'"
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: ${{ env.PR_NUMBER }},
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '⚠️ This PR has conflicts that need to be resolved manually.'
-            })
+      - name: Enable auto-merge for PR
+        if: steps.sync.outputs.has_changes == 'true'
+        run: |
+          PR_NUMBER=$(gh pr list --head ${{ steps.sync.outputs.branch }} --json number --jq '.[0].number')
+          gh pr merge $PR_NUMBER --auto --merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
