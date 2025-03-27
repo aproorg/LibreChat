@@ -59,16 +59,21 @@ jobs:
           EXISTING_BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
           git checkout $EXISTING_BRANCH
 
-          if git merge upstream/main --no-commit --no-ff; then
-            echo "Merged upstream changes successfully."
-            git commit -m "Sync with upstream/main"
-            git push origin $EXISTING_BRANCH
+          # Create a temporary branch from upstream/main
+          git checkout -b temp_branch upstream/main
+
+          # Copy everything except .github/workflows
+          git checkout $EXISTING_BRANCH -- .
+          git reset HEAD .github/workflows
+
+          if git diff --quiet; then
+            echo "No changes to sync (excluding workflows)"
+            echo "merge_status=no_changes" >> $GITHUB_OUTPUT
+          else
+            git commit -m "Sync with upstream/main (excluding workflow files)"
+            git push origin $EXISTING_BRANCH --force
             echo "Updated existing PR #$EXISTING_PR"
             echo "merge_status=success" >> $GITHUB_OUTPUT
-          else
-            echo "Conflicts detected. Aborting merge."
-            git merge --abort
-            echo "merge_status=conflict" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,6 +83,8 @@ jobs:
         run: |
           SYNC_BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
           git checkout -b $SYNC_BRANCH upstream/main
+          git reset -- .github/workflows
+          git checkout -- .
           echo "SYNC_BRANCH=$SYNC_BRANCH" >> $GITHUB_ENV
 
       - name: Push new sync branch
@@ -91,7 +98,7 @@ jobs:
         if: '!steps.check_pr.outputs.existing_pr'
         run: |
           PR_URL=$(gh pr create --title "auto: sync fork with upstream" \
-            --body "This PR syncs the fork with the upstream main branch. Automatically created by GitHub Actions." \
+            --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically created by GitHub Actions." \
             --base main \
             --head ${{ env.SYNC_BRANCH }} \
             --repo ${{ github.repository }})
