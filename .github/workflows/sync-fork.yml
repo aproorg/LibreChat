@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/refs/heads/master/src/schemas/json/github-workflow.json
 name: Sync Fork and Manage PR
 
 on:
@@ -84,7 +85,7 @@ jobs:
         run: |
           git push origin ${{ env.SYNC_BRANCH }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }} # NOTE: use PAT with workflows: write permission if workflow files are updated.
 
       - name: Create Pull Request
         if: '!steps.check_pr.outputs.existing_pr'
