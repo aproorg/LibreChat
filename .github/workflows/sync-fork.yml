@@ -55,52 +55,64 @@ jobs:
         run: |
           if [ -n "${{ steps.check_pr.outputs.existing_branch }}" ]; then
             BRANCH="${{ steps.check_pr.outputs.existing_branch }}"
+            git checkout $BRANCH
           else
             BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
+            git checkout -b $BRANCH
           fi
 
-          git checkout -b $BRANCH
-
-          # Merge upstream changes
-          git merge upstream/main --no-commit --no-ff
-
-          # Remove changes to workflow files
-          git restore --staged .github/workflows
-          git checkout -- .github/workflows
-
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to sync (excluding workflows)"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+          # Attempt to merge upstream changes
+          if git merge upstream/main --no-commit --no-ff; then
+            MERGE_STATUS="clean"
+            # Remove changes to workflow files
+            git restore --staged .github/workflows
+            git checkout -- .github/workflows
+            # Commit changes if any remain after excluding workflows
+            if ! git diff --staged --quiet; then
+              git commit -m "Sync with upstream/main (excluding workflow files)"
+            fi
           else
-            git commit -m "Sync with upstream/main (excluding workflow files)"
-            git push origin $BRANCH --force
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            MERGE_STATUS="conflicts"
+            # Abort the merge to keep the branch clean
+            git merge --abort
           fi
+
+          # Push the branch (this will be a no-op if there are no changes)
+          git push origin $BRANCH
 
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "merge_status=$MERGE_STATUS" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create or Update Pull Request
-        if: steps.sync.outputs.has_changes == 'true'
         run: |
+          TITLE="auto: sync fork with upstream"
+          BODY="This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically managed by GitHub Actions."
+
+          if [ "${{ steps.sync.outputs.merge_status }}" = "conflicts" ]; then
+            TITLE="$TITLE (conflicts detected)"
+            BODY="$BODY\n\n⚠️ Conflicts were detected when trying to merge upstream changes. This PR may not include all upstream changes. Manual intervention is required to resolve conflicts and complete the sync."
+          fi
+
           if [ -n "${{ steps.check_pr.outputs.existing_pr }}" ]; then
             gh pr edit ${{ steps.check_pr.outputs.existing_pr }} \
-              --title "auto: sync fork with upstream" \
-              --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically updated by GitHub Actions."
+              --title "$TITLE" \
+              --body "$BODY"
+            echo "Updated existing PR #${{ steps.check_pr.outputs.existing_pr }}"
           else
-            gh pr create \
-              --title "auto: sync fork with upstream" \
-              --body "This PR syncs the fork with the upstream main branch (excluding workflow files). Automatically created by GitHub Actions." \
+            NEW_PR=$(gh pr create \
+              --title "$TITLE" \
+              --body "$BODY" \
               --base main \
-              --head ${{ steps.sync.outputs.branch }}
+              --head ${{ steps.sync.outputs.branch }})
+            echo "Created new PR: $NEW_PR"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge for PR
-        if: steps.sync.outputs.has_changes == 'true'
+        if: steps.sync.outputs.merge_status == 'clean'
         run: |
           PR_NUMBER=$(gh pr list --head ${{ steps.sync.outputs.branch }} --json number --jq '.[0].number')
           gh pr merge $PR_NUMBER --auto --merge
