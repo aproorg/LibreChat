@@ -62,11 +62,14 @@ jobs:
           # Create a temporary branch from upstream/main
           git checkout -b temp_branch upstream/main
 
-          # Copy everything except .github/workflows
-          git checkout $EXISTING_BRANCH -- .
-          git reset HEAD .github/workflows
+          # Remove .github/workflows directory from tracking
+          git rm -r --cached .github/workflows
 
-          if git diff --quiet; then
+          # Stage all changes except .github/workflows
+          git add -A
+          git reset -- .github/workflows
+
+          if git diff --staged --quiet; then
             echo "No changes to sync (excluding workflows)"
             echo "merge_status=no_changes" >> $GITHUB_OUTPUT
           else
@@ -83,8 +86,10 @@ jobs:
         run: |
           SYNC_BRANCH="upstream-sync/$(date +%Y%m%d-%H%M%S)"
           git checkout -b $SYNC_BRANCH upstream/main
+          git rm -r --cached .github/workflows
+          git add -A
           git reset -- .github/workflows
-          git checkout -- .
+          git commit -m "Sync with upstream/main (excluding workflow files)"
           echo "SYNC_BRANCH=$SYNC_BRANCH" >> $GITHUB_ENV
 
       - name: Push new sync branch
