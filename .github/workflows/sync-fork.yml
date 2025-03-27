@@ -16,13 +16,14 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      workflows: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.WORKFLOW_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -86,7 +87,7 @@ jobs:
         run: |
           git push origin ${{ env.SYNC_BRANCH }}
         env:
-          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }} # NOTE: use PAT with workflows: write permission if workflow files are updated.
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
 
       - name: Create Pull Request
         if: '!steps.check_pr.outputs.existing_pr'
