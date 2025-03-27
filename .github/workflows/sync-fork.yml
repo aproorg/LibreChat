@@ -16,14 +16,12 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.WORKFLOW_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
