@@ -19,6 +19,8 @@ jobs:
       - run: cd packages/data-provider && npm run build
 
   publish-npm:
+    # Apró will not publish the package to npm
+    if: false
     needs: build
     runs-on: ubuntu-latest
     steps:
