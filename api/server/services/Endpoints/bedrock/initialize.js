@@ -65,6 +65,7 @@ const initializeClient = async ({ req, res, endpointOption }) => {
 
   const client = new AgentClient({
     req,
+    res,
     agent,
     sender,
     bedrockClient,

@@ -30,6 +30,9 @@ class BedrockAgentClient {
         sessionId,
         inputText,
         enableTrace: isEnabled(process.env.TRACE_AGENT_ORCHESTRATION),
+        streamingConfigurations: {
+          streamFinalResponse: true,
+        },
       });
 
       const response = await this.client.send(command);

@@ -92,8 +92,9 @@ async function loadModels(req) {
 
   // Wait for all alias requests to complete
   const agentsWithAliases = await Promise.all(aliasRequests);
-  const agNames = agentsWithAliases.map((a) => a.agentName);
+  let agNames = agentsWithAliases.map((a) => a.agentName);
   const defaultModelsConfig = await loadDefaultModels(req);
+  agNames.push(process.env.BEDROCK_AWS_MODELS);
 
   const modelConfig = { ...defaultModelsConfig, ...{ bedrock: agNames } };
   await cache.set(CacheKeys.MODELS_CONFIG, agentsWithAliases);
