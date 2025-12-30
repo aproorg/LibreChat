@@ -1,0 +1,131 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  TF_BASE_DIR: infrastructure/terraform/environments
+
+tasks:
+  # ============================================================================
+  # Environment Commands - task <command>:<env>
+  # Examples:
+  #   task init:dev
+  #   task plan:dev
+  #   task apply:dev
+  # ============================================================================
+
+  "init:*":
+    desc: "Initialize Terraform (task init:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform init -backend-config=backend.config -reconfigure
+
+  "plan:*":
+    desc: "Plan Terraform changes (task plan:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform plan
+
+  "apply:*":
+    desc: "Apply Terraform changes (task apply:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform apply -auto-approve
+
+  "destroy:*":
+    desc: "Destroy Terraform resources (task destroy:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform destroy
+
+  "output:*":
+    desc: "Show Terraform outputs (task output:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform output {{.CLI_ARGS}}
+
+  "console:*":
+    desc: "Open Terraform console (task console:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform console
+
+  "refresh:*":
+    desc: "Refresh Terraform state (task refresh:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform refresh
+
+  "validate:*":
+    desc: "Validate Terraform configuration (task validate:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - terraform validate
+
+  "login:*":
+    desc: "Login to AWS SSO for environment (task login:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - |
+        PROFILE=$(grep -E '^profile\s*=' terraform.tfvars | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+        echo "Logging in with profile: $PROFILE"
+        aws sso login --profile "$PROFILE"
+
+  "clean:*":
+    desc: "Remove .terraform directory (task clean:<env>)"
+    vars:
+      ENV: "{{index .MATCH 0}}"
+    dir: "{{.TF_BASE_DIR}}/{{.ENV}}"
+    cmds:
+      - rm -rf .terraform
+      - rm -f .terraform.lock.hcl
+
+  # ============================================================================
+  # Docker Commands
+  # ============================================================================
+
+  "docker:build":
+    desc: "Build Lambda container image locally"
+    dir: infrastructure/terraform/modules/backend/docker
+    cmds:
+      - docker build -t librechat-lambda-api:latest --platform linux/amd64 .
+
+  "docker:test":
+    desc: "Build and run Lambda container locally for testing"
+    dir: infrastructure/terraform/modules/backend/docker
+    cmds:
+      - docker build -t librechat-lambda-api:test --platform linux/amd64 -f Dockerfile.test .
+      - 'echo "Run with: docker run -p 9000:8080 librechat-lambda-api:test"'
+
+  # ============================================================================
+  # Common Tasks
+  # ============================================================================
+
+  fmt:
+    desc: Format all Terraform files recursively
+    cmds:
+      - terraform fmt -recursive infrastructure/terraform/
+
+  list:
+    desc: List available environments
+    cmds:
+      - |
+        echo "Available environments:"
+        ls -1 {{.TF_BASE_DIR}}/

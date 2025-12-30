@@ -1,0 +1,6 @@
+# Minimal test Dockerfile
+FROM public.ecr.aws/lambda/nodejs:20
+
+COPY --chmod=644 test-handler.js ${LAMBDA_TASK_ROOT}/handler.js
+
+CMD ["handler.handler"]

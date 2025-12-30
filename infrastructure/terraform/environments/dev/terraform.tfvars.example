@@ -1,0 +1,34 @@
+# Dev Environment Terraform Variables Example
+# Copy this file to terraform.tfvars and fill in your values
+
+aws_region  = "eu-west-1"
+environment = "dev"
+
+# VPC Configuration (existing VPC)
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
+private_subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",
+  "subnet-yyyyyyyyyyyyyyyyy"
+]
+
+# Domain Configuration
+custom_domain       = "lambda-test.sandbox.data.apro.is"
+acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+route53_zone_id     = "ZXXXXXXXXXXXXXXXXXX"
+
+# Config Storage
+config_s3_bucket = "genai-shared-config"
+config_s3_key    = "lambda-test/librechat/librechat.yaml"
+
+# Cloud Map Namespace (existing ECS services)
+cloud_map_namespace = "dev-aprochat-core.local"
+
+# SSM Parameter ARNs (adjust account ID)
+ssm_parameter_arns = [
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/librechat/*",
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/mongo/*",
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/litellm/*",
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/meilisearch/*",
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/cognito/*",
+  "arn:aws:ssm:eu-west-1:123456789012:parameter/ecs/genai/firecrawl/*"
+]

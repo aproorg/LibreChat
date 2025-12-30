@@ -43,6 +43,8 @@ export default [
       'meili_data/**/*',
       '**/node_modules/**/*',
       '.devcontainer/**/*',
+      'infrastructure/**/*',
+      'tests/infrastructure/**/*',
     ],
   },
   ...fixupConfigRules(
