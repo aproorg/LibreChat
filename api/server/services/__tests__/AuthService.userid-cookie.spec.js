@@ -28,7 +28,7 @@ jest.mock('librechat-data-provider', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
-  isEnabled: jest.fn((val) => val === 'true' || val === true),
+  ...jest.requireActual('@librechat/api'),
   checkEmailConfig: jest.fn(() => false),
   isEmailDomainAllowed: jest.fn(() => true),
   extractSubFromAccessToken: jest.fn((token) => {
