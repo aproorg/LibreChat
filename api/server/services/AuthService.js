@@ -7,13 +7,13 @@ const {
   DEFAULT_REFRESH_TOKEN_EXPIRY,
 } = require('@librechat/data-schemas');
 const {
+  math,
   isEnabled,
   checkEmailConfig,
   isEmailDomainAllowed,
   extractSubFromAccessToken,
 } = require('@librechat/api');
 const { ErrorTypes, SystemRoles, errorsToString } = require('librechat-data-provider');
-const { isEnabled, checkEmailConfig, isEmailDomainAllowed, math } = require('@librechat/api');
 const {
   findUser,
   findToken,
