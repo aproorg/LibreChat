@@ -177,6 +177,7 @@ export enum Capabilities {
 export enum AgentCapabilities {
   hide_sequential_outputs = 'hide_sequential_outputs',
   end_after_tools = 'end_after_tools',
+  deferred_tools = 'deferred_tools',
   execute_code = 'execute_code',
   file_search = 'file_search',
   web_search = 'web_search',
@@ -259,6 +260,7 @@ export const assistantEndpointSchema = baseEndpointSchema.merge(
 export type TAssistantEndpoint = z.infer<typeof assistantEndpointSchema>;
 
 export const defaultAgentCapabilities = [
+  AgentCapabilities.deferred_tools,
   AgentCapabilities.execute_code,
   AgentCapabilities.file_search,
   AgentCapabilities.web_search,
@@ -587,6 +589,7 @@ const mcpServersSchema = z
     use: z.boolean().optional(),
     create: z.boolean().optional(),
     share: z.boolean().optional(),
+    public: z.boolean().optional(),
     trustCheckbox: z
       .object({
         label: localizedStringSchema.optional(),
@@ -617,8 +620,26 @@ export const interfaceSchema = z
     bookmarks: z.boolean().optional(),
     memories: z.boolean().optional(),
     presets: z.boolean().optional(),
-    prompts: z.boolean().optional(),
-    agents: z.boolean().optional(),
+    prompts: z
+      .union([
+        z.boolean(),
+        z.object({
+          use: z.boolean().optional(),
+          share: z.boolean().optional(),
+          public: z.boolean().optional(),
+        }),
+      ])
+      .optional(),
+    agents: z
+      .union([
+        z.boolean(),
+        z.object({
+          use: z.boolean().optional(),
+          share: z.boolean().optional(),
+          public: z.boolean().optional(),
+        }),
+      ])
+      .optional(),
     temporaryChat: z.boolean().optional(),
     temporaryChatRetention: z.number().min(1).max(8760).optional(),
     runCode: z.boolean().optional(),
@@ -647,8 +668,16 @@ export const interfaceSchema = z
     multiConvo: true,
     bookmarks: true,
     memories: true,
-    prompts: true,
-    agents: true,
+    prompts: {
+      use: true,
+      share: false,
+      public: false,
+    },
+    agents: {
+      use: true,
+      share: false,
+      public: false,
+    },
     temporaryChat: true,
     runCode: true,
     webSearch: true,
@@ -664,6 +693,7 @@ export const interfaceSchema = z
       use: true,
       create: true,
       share: false,
+      public: false,
     },
     fileSearch: true,
     fileCitations: true,
@@ -1406,6 +1436,10 @@ export enum CacheKeys {
    * Key for SAML session.
    */
   SAML_SESSION = 'SAML_SESSION',
+  /**
+   * Key for admin panel OAuth exchange codes (one-time-use, short TTL).
+   */
+  ADMIN_OAUTH_EXCHANGE = 'ADMIN_OAUTH_EXCHANGE',
 }
 
 /**
@@ -1722,6 +1756,8 @@ export enum Constants {
   LC_TRANSFER_TO_ = 'lc_transfer_to_',
   /** Placeholder Agent ID for Ephemeral Agents */
   EPHEMERAL_AGENT_ID = 'ephemeral',
+  /** Programmatic Tool Calling tool name */
+  PROGRAMMATIC_TOOL_CALLING = 'run_tools_with_code',
 }
 
 export enum LocalStorageKeys {

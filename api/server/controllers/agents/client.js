@@ -1019,6 +1019,7 @@ class AgentClient extends BaseClient {
 
         run = await createRun({
           agents,
+          messages,
           indexTokenCountMap,
           runId: this.responseMessageId,
           signal: abortController.signal,
@@ -1120,6 +1121,14 @@ class AgentClient extends BaseClient {
     }
     const { handleLLMEnd, collected: collectedMetadata } = createMetadataAggregator();
     const { req, agent } = this.options;
+
+    if (req?.body?.isTemporary) {
+      logger.debug(
+        `[api/server/controllers/agents/client.js #titleConvo] Skipping title generation for temporary conversation`,
+      );
+      return;
+    }
+
     const appConfig = req.config;
     let endpoint = agent.endpoint;
 

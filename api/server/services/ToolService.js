@@ -6,6 +6,7 @@ const {
   hasCustomUserVars,
   getUserMCPAuthMap,
   isActionDomainAllowed,
+  buildToolClassification,
 } = require('@librechat/api');
 const {
   Tools,
@@ -36,6 +37,7 @@ const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { redactMessage } = require('~/config/parsers');
 const { findPluginAuthsByKeys } = require('~/models');
+const { loadAuthValues } = require('~/server/services/Tools/credentials');
 /**
  * Processes the required actions by calling the appropriate tools and returning the outputs.
  * @param {OpenAIClient} client - OpenAI or StreamRunManager Client.
@@ -79,7 +81,7 @@ async function processRequiredActions(client, requiredActions) {
     requiredActions,
   );
   const appConfig = client.req.config;
-  const toolDefinitions = await getCachedTools();
+  const toolDefinitions = (await getCachedTools()) ?? {};
   const seenToolkits = new Set();
   const tools = requiredActions
     .map((action) => {
@@ -367,7 +369,13 @@ async function processRequiredActions(client, requiredActions) {
  * @param {AbortSignal} params.signal
  * @param {Pick<Agent, 'id' | 'provider' | 'model' | 'tools'} params.agent - The agent to load tools for.
  * @param {string | undefined} [params.openAIApiKey] - The OpenAI API key.
- * @returns {Promise<{ tools?: StructuredTool[]; userMCPAuthMap?: Record<string, Record<string, string>> }>} The agent tools.
+ * @returns {Promise<{
+ *   tools?: StructuredTool[];
+ *   toolContextMap?: Record<string, unknown>;
+ *   userMCPAuthMap?: Record<string, Record<string, string>>;
+ *   toolRegistry?: Map<string, import('~/utils/toolClassification').LCTool>;
+ *   hasDeferredTools?: boolean;
+ * }>} The agent tools and registry.
  */
 async function loadAgentTools({
   req,
@@ -401,8 +409,14 @@ async function loadAgentTools({
   const checkCapability = (capability) => {
     const enabled = enabledCapabilities.has(capability);
     if (!enabled) {
+      const isToolCapability = [
+        AgentCapabilities.file_search,
+        AgentCapabilities.execute_code,
+        AgentCapabilities.web_search,
+      ].includes(capability);
+      const suffix = isToolCapability ? ' despite configured tool.' : '.';
       logger.warn(
-        `Capability "${capability}" disabled${capability === AgentCapabilities.tools ? '.' : ' despite configured tool.'} User: ${req.user.id} | Agent: ${agent.id}`,
+        `Capability "${capability}" disabled${suffix} User: ${req.user.id} | Agent: ${agent.id}`,
       );
     }
     return enabled;
@@ -510,11 +524,25 @@ async function loadAgentTools({
     return map;
   }, {});
 
+  /** Build tool registry from MCP tools and create PTC/tool search tools if configured */
+  const deferredToolsEnabled = checkCapability(AgentCapabilities.deferred_tools);
+  const { toolRegistry, additionalTools, hasDeferredTools } = await buildToolClassification({
+    loadedTools,
+    userId: req.user.id,
+    agentId: agent.id,
+    agentToolOptions: agent.tool_options,
+    deferredToolsEnabled,
+    loadAuthValues,
+  });
+  agentTools.push(...additionalTools);
+
   if (!checkCapability(AgentCapabilities.actions)) {
     return {
       tools: agentTools,
       userMCPAuthMap,
       toolContextMap,
+      toolRegistry,
+      hasDeferredTools,
     };
   }
 
@@ -527,6 +555,8 @@ async function loadAgentTools({
       tools: agentTools,
       userMCPAuthMap,
       toolContextMap,
+      toolRegistry,
+      hasDeferredTools,
     };
   }
 
@@ -654,6 +684,8 @@ async function loadAgentTools({
     tools: agentTools,
     toolContextMap,
     userMCPAuthMap,
+    toolRegistry,
+    hasDeferredTools,
   };
 }
 
