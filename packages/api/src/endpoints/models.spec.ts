@@ -149,6 +149,92 @@ describe('fetchModels', () => {
     );
   });
 
+  it('should allow custom authorization header to override default Bearer token', async () => {
+    const resolvedHeaders = {
+      Authorization: 'Bearer user-oidc-token',
+    };
+
+    (resolveHeaders as jest.Mock).mockReturnValueOnce(resolvedHeaders);
+
+    await fetchModels({
+      user: 'user123',
+      apiKey: 'testApiKey',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      userObject: { id: 'user123', email: 'test@example.com' },
+    });
+
+    expect(resolveHeaders).toHaveBeenCalledWith({
+      headers: { authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      user: { id: 'user123', email: 'test@example.com' },
+    });
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      expect.stringContaining('https://api.test.com/models'),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer user-oidc-token',
+        }),
+      }),
+    );
+  });
+
+  it('should use different cache keys for different custom authorization headers', async () => {
+    const user1Headers = { Authorization: 'Bearer user1-token' };
+    const user2Headers = { Authorization: 'Bearer user2-token' };
+
+    (resolveHeaders as jest.Mock)
+      .mockReturnValueOnce(user1Headers)
+      .mockReturnValueOnce(user2Headers);
+
+    await fetchModels({
+      user: 'user1',
+      apiKey: 'sharedApiKey',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      userObject: { id: 'user1' },
+    });
+
+    await fetchModels({
+      user: 'user2',
+      apiKey: 'sharedApiKey',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      userObject: { id: 'user2' },
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('should merge custom headers on top of Anthropic defaults', async () => {
+    const customHeaders = {
+      'X-Custom-Header': 'custom-value',
+    };
+
+    (resolveHeaders as jest.Mock).mockReturnValueOnce(customHeaders);
+
+    await fetchModels({
+      user: 'user123',
+      apiKey: 'test-anthropic-key',
+      baseURL: 'https://api.anthropic.com/v1',
+      name: EModelEndpoint.anthropic,
+      headers: customHeaders,
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-api-key': 'test-anthropic-key',
+          'anthropic-version': expect.any(String),
+          'X-Custom-Header': 'custom-value',
+        }),
+      }),
+    );
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
   });

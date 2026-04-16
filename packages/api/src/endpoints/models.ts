@@ -126,8 +126,15 @@ export async function fetchModels({
     return models;
   }
 
+  const resolvedCustomHeaders = resolveHeaders({
+    headers: headers ?? undefined,
+    user: userObject,
+  });
+
+  const customAuth =
+    resolvedCustomHeaders.authorization || resolvedCustomHeaders.Authorization || '';
   const shouldCache = !skipCache && !(userIdQuery && user);
-  const cacheKey = shouldCache ? modelsCacheKey(baseURL ?? '', apiKey) : '';
+  const cacheKey = shouldCache ? modelsCacheKey(baseURL ?? '', apiKey, customAuth) : '';
   const modelsCache = shouldCache ? standardCache(CacheKeys.MODEL_QUERIES) : null;
   if (modelsCache && cacheKey) {
     const cachedModels = await modelsCache.get(cacheKey);
@@ -161,20 +168,18 @@ export async function fetchModels({
       timeout: number;
       httpsAgent?: HttpsProxyAgent<string>;
     } = {
-      headers: {
-        ...(headers ?? {}),
-      },
+      headers: {},
       timeout: 5000,
     };
 
     if (name === EModelEndpoint.anthropic) {
-      options.headers = {
-        'x-api-key': apiKey,
-        'anthropic-version': process.env.ANTHROPIC_VERSION || '2023-06-01',
-      };
+      options.headers['x-api-key'] = apiKey;
+      options.headers['anthropic-version'] = process.env.ANTHROPIC_VERSION || '2023-06-01';
     } else {
       options.headers.Authorization = `Bearer ${apiKey}`;
     }
+
+    Object.assign(options.headers, resolvedCustomHeaders);
 
     if (process.env.PROXY) {
       options.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
@@ -210,8 +215,9 @@ export async function fetchModels({
   return models;
 }
 
-function modelsCacheKey(baseURL: string, apiKey: string): string {
-  return crypto.createHash('sha256').update(`${baseURL}:${apiKey}`).digest('hex').slice(0, 32);
+function modelsCacheKey(baseURL: string, apiKey: string, customAuth?: string): string {
+  const keySource = customAuth ? `${baseURL}:${apiKey}:${customAuth}` : `${baseURL}:${apiKey}`;
+  return crypto.createHash('sha256').update(keySource).digest('hex').slice(0, 32);
 }
 
 /** Options for fetching OpenAI models */
