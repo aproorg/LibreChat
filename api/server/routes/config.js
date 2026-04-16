@@ -4,14 +4,14 @@ const {
   getBalanceConfig,
   getCloudFrontConfig,
   resolveBuildInfo,
-  sanitizeModelSpecs,
 } = require('@librechat/api');
-const { defaultSocialLogins } = require('librechat-data-provider');
+const { defaultSocialLogins, EModelEndpoint } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
+const { getModelsConfig } = require('~/server/controllers/ModelController');
 
 const router = express.Router();
 const emailLoginEnabled =
@@ -200,6 +200,43 @@ function buildCloudFrontStartupConfig() {
   };
 }
 
+/**
+ * Filters model specs to only include presets where the model is available for the user.
+ * @param {object} modelSpecs - The model specs from app config
+ * @param {Record<string, string[]>} modelsConfig - The user's available models per endpoint
+ * @returns {object} Filtered model specs
+ */
+function filterModelSpecsByAvailability(modelSpecs, modelsConfig) {
+  if (!modelSpecs?.list || !modelsConfig) {
+    return modelSpecs;
+  }
+
+  const filteredList = modelSpecs.list.filter((spec) => {
+    const endpoint = spec.preset?.endpoint;
+    const model = spec.preset?.model;
+
+    if (!endpoint || !model) {
+      return true;
+    }
+
+    if (endpoint === EModelEndpoint.agents) {
+      return true;
+    }
+
+    const availableModels = modelsConfig[endpoint];
+    if (!availableModels || !Array.isArray(availableModels)) {
+      return true;
+    }
+
+    return availableModels.includes(model);
+  });
+
+  return {
+    ...modelSpecs,
+    list: filteredList,
+  };
+}
+
 router.get('/', async function (req, res) {
   try {
     const preLoginPayload = buildPreLoginPayload();
@@ -248,6 +285,9 @@ router.get('/', async function (req, res) {
       tenantId: req.user.tenantId || getTenantId(),
     });
 
+    const modelsConfig = await getModelsConfig(req);
+    const filteredModelSpecs = filterModelSpecsByAvailability(appConfig?.modelSpecs, modelsConfig);
+
     const balanceConfig = getBalanceConfig(appConfig);
     const cloudFront = buildCloudFrontStartupConfig();
 
@@ -259,7 +299,7 @@ router.get('/', async function (req, res) {
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
       interface: appConfig?.interfaceConfig,
       turnstile: appConfig?.turnstileConfig,
-      modelSpecs: sanitizeModelSpecs(appConfig?.modelSpecs),
+      modelSpecs: filteredModelSpecs,
       balance: balanceConfig,
       bundlerURL: process.env.SANDPACK_BUNDLER_URL,
       staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
