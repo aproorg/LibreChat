@@ -21,6 +21,17 @@ interface ResolvedEndpoint {
   baseURLIsUserProvided: boolean;
 }
 
+/**
+ * Checks if endpoint headers contain an authorization header (indicating OIDC auth).
+ * When OIDC auth is used, empty model results should not fall back to defaults.
+ */
+function hasAuthorizationHeader(headers?: Record<string, string> | null): boolean {
+  if (!headers) {
+    return false;
+  }
+  return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization');
+}
+
 export interface LoadConfigModelsDeps {
   getAppConfig: (params: {
     role?: string;
@@ -216,10 +227,17 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
 
       for (const name of associatedNames) {
         const endpoint = endpointsMap[name];
-        const defaults = (endpoint.models?.default ?? []).map((m) =>
-          typeof m === 'string' ? m : m.name,
-        );
-        modelsConfig[name] = !modelData?.length ? defaults : modelData;
+        const usesOidcAuth = hasAuthorizationHeader(endpoint.headers);
+        if (!modelData?.length && usesOidcAuth) {
+          modelsConfig[name] = [];
+        } else if (!modelData?.length) {
+          const defaults = (endpoint.models?.default ?? []).map((m) =>
+            typeof m === 'string' ? m : m.name,
+          );
+          modelsConfig[name] = defaults;
+        } else {
+          modelsConfig[name] = modelData;
+        }
       }
     }
 
