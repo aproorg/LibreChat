@@ -20,6 +20,12 @@ const UNPRICED = new Set([
   'mistral-',
   /** AWS has not published a Nova 2 Pro rate. */
   'nova-2-pro',
+  /** Tenant-defined Anthropic gateway aliases can target models with different prices. */
+  'opus-4-5',
+  'opus-4-7',
+  'opus',
+  'sonnet',
+  'haiku',
 ]);
 
 /** Pricing keys with no context window. Shrink this list, do not grow it. */

@@ -203,6 +203,11 @@ const anthropicModels = {
   'claude-fable-5-2': 1000000,
   'claude-mythos-5-1': 1000000,
   'claude-mythos-5-2': 1000000,
+  'opus-4-5': 200000,
+  opus: 1000000,
+  'opus-4-7': 1000000,
+  sonnet: 1000000,
+  haiku: 200000,
 };
 
 const ANTHROPIC_CONTEXT_1M = 1000000;
