@@ -200,6 +200,12 @@ export const tokenValues: Record<string, { prompt: number; completion: number }>
     'claude-sonnet-5': { prompt: 2, completion: 10 },
     'claude-sonnet-5-5': { prompt: 2, completion: 10 },
     'claude-sonnet-5.5': { prompt: 2, completion: 10 },
+    // APRÓ LiteLLM short names use the matching versioned Anthropic model rates.
+    opus: { prompt: 5, completion: 25 },
+    'opus-4-5': { prompt: 5, completion: 25 },
+    'opus-4-7': { prompt: 5, completion: 25 },
+    sonnet: { prompt: 3, completion: 15 },
+    haiku: { prompt: 1, completion: 5 },
     'command-r': { prompt: 0.5, completion: 1.5 },
     'command-r-plus': { prompt: 3, completion: 15 },
     'command-text': { prompt: 1.5, completion: 2.0 },
@@ -381,6 +387,12 @@ export const cacheTokenValues: Record<string, { write: number; read: number }> =
   'claude-opus-5': { write: 6.25, read: 0.5 },
   'claude-opus-5-5': { write: 5, read: 0.2 },
   'claude-opus-5.5': { write: 5, read: 0.2 },
+  // Keep the gateway's short names aligned with their versioned model cache rates.
+  opus: { write: 6.25, read: 0.5 },
+  'opus-4-5': { write: 6.25, read: 0.5 },
+  'opus-4-7': { write: 6.25, read: 0.5 },
+  sonnet: { write: 3.75, read: 0.3 },
+  haiku: { write: 1.25, read: 0.1 },
   'claude-fable-5': { write: 12.5, read: 1 },
   'claude-mythos-5': { write: 12.5, read: 1 },
   // Fable/Mythos 5.1 cache reads are 0.025x base input, not the usual 0.1x.
