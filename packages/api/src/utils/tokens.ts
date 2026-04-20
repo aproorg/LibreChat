@@ -161,6 +161,11 @@ const anthropicModels = {
   'claude-opus-4-8': 1000000,
   'claude-fable-5': 1000000,
   'claude-mythos-5': 1000000,
+  'opus-4-5': 200000,
+  opus: 1000000,
+  'opus-4-7': 1000000,
+  sonnet: 1000000,
+  haiku: 200000,
 };
 
 const deepseekModels = {
@@ -406,8 +411,10 @@ const anthropicMaxOutputs = {
   'claude-3-sonnet': 4096,
   'claude-3-opus': 4096,
   'claude-haiku-4-5': 64000,
+  haiku: 64000,
   'claude-sonnet-4': 64000,
   'claude-sonnet-4-6': 64000,
+  sonnet: 64000,
   'claude-opus-4': 32000,
   'claude-opus-4-5': 64000,
   'claude-opus-4-6': 128000,
@@ -415,6 +422,8 @@ const anthropicMaxOutputs = {
   'claude-opus-4-8': 128000,
   'claude-fable-5': 128000,
   'claude-mythos-5': 128000,
+  opus: 128000,
+  'opus-4-7': 128000,
   'claude-3.5-sonnet': 8192,
   'claude-3-5-sonnet': 8192,
   'claude-3.7-sonnet': 128000,
