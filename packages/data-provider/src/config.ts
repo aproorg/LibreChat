@@ -720,6 +720,7 @@ export const interfaceSchema = z
       .optional(),
     temporaryChat: z.boolean().optional(),
     temporaryChatRetention: z.number().min(1).max(8760).optional(),
+    autoSubmitFromUrl: z.boolean().optional(),
     runCode: z.boolean().optional(),
     webSearch: z.boolean().optional(),
     peoplePicker: z
@@ -765,6 +766,7 @@ export const interfaceSchema = z
       public: false,
     },
     temporaryChat: true,
+    autoSubmitFromUrl: true,
     runCode: true,
     webSearch: true,
     peoplePicker: {
