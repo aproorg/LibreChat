@@ -6,6 +6,7 @@ const { SystemRoles } = require('librechat-data-provider');
 const { isEnabled, findOpenIDUser, math } = require('@librechat/api');
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { getOpenIdEmail } = require('./openidStrategy');
+const { refreshOpenIDTokensFromCookie } = require('~/server/services/AuthService');
 const { updateUser, findUser } = require('~/models');
 
 /**
@@ -83,15 +84,43 @@ const openIdJwtLogin = (openIdConfig) => {
           }
 
           /** Read tokens from session (server-side) to avoid large cookie issues */
-          const sessionTokens = req.session?.openidTokens;
+          let sessionTokens = req.session?.openidTokens;
+
+          const cookieHeader = req.headers.cookie;
+          const parsedCookies = cookieHeader ? cookies.parse(cookieHeader) : {};
+
+          const haveUsableIdToken = !!sessionTokens?.idToken || !!parsedCookies.openid_id_token;
+
+          if (!haveUsableIdToken) {
+            const refreshTokenForRefresh =
+              sessionTokens?.refreshToken || parsedCookies.refreshToken;
+
+            if (!refreshTokenForRefresh) {
+              done(null, false, {
+                message: 'OIDC refresh failed: no refresh cookie',
+              });
+              return;
+            }
+
+            const refreshed = await refreshOpenIDTokensFromCookie(
+              req,
+              req.res,
+              user._id.toString(),
+            );
+            if (!refreshed) {
+              done(null, false, { message: 'OIDC refresh failed' });
+              return;
+            }
+            // Session is now repopulated by setOpenIDAuthTokens (called from helper).
+            sessionTokens = req.session?.openidTokens;
+          }
+
           let accessToken = sessionTokens?.accessToken;
           let idToken = sessionTokens?.idToken;
           let refreshToken = sessionTokens?.refreshToken;
 
           /** Fallback to cookies for backward compatibility */
           if (!accessToken || !refreshToken || !idToken) {
-            const cookieHeader = req.headers.cookie;
-            const parsedCookies = cookieHeader ? cookies.parse(cookieHeader) : {};
             accessToken = accessToken || parsedCookies.openid_access_token;
             idToken = idToken || parsedCookies.openid_id_token;
             refreshToken = refreshToken || parsedCookies.refreshToken;
