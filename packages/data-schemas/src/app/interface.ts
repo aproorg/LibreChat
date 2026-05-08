@@ -46,6 +46,7 @@ export async function loadDefaultInterface({
     multiConvo: interfaceConfig?.multiConvo,
     agents: interfaceConfig?.agents,
     temporaryChat: interfaceConfig?.temporaryChat,
+    autoSubmitFromUrl: interfaceConfig?.autoSubmitFromUrl ?? defaults.autoSubmitFromUrl,
     runCode: interfaceConfig?.runCode,
     webSearch: interfaceConfig?.webSearch,
     fileSearch: interfaceConfig?.fileSearch,
