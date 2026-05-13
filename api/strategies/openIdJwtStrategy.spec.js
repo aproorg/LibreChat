@@ -544,7 +544,12 @@ describe('openIdJwtStrategy – session refresh on empty session', () => {
     provider: 'openid',
   };
 
-  const payload = { sub: 'oidc-123', email: 'test@example.com', exp: 9999999999 };
+  const payload = {
+    sub: 'oidc-123',
+    email: 'test@example.com',
+    iss: 'https://issuer.example.com',
+    exp: 9999999999,
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
