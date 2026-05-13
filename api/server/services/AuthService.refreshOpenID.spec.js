@@ -15,6 +15,10 @@ jest.mock('@librechat/api', () => ({
   math: jest.fn((val, fallback) => (val ? Number(val) : fallback)),
   shouldUseSecureCookie: jest.fn(() => false),
   resolveAppConfigForUser: jest.fn(async (_getAppConfig, _user) => ({})),
+  getCloudFrontConfig: jest.fn(() => undefined),
+  parseCloudFrontCookieScope: jest.fn(() => null),
+  setCloudFrontCookies: jest.fn(),
+  CLOUDFRONT_SCOPE_COOKIE: 'cf_scope',
 }));
 jest.mock('~/models', () => ({
   findUser: jest.fn(),
