@@ -58,6 +58,7 @@ jest.mock('~/server/services/Tools/credentials', () => ({
 
 jest.mock('~/models', () => ({
   createFile: jest.fn().mockResolvedValue({ file_id: 'created-file-id' }),
+  updateFile: jest.fn().mockResolvedValue({ file_id: 'created-file-id' }),
   updateFileUsage: jest.fn(),
   deleteFiles: jest.fn(),
   findFileById: jest.fn(),
@@ -66,6 +67,11 @@ jest.mock('~/models', () => ({
   addAgentResourceFile: jest.fn().mockResolvedValue({}),
   removeAgentResourceFiles: jest.fn(),
   removeAgentResourceFilesFromAllAgents: jest.fn(),
+}));
+
+jest.mock('~/server/services/Files/VectorDB/crud', () => ({
+  uploadVectors: jest.fn(),
+  deleteVectors: jest.fn(),
 }));
 
 jest.mock('~/server/utils/getFileStrategy', () => ({
@@ -501,6 +507,123 @@ describe('processAgentFileUpload', () => {
 
       const persisted = db.createFile.mock.calls[0][0];
       expect(persisted.metadata).not.toHaveProperty('fileIdentifier');
+    });
+  });
+
+  describe('file_search uploads track RAG ingestion lifecycle', () => {
+    const fs = require('fs');
+    const { Readable } = require('stream');
+    const { uploadVectors } = require('~/server/services/Files/VectorDB/crud');
+    let createReadStreamSpy;
+
+    beforeEach(() => {
+      createReadStreamSpy = jest
+        .spyOn(fs, 'createReadStream')
+        .mockImplementation(() => Readable.from(Buffer.from('')));
+      uploadVectors.mockReset();
+      /* The standard storage path for file_search uploads writes to local
+       * disk before the RAG call. Stub a successful upload result. */
+      const localUpload = jest.fn().mockResolvedValue({
+        bytes: 12345,
+        filename: 'doc.pdf',
+        filepath: '/uploads/doc.pdf',
+      });
+      getStrategyFunctions.mockImplementation(() => ({ handleFileUpload: localUpload }));
+    });
+
+    afterEach(() => {
+      createReadStreamSpy.mockRestore();
+    });
+
+    const fileSearchMetadata = () => ({
+      agent_id: 'agent-abc',
+      tool_resource: EToolResources.file_search,
+      file_id: 'file-uuid-123',
+    });
+
+    it('persists embedStatus="embedding" BEFORE invoking uploadVectors', async () => {
+      uploadVectors.mockImplementation(async () => {
+        /* When uploadVectors is invoked, the in-flight stub must already
+         * exist in Mongo — that's the whole point of the reorder. Inspect
+         * the call log at this exact moment. */
+        const stubCall = db.createFile.mock.calls.find(
+          ([data]) => data?.embedStatus === 'embedding',
+        );
+        expect(stubCall).toBeDefined();
+        expect(stubCall[0]).toMatchObject({
+          file_id: 'file-uuid-123',
+          embedStatus: 'embedding',
+          source: FileSources.vectordb,
+        });
+        return { embedded: true, filename: 'doc.pdf', filepath: FileSources.vectordb };
+      });
+
+      await processAgentFileUpload({
+        req: makeReq(),
+        res: mockRes,
+        metadata: fileSearchMetadata(),
+      });
+
+      expect(uploadVectors).toHaveBeenCalledTimes(1);
+    });
+
+    it('flips embedStatus to "ready" on the terminal createFile after success', async () => {
+      uploadVectors.mockResolvedValue({
+        embedded: true,
+        filename: 'doc.pdf',
+        filepath: FileSources.vectordb,
+      });
+
+      await processAgentFileUpload({
+        req: makeReq(),
+        res: mockRes,
+        metadata: fileSearchMetadata(),
+      });
+
+      const finalCall = db.createFile.mock.calls.find(([data]) => data?.embedStatus === 'ready');
+      expect(finalCall).toBeDefined();
+      expect(finalCall[0]).toMatchObject({
+        file_id: 'file-uuid-123',
+        embedStatus: 'ready',
+        embedded: true,
+      });
+    });
+
+    it('marks the record "error" with bounded embedError when uploadVectors throws', async () => {
+      uploadVectors.mockRejectedValue(new Error('rag down'));
+
+      await expect(
+        processAgentFileUpload({
+          req: makeReq(),
+          res: mockRes,
+          metadata: fileSearchMetadata(),
+        }),
+      ).rejects.toThrow('rag down');
+
+      expect(db.updateFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          file_id: 'file-uuid-123',
+          embedStatus: 'error',
+          embedError: 'rag down',
+        }),
+      );
+    });
+
+    it('truncates embedError to 200 chars to keep RAG-API stack traces out of Mongo', async () => {
+      const longMessage = 'x'.repeat(500);
+      uploadVectors.mockRejectedValue(new Error(longMessage));
+
+      await expect(
+        processAgentFileUpload({
+          req: makeReq(),
+          res: mockRes,
+          metadata: fileSearchMetadata(),
+        }),
+      ).rejects.toThrow();
+
+      const errCall = db.updateFile.mock.calls.find(([data]) => data?.embedStatus === 'error');
+      expect(errCall).toBeDefined();
+      expect(errCall[0].embedError).toHaveLength(200);
     });
   });
 });

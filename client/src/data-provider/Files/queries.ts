@@ -15,8 +15,8 @@ import store from '~/store';
  *
  * Accepts the post-`select` shape (`TFile[] | boolean`) so the predicate
  * is sound across all known callers; non-array selections never poll. */
-const FILES_EMBEDDING_POLL_MS = 5000;
-const filesEmbeddingRefetchInterval = <TData>(data: TData | undefined): number | false => {
+export const FILES_EMBEDDING_POLL_MS = 5000;
+export const filesEmbeddingRefetchInterval = <TData>(data: TData | undefined): number | false => {
   if (!Array.isArray(data) || data.length === 0) {
     return false;
   }
