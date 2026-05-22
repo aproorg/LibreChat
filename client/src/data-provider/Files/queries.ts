@@ -7,6 +7,23 @@ import { isEphemeralAgent } from '~/common';
 import { addFileToCache } from '~/utils';
 import store from '~/store';
 
+/* Poll while any file is mid-RAG-ingest. Each tick re-checks `embedStatus`
+ * on the cached files list, so the moment the backend flips a record to
+ * 'ready' or 'error' (or the boot sweeper marks it stale) the interval
+ * goes back to `false` and traffic stops. Survives a browser refresh
+ * because the in-flight record was persisted before the RAG call.
+ *
+ * Accepts the post-`select` shape (`TFile[] | boolean`) so the predicate
+ * is sound across all known callers; non-array selections never poll. */
+const FILES_EMBEDDING_POLL_MS = 5000;
+const filesEmbeddingRefetchInterval = <TData>(data: TData | undefined): number | false => {
+  if (!Array.isArray(data) || data.length === 0) {
+    return false;
+  }
+  const files = data as t.TFile[];
+  return files.some((f) => f.embedStatus === 'embedding') ? FILES_EMBEDDING_POLL_MS : false;
+};
+
 export const useGetFiles = <TData = t.TFile[] | boolean>(
   config?: UseQueryOptions<t.TFile[], unknown, TData>,
 ): QueryObserverResult<TData, unknown> => {
@@ -15,6 +32,7 @@ export const useGetFiles = <TData = t.TFile[] | boolean>(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
+    refetchInterval: filesEmbeddingRefetchInterval,
     ...config,
     enabled: (config?.enabled ?? true) === true && queriesEnabled,
   });

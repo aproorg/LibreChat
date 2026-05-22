@@ -35,7 +35,7 @@ const {
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
 const createValidateImageRequest = require('./middleware/validateImageRequest');
-const { startExpiredFileSweep } = require('./services/Files/process');
+const { startExpiredFileSweep, startStaleEmbedSweep } = require('./services/Files/process');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { checkMigrations } = require('./services/start/migration');
 const optionalJwtAuth = require('./middleware/optionalJwtAuth');
@@ -93,6 +93,7 @@ const startServer = async () => {
   const appConfig = await getAppConfig({ baseOnly: true });
   initializeFileStorage(appConfig);
   startExpiredFileSweep({ appConfig, loadAppConfig: getAppConfig });
+  startStaleEmbedSweep();
   await runAsSystem(async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });
@@ -249,6 +250,17 @@ const startServer = async () => {
   /** Error handler (must be last - Express identifies error middleware by its 4-arg signature) */
   app.use(ErrorController);
 
+  /* Node defaults `server.requestTimeout` to 300_000 (5 min) on Node 18+,
+   * which kills long-running RAG ingest uploads — large PDFs through
+   * Bedrock-backed RAG can take 20+ minutes. Allow operators to raise the
+   * ceiling without forking. `headersTimeout` MUST exceed `requestTimeout`
+   * (Node enforces this), so we keep it 60s above. */
+  const requestTimeoutMs = (() => {
+    const raw = process.env.SERVER_REQUEST_TIMEOUT_MS;
+    const parsed = raw == null || raw.trim() === '' ? NaN : Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 300_000;
+  })();
+
   const server = app.listen(port, host, async (err) => {
     if (err) {
       logger.error('Failed to start server:', err);
@@ -295,6 +307,9 @@ const startServer = async () => {
       process.exit(1);
     }
   });
+
+  server.requestTimeout = requestTimeoutMs;
+  server.headersTimeout = requestTimeoutMs + 60_000;
 
   setupGracefulShutdown(server);
 };

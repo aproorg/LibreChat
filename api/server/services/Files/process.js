@@ -26,7 +26,9 @@ const {
   getStorageMetadata,
   sweepExpiredFiles: sweepExpiredFilesWithDeps,
   startExpiredFileSweep: startExpiredFileSweepWithDeps,
+  startStaleEmbedSweep: startStaleEmbedSweepWithDeps,
 } = require('@librechat/api');
+const mongoose = require('mongoose');
 const {
   convertImage,
   resizeAndConvert,
@@ -321,6 +323,18 @@ function startExpiredFileSweep(options = {}) {
     runAsSystem,
     logger,
   });
+}
+
+/* Boot-and-interval sweeper that flips records left in `embedStatus: 'embedding'`
+ * past `STALE_EMBED_TIMEOUT_MS` to `'error'`. Covers backend crashes mid-ingest
+ * and downstream RAG hangs. See packages/api/src/files/staleEmbedSweep.ts. */
+function startStaleEmbedSweep() {
+  const File = mongoose.models.File;
+  if (!File) {
+    logger.warn('[staleEmbedSweep] File model not registered; skipping sweep wiring');
+    return null;
+  }
+  return startStaleEmbedSweepWithDeps(File, logger);
 }
 
 /**
@@ -840,6 +854,29 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
   const source = getFileStrategy(appConfig, { isImage: isImageFile });
 
   if (tool_resource === EToolResources.file_search) {
+    /* Persist an in-flight record before the (potentially long-running)
+     * RAG embed so the frontend's files query can render an "indexing"
+     * row that survives a browser refresh. The terminal write at the
+     * bottom of this handler upserts the same file_id with the real
+     * storage/embedding result and flips embedStatus to 'ready'. */
+    await db.createFile(
+      {
+        user: req.user.id,
+        file_id,
+        temp_file_id,
+        bytes: file.size,
+        filename: sanitizeFilename(file.originalname),
+        filepath: FileSources.vectordb,
+        type: file.mimetype,
+        source: FileSources.vectordb,
+        object: 'file',
+        embedStatus: 'embedding',
+        tenantId: req.user.tenantId,
+        context: messageAttachment ? FileContext.message_attachment : FileContext.agents,
+      },
+      true,
+    );
+
     // FIRST: Upload to Storage for permanent backup (S3/local/etc.)
     const { handleFileUpload } = getStrategyFunctions(source);
     const sanitizedUploadFn = createSanitizedUploadWrapper(handleFileUpload);
@@ -854,12 +891,24 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
     // SECOND: Upload to Vector DB
     const { uploadVectors } = require('./VectorDB/crud');
 
-    embeddingResult = await uploadVectors({
-      req,
-      file,
-      file_id,
-      entity_id,
-    });
+    try {
+      embeddingResult = await uploadVectors({
+        req,
+        file,
+        file_id,
+        entity_id,
+      });
+    } catch (err) {
+      /* Mark the in-flight record as errored so the frontend can stop
+       * polling. We then re-throw so the existing error path (toast on
+       * the originating browser, if still connected) still fires. */
+      await db.updateFile({
+        file_id,
+        embedStatus: 'error',
+        embedError: String(err?.message ?? 'embedding failed').slice(0, 200),
+      });
+      throw err;
+    }
 
     // Vector status will be stored at root level, no need for metadata
     fileInfoMetadata = {};
@@ -940,6 +989,7 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
       metadata: fileInfoMetadata,
       type: file.mimetype,
       embedded,
+      embedStatus: tool_resource === EToolResources.file_search ? 'ready' : undefined,
       source,
       height,
       width,
@@ -1295,6 +1345,7 @@ module.exports = {
   uploadImageBuffer,
   sweepExpiredFiles,
   startExpiredFileSweep,
+  startStaleEmbedSweep,
   processFileUpload,
   processDeleteRequest,
   processAgentFileUpload,

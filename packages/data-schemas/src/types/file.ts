@@ -55,6 +55,18 @@ export interface IMongoFile extends Omit<Document, 'model'> {
   storageRegion?: string;
   object: 'file';
   embedded?: boolean;
+  /**
+   * Lifecycle of the RAG / vector-store ingestion. `'embedding'` while
+   * the upload handler is awaiting the RAG API (can be 10-20 minutes
+   * for large PDFs); `'ready'` once `uploadVectors` returns success;
+   * `'error'` if it failed or a stale record was reaped by the
+   * boot-time sweeper. Persisted *before* the RAG call so a browser
+   * refresh during indexing finds the record and the polling UI can
+   * resume. Absent on legacy records and on non-embedded file kinds.
+   */
+  embedStatus?: 'embedding' | 'ready' | 'error';
+  /** Short machine-readable reason when `embedStatus === 'error'`. */
+  embedError?: string;
   type: string;
   context?: string;
   usage: number;

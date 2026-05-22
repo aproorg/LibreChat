@@ -53,6 +53,25 @@ const file: Schema<IMongoFile> = new Schema(
     embedded: {
       type: Boolean,
     },
+    embedStatus: {
+      /* Lifecycle of the RAG / vector-store ingestion. The upload handler
+       * persists the record with 'embedding' before calling out to the
+       * RAG API, then flips to 'ready' on success or 'error' on failure.
+       * Frontend polls while any visible file is in 'embedding' so the
+       * status survives a browser refresh during the (potentially long)
+       * indexing wait. Absent on legacy records and on file kinds that
+       * never go through the embedding pipeline. */
+      type: String,
+      enum: ['embedding', 'ready', 'error'],
+      index: true,
+    },
+    embedError: {
+      /* Short machine-readable reason when `embedStatus === 'error'`.
+       * Bounded to keep stack traces and full RAG-API error bodies out
+       * of the document. */
+      type: String,
+      maxlength: 200,
+    },
     type: {
       type: String,
       required: true,

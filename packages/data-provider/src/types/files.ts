@@ -115,6 +115,18 @@ export type TFile = {
   temp_file_id?: string;
   bytes: number;
   embedded: boolean;
+  /**
+   * Lifecycle of the RAG / vector-store ingestion. `'embedding'` while
+   * the backend is awaiting the RAG API; `'ready'` after `uploadVectors`
+   * succeeds; `'error'` on failure or stale-record sweep. Persisted
+   * before the RAG call so the record survives a browser refresh while
+   * indexing is in flight. Absent for legacy records and non-embedded
+   * file kinds — clients MUST treat `undefined` as a terminal state and
+   * fall back to `embedded`.
+   */
+  embedStatus?: 'embedding' | 'ready' | 'error';
+  /** Short machine-readable reason when `embedStatus === 'error'`. */
+  embedError?: string;
   filename: string;
   filepath: string;
   object: 'file';
