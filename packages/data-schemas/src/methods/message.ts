@@ -367,7 +367,18 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         query.limit(options.limit);
       }
 
-      return await query.lean<IMessage[]>();
+      const messages = await query.lean<IMessage[]>();
+      /** Drop null/undefined holes from array `content`. The streaming content
+       *  aggregator builds parts by index and yields a sparse array; an interrupted
+       *  run can persist a hole that serializes to `null`. Downstream formatters
+       *  (e.g. formatAgentMessages) read `part.type` and crash on it, so cleaning on
+       *  read neutralizes both already-corrupted rows and any future ones. */
+      for (const message of messages) {
+        if (Array.isArray(message.content)) {
+          message.content = message.content.filter((part) => part != null);
+        }
+      }
+      return messages;
     } catch (err) {
       logger.error('Error getting messages:', err);
       throw err;
