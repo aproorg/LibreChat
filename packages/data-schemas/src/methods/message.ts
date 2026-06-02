@@ -325,11 +325,19 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   async function getMessages(filter: FilterQuery<IMessage>, select?: string) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
-      if (select) {
-        return await Message.find(filter).select(select).sort({ createdAt: 1 }).lean<IMessage[]>();
+      const query = Message.find(filter).sort({ createdAt: 1 });
+      const messages = await (select ? query.select(select) : query).lean<IMessage[]>();
+      /** Drop null/undefined holes from array `content`. The streaming content
+       *  aggregator builds parts by index and yields a sparse array; an interrupted
+       *  run can persist a hole that serializes to `null`. Downstream formatters
+       *  (e.g. formatAgentMessages) read `part.type` and crash on it, so cleaning on
+       *  read neutralizes both already-corrupted rows and any future ones. */
+      for (const message of messages) {
+        if (Array.isArray(message.content)) {
+          message.content = message.content.filter((part) => part != null);
+        }
       }
-
-      return await Message.find(filter).sort({ createdAt: 1 }).lean<IMessage[]>();
+      return messages;
     } catch (err) {
       logger.error('Error getting messages:', err);
       throw err;
