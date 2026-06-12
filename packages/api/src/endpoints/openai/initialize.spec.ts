@@ -115,6 +115,33 @@ describe('initializeOpenAI – SSRF guard wiring', () => {
     expect(mockValidateEndpointURL).not.toHaveBeenCalled();
   });
 
+  it('should resolve a stored user key even when the expiry field is missing', async () => {
+    const params = createParams({
+      OPENAI_API_KEY: AuthType.USER_PROVIDED,
+      OPENAI_REVERSE_PROXY: 'https://user-proxy.example.com/v1',
+    });
+    params.req.body = {} as BaseInitializeParams['req']['body'];
+
+    try {
+      await initializeOpenAI(params);
+    } finally {
+      (params as unknown as { _restore: () => void })._restore();
+    }
+
+    expect(params.db.getUserKeyValues).toHaveBeenCalledWith({
+      userId: 'user-1',
+      name: EModelEndpoint.openAI,
+    });
+    expect(mockValidateEndpointURL).not.toHaveBeenCalled();
+    expect(mockGetOpenAIConfig).toHaveBeenCalledWith(
+      'sk-user-key',
+      expect.objectContaining({
+        reverseProxyUrl: 'https://user-proxy.example.com/v1',
+      }),
+      EModelEndpoint.openAI,
+    );
+  });
+
   it('should propagate SSRF rejection from validateEndpointURL', async () => {
     mockValidateEndpointURL.mockRejectedValueOnce(
       new Error('Base URL for openAI targets a restricted address.'),
