@@ -2191,6 +2191,15 @@ export class MCPConnection extends EventEmitter {
     }
   }
 
+  /**
+   * Fetches the server's tools, following MCP `tools/list` cursor pagination so a
+   * server that spans multiple pages (e.g. an aggregating gateway exposing many
+   * tools) is loaded in full instead of being truncated to the first page.
+   *
+   * Pagination is bounded by {@link mcpConfig.TOOLS_LIST_MAX_PAGES} and a
+   * repeated-cursor guard. On error, the tools already fetched are returned rather
+   * than discarded, and the method never throws.
+   */
   async fetchTools(): Promise<
     {
       inputSchema: {
@@ -2235,13 +2244,42 @@ export class MCPConnection extends EventEmitter {
       title?: string | undefined;
     }[]
   > {
-    try {
-      const { tools } = await this.client.listTools();
-      return tools;
-    } catch (error) {
-      this.emitError(error, 'Failed to fetch tools');
-      return [];
+    const allTools: Awaited<ReturnType<typeof this.client.listTools>>['tools'] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let hasMore = true;
+
+    for (let page = 1; page <= mcpConfig.TOOLS_LIST_MAX_PAGES && hasMore; page++) {
+      try {
+        const { tools, nextCursor } = await this.client.listTools(
+          cursor != null ? { cursor } : undefined,
+        );
+        allTools.push(...tools);
+
+        if (nextCursor == null) {
+          hasMore = false;
+        } else if (seenCursors.has(nextCursor)) {
+          logger.warn(
+            `${this.getLogPrefix()} MCP server returned a repeated tools/list cursor; stopping pagination after ${page} page(s).`,
+          );
+          hasMore = false;
+        } else {
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
+        }
+      } catch (error) {
+        this.emitError(error, 'Failed to fetch tools');
+        hasMore = false;
+      }
     }
+
+    if (hasMore) {
+      logger.warn(
+        `${this.getLogPrefix()} Reached the tools/list pagination limit of ${mcpConfig.TOOLS_LIST_MAX_PAGES} page(s); some tools may be omitted. Set MCP_TOOLS_LIST_MAX_PAGES higher if this server legitimately exposes more.`,
+      );
+    }
+
+    return allTools;
   }
 
   async fetchPrompts(): Promise<t.MCPPrompt[]> {
