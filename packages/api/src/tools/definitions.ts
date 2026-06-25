@@ -102,6 +102,8 @@ export interface LoadToolDefinitionsDeps {
   getOrFetchMCPServerTools: (userId: string, serverName: string) => Promise<MCPServerTools | null>;
   /** Bypasses a non-empty stale catalog when it does not contain a selected tool. */
   refreshMCPServerTools?: (userId: string, serverName: string) => Promise<MCPServerTools | null>;
+  /** Resolves the server-level `deferLoading` default from the merged MCP config */
+  getServerDeferLoading?: (userId: string, serverName: string) => Promise<boolean>;
   /** Checks if a tool name is a known built-in tool */
   isBuiltInTool: (toolName: string) => boolean;
   /** Loads action tool definitions (schemas) from OpenAPI specs. Started together with the
@@ -246,6 +248,7 @@ export async function loadToolDefinitions(
   const {
     getOrFetchMCPServerTools,
     refreshMCPServerTools,
+    getServerDeferLoading,
     isBuiltInTool,
     getActionToolDefinitions,
   } = deps;
@@ -280,6 +283,7 @@ export async function loadToolDefinitions(
   const refreshedServerNames = new Set<string>();
   /** Parsed key segment → the RAW server name it resolved to (direct-first). */
   const resolvedServerNames = new Map<string, string>();
+  const mcpServerDeferLoadingCache = new Map<string, boolean>();
   const mcpToolDefs: ToolDefinition[] = [];
   const builtInToolDefs: ToolDefinition[] = [];
   const actionToolNames: string[] = [];
@@ -341,19 +345,26 @@ export async function loadToolDefinitions(
     });
   /** Server names each key asked for, to find the keys a refreshed server concerns. */
   const lookedUp = new Map<string, readonly string[]>();
-  const adopt = (catalogs: ServerCatalog[]): void => {
-    for (const catalog of catalogs) {
-      mcpServerToolsCache.set(catalog.serverKey, catalog.tools);
-      resolvedServerNames.set(catalog.serverKey, catalog.resolvedName);
-      lookedUp.set(catalog.serverKey, catalog.lookups);
-    }
+  const adopt = async (catalogs: ServerCatalog[]): Promise<void> => {
+    await Promise.all(
+      catalogs.map(async (catalog) => {
+        mcpServerToolsCache.set(catalog.serverKey, catalog.tools);
+        resolvedServerNames.set(catalog.serverKey, catalog.resolvedName);
+        lookedUp.set(catalog.serverKey, catalog.lookups);
+        /** Config lookups are keyed by the resolved RAW server name. */
+        const deferLoading = getServerDeferLoading
+          ? await getServerDeferLoading(userId, catalog.resolvedName)
+          : false;
+        mcpServerDeferLoadingCache.set(catalog.serverKey, deferLoading);
+      }),
+    );
   };
 
   const [catalogs, fetchedActionDefs] = await Promise.all([
     resolveKeys(Array.from(serverKeys)),
     loadActionDefinitions(),
   ]);
-  adopt(catalogs);
+  await adopt(catalogs);
   const mcpServerLookupOrder = Array.from(new Set(catalogs.flatMap((catalog) => catalog.lookups)));
   /** Keys whose first tool has been handled: their catalog is settled for the rest of the load. */
   const builtKeys = new Set<string>();
@@ -442,10 +453,12 @@ export async function loadToolDefinitions(
           (key) => !builtKeys.has(key) && lookedUp.get(key)?.includes(serverName),
         );
         if (unbuiltKeys.length > 0) {
-          adopt(await resolveKeys(unbuiltKeys));
+          await adopt(await resolveKeys(unbuiltKeys));
         }
       }
     }
+
+    const serverDeferLoading = mcpServerDeferLoadingCache.get(parsed) === true;
 
     if (isMCPAllPlaceholder(toolName)) {
       for (const [actualToolName, toolDef] of Object.entries(serverTools)) {
@@ -458,6 +471,7 @@ export async function loadToolDefinitions(
                 parameters: buildMcpParameters(toolDef.function.parameters),
                 serverName,
                 serverToolName: toolDef.serverToolName,
+                serverDeferLoading,
               },
               toolDef.serverToolName ??
                 actualToolName.slice(
@@ -489,6 +503,7 @@ export async function loadToolDefinitions(
             serverName,
             serverToolName: toolMatch.def.serverToolName,
             currentToolName: toolMatch.currentToolName,
+            serverDeferLoading,
           },
           toolMatch.def.serverToolName ??
             toolName.slice(
@@ -529,6 +544,7 @@ export async function loadToolDefinitions(
         mcpRawServerName: def.serverName,
         mcpServerToolName: def.serverToolName,
         mcpCurrentToolName: def.currentToolName,
+        mcpServerDeferLoading: def.serverDeferLoading,
       },
       undefined,
       undefined,
