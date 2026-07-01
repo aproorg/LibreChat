@@ -152,7 +152,7 @@ const openIdJwtLogin = (openIdConfig) => {
 
           user.federatedTokens = {
             access_token: accessToken || rawToken,
-            id_token: idToken,
+            id_token: idToken || rawToken,
             refresh_token: refreshToken,
             expires_at: payload.exp,
           };

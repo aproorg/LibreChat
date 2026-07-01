@@ -316,7 +316,7 @@ describe('openIdJwtStrategy – token source handling', () => {
     expect(user.federatedTokens.refresh_token).toBe('cookie-refresh');
   });
 
-  it('should set id_token to undefined when not available in session or cookies', async () => {
+  it('should fall back to raw Bearer token for id_token when not available in session or cookies', async () => {
     const req = {
       headers: {
         authorization: 'Bearer raw-bearer-token',
@@ -327,7 +327,7 @@ describe('openIdJwtStrategy – token source handling', () => {
     const { user } = await invokeVerify(req, payload);
 
     expect(user.federatedTokens.access_token).toBe('cookie-access');
-    expect(user.federatedTokens.id_token).toBeUndefined();
+    expect(user.federatedTokens.id_token).toBe('raw-bearer-token');
     expect(user.federatedTokens.refresh_token).toBe('cookie-refresh');
   });
 

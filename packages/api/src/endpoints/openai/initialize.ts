@@ -52,8 +52,10 @@ export async function initializeOpenAI({
   const userProvidesURL = isUserProvided(baseURLOptions[endpoint as keyof typeof baseURLOptions]);
 
   let userValues: UserKeyValues | null = null;
-  if (expiresAt && (userProvidesKey || userProvidesURL)) {
-    checkUserKeyExpiry(expiresAt, endpoint);
+  if (userProvidesKey || userProvidesURL) {
+    if (expiresAt) {
+      checkUserKeyExpiry(expiresAt, endpoint);
+    }
     userValues = await db.getUserKeyValues({ userId: req.user?.id ?? '', name: endpoint });
   }
 
