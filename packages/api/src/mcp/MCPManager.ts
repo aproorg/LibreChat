@@ -21,6 +21,7 @@ import {
 } from './utils';
 import type { ElicitationFlowResult } from './elicitation';
 import {
+  asElicitationFlowManager,
   generateElicitationFlowId,
   isElicitationSuccess,
   toElicitResultAction,
@@ -428,6 +429,7 @@ Please follow these instructions when using tools from the respective MCP server
     /** User-specific connection */
     let connection: MCPConnection | undefined;
     let cleanupRequestOAuthHandler: (() => void) | undefined;
+    let cleanupElicitationHandler: (() => void) | undefined;
     let disconnectAfterCall = false;
     const userId = user?.id;
     const logPrefix = userId ? `[MCP][User: ${userId}][${serverName}]` : `[MCP][${serverName}]`;
@@ -561,26 +563,28 @@ Please follow these instructions when using tools from the respective MCP server
 
       connection.setRequestHeaders(resolvedHeaders);
 
+      const elicitationFlowManager = asElicitationFlowManager(flowManager);
+
       if (elicitationStart && userId) {
-        connection.setElicitationHandler(async (params) => {
-          const mode = params.mode === 'url' ? 'url' : 'form';
+        cleanupElicitationHandler = connection.setElicitationHandler(async (params) => {
+          const isUrlMode = params.mode === 'url';
           const flowId = generateElicitationFlowId(userId, serverName, toolName, getTenantId());
           logger.debug(
-            `${logPrefix}[${toolName}] Elicitation requested (${mode}), flowId: ${flowId}`,
+            `${logPrefix}[${toolName}] Elicitation requested (${isUrlMode ? 'url' : 'form'}), flowId: ${flowId}`,
           );
           await elicitationStart({
             flowId,
-            mode,
+            mode: isUrlMode ? 'url' : 'form',
             message: params.message,
-            requestedSchema:
-              mode === 'form'
-                ? (params as { requestedSchema: Agents.ElicitationSchema }).requestedSchema
-                : undefined,
-            url: mode === 'url' ? (params as { url: string }).url : undefined,
+            requestedSchema: params.mode === 'url' ? undefined : params.requestedSchema,
+            url: params.mode === 'url' ? params.url : undefined,
           });
-          const flowResult = await (
-            flowManager as unknown as FlowStateManager<ElicitationFlowResult>
-          ).createFlow(flowId, 'mcp_elicit', {}, options?.signal);
+          const flowResult = await elicitationFlowManager.createFlow(
+            flowId,
+            'mcp_elicit',
+            {},
+            options?.signal,
+          );
           logger.debug(`${logPrefix}[${toolName}] Elicitation resolved: ${flowResult.action}`);
           return {
             action: toElicitResultAction(flowResult.action),
@@ -638,9 +642,12 @@ Please follow these instructions when using tools from the respective MCP server
 
         let flowResult: ElicitationFlowResult;
         try {
-          flowResult = await (
-            flowManager as unknown as FlowStateManager<ElicitationFlowResult>
-          ).createFlow(flowId, 'mcp_elicit', {}, options?.signal);
+          flowResult = await elicitationFlowManager.createFlow(
+            flowId,
+            'mcp_elicit',
+            {},
+            options?.signal,
+          );
         } catch (flowError) {
           const reason = flowError instanceof Error ? flowError.message : String(flowError);
           throw new McpError(
@@ -676,6 +683,9 @@ Please follow these instructions when using tools from the respective MCP server
       throw error;
     } finally {
       cleanupRequestOAuthHandler?.();
+      // Unregister the per-call elicitation handler so a cached connection can't
+      // fire a stale closure (old toolName/signal/flow) on a later request.
+      cleanupElicitationHandler?.();
       // Ephemeral connections are never stored in userConnections, so disconnecting
       // is the only cleanup needed; removing the map entry here could orphan a
       // still-connected cached connection from before a config change.

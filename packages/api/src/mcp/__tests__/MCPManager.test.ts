@@ -2251,6 +2251,39 @@ describe('MCPManager', () => {
       expect(mockConnection.setElicitationHandler).toHaveBeenCalledWith(expect.any(Function));
     });
 
+    it('clears the elicitation handler once the tool call settles', async () => {
+      const cleanup = jest.fn();
+      const connection = {
+        isConnected: jest.fn().mockResolvedValue(true),
+        setRequestHeaders: jest.fn(),
+        setElicitationHandler: jest.fn().mockReturnValue(cleanup),
+        timeout: 30000,
+        client: {
+          request: jest.fn().mockResolvedValue({
+            content: [{ type: 'text', text: 'Elicitation result' }],
+            isError: false,
+          }),
+        },
+      } as unknown as MCPConnection;
+      mockAppConnections({ get: jest.fn().mockResolvedValue(connection) });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
     it('forwards form-mode elicitation/create requests and resolves via the flow manager', async () => {
       mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
       mockFlowManager.createFlow.mockResolvedValueOnce({

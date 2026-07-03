@@ -36,6 +36,17 @@ type ManagedDispatcher = Agent | ProxyAgent;
 type ParsedIP = { version: 4 | 6; bits: 32 | 128; value: bigint };
 type MCPTool = MCPListToolsResult['tools'][number];
 
+/**
+ * Params delivered to a {@link MCPConnection.setElicitationHandler} handler for a
+ * server-initiated `elicitation/create` request. The form variant (mode absent or
+ * `'form'`) carries the JSON-schema form; the `'url'` variant carries the out-of-band
+ * authorization link. Mirrors the SDK's `ElicitRequestParamsSchema` union, restated
+ * here so `requestedSchema` uses our shared `Agents.ElicitationSchema` shape.
+ */
+type ElicitationCreateParams =
+  | { mode?: 'form'; message: string; requestedSchema: Agents.ElicitationSchema }
+  | { mode: 'url'; message: string; elicitationId: string; url: string };
+
 const BIGINT_ZERO = BigInt(0);
 const BIGINT_ONE = BigInt(1);
 const BIGINT_EIGHT = BigInt(8);
@@ -2430,24 +2441,21 @@ export class MCPConnection extends EventEmitter {
    * (both `mode: 'form'` and `mode: 'url'`). Does NOT handle the -32042
    * `UrlElicitationRequired` exception path — that arrives as an error on the
    * `tools/call` response itself and is handled in `MCPManager.callTool`.
+   *
+   * Returns a disposer that unregisters the handler; callers must invoke it once
+   * the originating `tools/call` settles so a cached connection can't leak a stale
+   * per-call closure into a later, unrelated request.
    */
   public setElicitationHandler(
-    handler: (
-      params:
-        | { mode?: 'form'; message: string; requestedSchema: Agents.ElicitationSchema }
-        | { mode: 'url'; message: string; elicitationId: string; url: string },
-    ) => Promise<{
+    handler: (params: ElicitationCreateParams) => Promise<{
       action: 'accept' | 'decline' | 'cancel';
       content?: Record<string, string | number | boolean>;
     }>,
-  ): void {
-    this.client.setRequestHandler(ElicitRequestSchema, async (request) => {
-      return handler(
-        request.params as
-          | { mode?: 'form'; message: string; requestedSchema: Agents.ElicitationSchema }
-          | { mode: 'url'; message: string; elicitationId: string; url: string },
-      );
-    });
+  ): () => void {
+    this.client.setRequestHandler(ElicitRequestSchema, async (request) =>
+      handler(request.params as ElicitationCreateParams),
+    );
+    return () => this.client.removeRequestHandler(ElicitRequestSchema.shape.method.value);
   }
 
   /**

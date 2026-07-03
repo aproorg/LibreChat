@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import type { FlowStateManager } from '~/flow/manager';
 
 /**
  * Terminal actions a client can post to `POST /api/mcp/elicitation/:flowId`.
@@ -13,6 +14,19 @@ export type ElicitationFlowAction = 'accept' | 'decline' | 'cancel' | 'complete'
 export interface ElicitationFlowResult {
   action: ElicitationFlowAction;
   content?: Record<string, string | number | boolean>;
+}
+
+/**
+ * Re-views the process-wide {@link FlowStateManager} singleton — statically typed for OAuth
+ * tokens at its main call sites — as an elicitation-flow manager. The manager stores payloads
+ * keyed at runtime by (flowId, flow type); the payload shape for an `mcp_elicit` flow is
+ * fixed by the flow type, not the class generic, so the generic is erased here. This is the
+ * one audited place that assertion lives, so callers never scatter `as unknown as`.
+ */
+export function asElicitationFlowManager(
+  flowManager: unknown,
+): FlowStateManager<ElicitationFlowResult> {
+  return flowManager as FlowStateManager<ElicitationFlowResult>;
 }
 
 /**
@@ -47,6 +61,10 @@ export function toElicitResultAction(
  * same server must not collide — and the userId is embedded directly so the
  * completion route can enforce per-user ownership the same way OAuth flow
  * routes do (see `canAccessOAuthFlow` in `api/server/routes/mcp.js`).
+ *
+ * Every variable segment is URI-encoded so a `:` inside any of them (server and
+ * tool names are config/user-derived) can't skew the fields {@link
+ * parseElicitationFlowId} reads back out.
  */
 export function generateElicitationFlowId(
   userId: string,
@@ -54,7 +72,7 @@ export function generateElicitationFlowId(
   toolName: string,
   tenantId?: string,
 ): string {
-  const flowId = `${userId}:${serverName}:${toolName}:${randomUUID()}`;
+  const flowId = `${encodeURIComponent(userId)}:${encodeURIComponent(serverName)}:${encodeURIComponent(toolName)}:${randomUUID()}`;
   if (!tenantId) {
     return flowId;
   }
@@ -92,10 +110,20 @@ export function parseElicitationFlowId(flowId: string): ParsedElicitationFlowId 
     return null;
   }
 
-  const [userId, serverName, toolName, nonce] = parts.slice(offset, offset + 4);
-  if (!userId || !serverName || !toolName || !nonce) {
+  const [rawUserId, rawServerName, rawToolName, nonce] = parts.slice(offset, offset + 4);
+  if (!rawUserId || !rawServerName || !rawToolName || !nonce) {
     return null;
   }
 
-  return { userId, serverName, toolName, nonce, tenantId };
+  try {
+    return {
+      userId: decodeURIComponent(rawUserId),
+      serverName: decodeURIComponent(rawServerName),
+      toolName: decodeURIComponent(rawToolName),
+      nonce,
+      tenantId,
+    };
+  } catch {
+    return null;
+  }
 }
