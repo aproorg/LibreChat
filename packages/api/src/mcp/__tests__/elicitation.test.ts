@@ -54,3 +54,40 @@ describe('asElicitationFlowManager', () => {
     expect(asElicitationFlowManager(manager)).toBe(manager);
   });
 });
+
+describe('MCPConnection.setElicitationHandler disposal', () => {
+  // Exercises the real method against a stubbed SDK client: registration is
+  // last-writer-wins (the protocol offers no call correlation), but disposal is
+  // token-guarded — an earlier call settling must never tear down a later
+  // call's live handler.
+  const { MCPConnection } = jest.requireActual<typeof import('../connection')>('../connection');
+
+  const makeFakeConnection = () => {
+    const client = { setRequestHandler: jest.fn(), removeRequestHandler: jest.fn() };
+    return { client, connection: { client } as unknown as InstanceType<typeof MCPConnection> };
+  };
+  const handler = () => Promise.resolve({ action: 'accept' as const });
+
+  it('removes the handler when the registering call settles last', () => {
+    const { client, connection } = makeFakeConnection();
+    const dispose = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+
+    dispose();
+
+    expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+    expect(client.removeRequestHandler).toHaveBeenCalledWith('elicitation/create');
+  });
+
+  it("never removes a newer call's handler, and disposal is idempotent", () => {
+    const { client, connection } = makeFakeConnection();
+    const disposeFirst = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+    const disposeSecond = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+
+    disposeFirst();
+    expect(client.removeRequestHandler).not.toHaveBeenCalled();
+
+    disposeSecond();
+    disposeSecond();
+    expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+  });
+});

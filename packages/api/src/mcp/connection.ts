@@ -1154,6 +1154,8 @@ export class MCPConnection extends EventEmitter {
   private lastPingTime: number;
   private lastConnectionCheckAt: number = 0;
   private oauthTokens?: MCPOAuthTokens | null;
+  /** Identity of the currently registered elicitation handler; see {@link setElicitationHandler}. */
+  private elicitationHandlerToken?: symbol;
   private requestHeaders?: Record<string, string> | null;
   private oauthRequired = false;
   private oauthRecovery = false;
@@ -2445,6 +2447,11 @@ export class MCPConnection extends EventEmitter {
    * Returns a disposer that unregisters the handler; callers must invoke it once
    * the originating `tools/call` settles so a cached connection can't leak a stale
    * per-call closure into a later, unrelated request.
+   *
+   * Concurrent calls on one cached connection overwrite each other's handler
+   * (`elicitation/create` carries no call correlation, so last-writer-wins is the
+   * best the protocol allows) — but disposal is token-guarded so an earlier call
+   * settling never tears down a later call's live handler.
    */
   public setElicitationHandler(
     handler: (params: ElicitationCreateParams) => Promise<{
@@ -2452,10 +2459,18 @@ export class MCPConnection extends EventEmitter {
       content?: Record<string, string | number | boolean>;
     }>,
   ): () => void {
+    const token = Symbol('elicitation-handler');
+    this.elicitationHandlerToken = token;
     this.client.setRequestHandler(ElicitRequestSchema, async (request) =>
       handler(request.params as ElicitationCreateParams),
     );
-    return () => this.client.removeRequestHandler(ElicitRequestSchema.shape.method.value);
+    return () => {
+      if (this.elicitationHandlerToken !== token) {
+        return;
+      }
+      this.elicitationHandlerToken = undefined;
+      this.client.removeRequestHandler(ElicitRequestSchema.shape.method.value);
+    };
   }
 
   /**
