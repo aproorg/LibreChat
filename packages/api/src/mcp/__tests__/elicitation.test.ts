@@ -128,6 +128,30 @@ describe('extractUrlElicitation', () => {
     expect(extractUrlElicitation(error)).toEqual(elicitation);
   });
 
+  it('extracts a whitespaced HTTP-wrapped body (pretty-printed / key-reordered gateway JSON)', () => {
+    // A gateway that pretty-prints yields `"code": -32042` (note the space) and
+    // may order keys differently; a literal `"code":-32042` substring match would
+    // miss it, so extraction must tolerate JSON formatting variance.
+    const body = JSON.stringify(
+      {
+        jsonrpc: '2.0',
+        id: 9,
+        error: {
+          message: 'This request requires authorization.',
+          data: { elicitations: [elicitation] },
+          code: -32042,
+        },
+      },
+      null,
+      2,
+    );
+    const error = Object.assign(
+      new Error(`Streamable HTTP error: Error POSTing to endpoint: ${body}`),
+      { code: 401 },
+    );
+    expect(extractUrlElicitation(error)).toEqual(elicitation);
+  });
+
   it('returns null for non-elicitation errors in both shapes', () => {
     expect(extractUrlElicitation(new Error('boom'))).toBeNull();
     expect(extractUrlElicitation({ code: -32600, data: {} })).toBeNull();

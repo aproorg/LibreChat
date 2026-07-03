@@ -40,13 +40,18 @@ export function extractUrlElicitation(error: unknown): UrlElicitation | null {
     return data?.elicitations?.[0] ?? null;
   }
 
-  if (
-    typeof message !== 'string' ||
-    !message.includes(`"code":${ErrorCode.UrlElicitationRequired}`)
-  ) {
+  // Cheap pre-filter on the bare error number (not `"code":-32042`) so gateway
+  // JSON with whitespace/key-order variance — e.g. a pretty-printed
+  // `"code": -32042` — still gets parsed; the JSON.parse + numeric-code check
+  // below is what actually validates the shape.
+  if (typeof message !== 'string' || !message.includes(String(ErrorCode.UrlElicitationRequired))) {
     return null;
   }
-  const body = message.slice(message.indexOf('{'));
+  const braceIndex = message.indexOf('{');
+  if (braceIndex === -1) {
+    return null;
+  }
+  const body = message.slice(braceIndex);
   try {
     const parsed = JSON.parse(body) as {
       error?: { code?: number; data?: { elicitations?: UrlElicitation[] } };

@@ -386,14 +386,14 @@ function createOAuthCallback({ runStepEmitter, runStepDeltaEmitter }) {
  * @param {ServerResponse} params.res - The Express response object for sending events.
  * @param {string} params.stepId - The ID of the step.
  * @param {string | null} [params.streamId] - The stream ID for resumable mode.
- * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; requestedSchema?: object; url?: string }) => Promise<void>}
+ * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; serverName?: string; toolName?: string; requestedSchema?: object; url?: string }) => Promise<void>}
  */
 function createElicitationStart({ res, stepId, streamId = null }) {
-  return async function ({ flowId, mode, message, requestedSchema, url }) {
+  return async function ({ flowId, mode, message, serverName, toolName, requestedSchema, url }) {
     const data = {
       id: stepId,
       runId: Constants.USE_PRELIM_RESPONSE_MESSAGE_ID,
-      elicitation: { flowId, mode, message, requestedSchema, url },
+      elicitation: { flowId, mode, message, serverName, toolName, requestedSchema, url },
     };
     const eventData = { event: 'on_elicitation', data };
     if (streamId) {

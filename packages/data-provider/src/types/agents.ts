@@ -143,6 +143,10 @@ export namespace Agents {
       flowId: string;
       mode: ElicitationMode;
       message: string;
+      /** requesting MCP server name, for the card header identity line */
+      serverName?: string;
+      /** requesting MCP tool name, for the card header identity line */
+      toolName?: string;
       /** form mode only */
       requestedSchema?: ElicitationSchema;
       /** url mode only: the authorization/consent page to open */

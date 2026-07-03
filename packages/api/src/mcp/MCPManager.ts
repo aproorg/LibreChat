@@ -401,6 +401,8 @@ Please follow these instructions when using tools from the respective MCP server
       flowId: string;
       mode: 'form' | 'url';
       message: string;
+      serverName?: string;
+      toolName?: string;
       requestedSchema?: Agents.ElicitationSchema;
       url?: string;
     }) => Promise<void>;
@@ -558,6 +560,8 @@ Please follow these instructions when using tools from the respective MCP server
             flowId,
             mode: isUrlMode ? 'url' : 'form',
             message: params.message,
+            serverName,
+            toolName,
             requestedSchema: params.mode === 'url' ? undefined : params.requestedSchema,
             url: params.mode === 'url' ? params.url : undefined,
           });
@@ -620,6 +624,8 @@ Please follow these instructions when using tools from the respective MCP server
           flowId,
           mode: 'url',
           message: first.message,
+          serverName,
+          toolName,
           url: first.url,
         });
 
