@@ -138,7 +138,9 @@ export default function ElicitationForm({
   );
   const [pendingAction, setPendingAction] = useState<ElicitationAction | undefined>();
   const [sendFailed, setSendFailed] = useState(false);
-  const [urlOpened, setUrlOpened] = useState(false);
+  // Track whether the user has opened this flow's authorization link. When there
+  // is no link to open, there is nothing to gate on, so treat it as already opened.
+  const [urlOpened, setUrlOpened] = useState(!url);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [resolvedAction, setResolvedAction] = useState<ElicitationAction | undefined>(
     initialAction,
@@ -219,7 +221,7 @@ export default function ElicitationForm({
 
   const requiredMark = (required: boolean) =>
     required ? (
-      <span aria-hidden="true" className="ml-1 text-destructive">
+      <span aria-hidden="true" className="ml-1 text-text-destructive">
         *
       </span>
     ) : null;
@@ -254,7 +256,7 @@ export default function ElicitationForm({
             aria-required={required || undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={describedBy}
-            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-ring-primary"
+            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <option value="">{localize('com_ui_select')}</option>
             {schema.enum.map((opt) => (
@@ -264,7 +266,7 @@ export default function ElicitationForm({
             ))}
           </select>
           {error && (
-            <p id={errId} className="text-xs text-destructive">
+            <p id={errId} className="text-xs text-text-destructive">
               {error}
             </p>
           )}
@@ -286,7 +288,7 @@ export default function ElicitationForm({
               aria-required={required || undefined}
               aria-invalid={error ? true : undefined}
               aria-describedby={describedBy}
-              className="h-4 w-4 rounded border-border-light accent-ring-primary"
+              className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             />
             <span className="text-sm text-text-primary">
               {label}
@@ -299,7 +301,7 @@ export default function ElicitationForm({
             </p>
           )}
           {error && (
-            <p id={errId} className="text-xs text-destructive">
+            <p id={errId} className="text-xs text-text-destructive">
               {error}
             </p>
           )}
@@ -335,7 +337,7 @@ export default function ElicitationForm({
           className={cn(error && 'border-border-destructive focus-visible:ring-border-destructive')}
         />
         {error && (
-          <p id={errId} className="text-xs text-destructive">
+          <p id={errId} className="text-xs text-text-destructive">
             {error}
           </p>
         )}
@@ -363,7 +365,7 @@ export default function ElicitationForm({
   }
 
   const errorLine = sendFailed ? (
-    <p role="alert" className="text-xs text-destructive">
+    <p role="alert" className="text-xs text-text-destructive">
       {localize('com_ui_elicitation_error')}
     </p>
   ) : null;
@@ -381,28 +383,30 @@ export default function ElicitationForm({
           <div className="flex flex-wrap items-center gap-2">
             {!urlOpened ? (
               <>
-                <Button
-                  asChild
-                  variant="submit"
-                  size="sm"
-                  aria-disabled={submitting || undefined}
-                  className={cn(submitting && 'pointer-events-none opacity-50')}
-                >
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    tabIndex={submitting ? -1 : undefined}
-                    onClick={() => setUrlOpened(true)}
+                {url && (
+                  <Button
+                    asChild
+                    variant="submit"
+                    size="sm"
+                    aria-disabled={submitting || undefined}
+                    className={cn(submitting && 'pointer-events-none opacity-50')}
                   >
-                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                    {localize('com_ui_elicitation_open_url')}
-                  </a>
-                </Button>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      tabIndex={submitting ? -1 : undefined}
+                      onClick={() => setUrlOpened(true)}
+                    >
+                      <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                      {localize('com_ui_elicitation_open_url')}
+                    </a>
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={submitting}
+                  disabled={submitting || !urlOpened}
                   onClick={() => submitAction('complete')}
                 >
                   <ActionLabel
@@ -424,24 +428,26 @@ export default function ElicitationForm({
                     acting={pendingAction === 'complete'}
                   />
                 </Button>
-                <Button
-                  asChild
-                  variant="outline"
-                  size="sm"
-                  aria-disabled={submitting || undefined}
-                  className={cn(submitting && 'pointer-events-none opacity-50')}
-                >
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    tabIndex={submitting ? -1 : undefined}
-                    onClick={() => setUrlOpened(true)}
+                {url && (
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    aria-disabled={submitting || undefined}
+                    className={cn(submitting && 'pointer-events-none opacity-50')}
                   >
-                    <RotateCw className="h-4 w-4" aria-hidden="true" />
-                    {localize('com_ui_elicitation_reopen')}
-                  </a>
-                </Button>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      tabIndex={submitting ? -1 : undefined}
+                      onClick={() => setUrlOpened(true)}
+                    >
+                      <RotateCw className="h-4 w-4" aria-hidden="true" />
+                      {localize('com_ui_elicitation_reopen')}
+                    </a>
+                  </Button>
+                )}
               </>
             )}
             <Button
