@@ -1,4 +1,64 @@
 import { randomUUID } from 'crypto';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+
+/** A single URL-mode elicitation as carried by a -32042 `UrlElicitationRequired`
+ *  error's `data.elicitations` (MCP spec 2025-11-25). */
+export interface UrlElicitation {
+  mode?: string;
+  message: string;
+  url: string;
+  elicitationId: string;
+}
+
+/**
+ * Extracts the first URL elicitation from a failed `tools/call`, handling both
+ * wire shapes a -32042 can arrive in:
+ *
+ * 1. A protocol-level JSON-RPC error response — the SDK surfaces it as an
+ *    `McpError`/`UrlElicitationRequiredError` with `code === -32042` and
+ *    `data.elicitations`.
+ * 2. An HTTP-level rejection — AgentCore Gateway returns JSON-RPC errors with a
+ *    non-2xx status, so the SDK's streamable-HTTP transport never parses the
+ *    body and instead throws a `StreamableHTTPError` whose `code` is the HTTP
+ *    status and whose message embeds the raw body
+ *    (`"Error POSTing to endpoint: {\"jsonrpc\":...,\"error\":{\"code\":-32042,...}}"`).
+ *
+ * Returns `null` when the error is not a URL elicitation in either shape.
+ */
+export function extractUrlElicitation(error: unknown): UrlElicitation | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  const { code, data, message } = error as {
+    code?: unknown;
+    data?: { elicitations?: UrlElicitation[] };
+    message?: unknown;
+  };
+
+  if (code === ErrorCode.UrlElicitationRequired) {
+    return data?.elicitations?.[0] ?? null;
+  }
+
+  if (
+    typeof message !== 'string' ||
+    !message.includes(`"code":${ErrorCode.UrlElicitationRequired}`)
+  ) {
+    return null;
+  }
+  const body = message.slice(message.indexOf('{'));
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: number; data?: { elicitations?: UrlElicitation[] } };
+    };
+    if (parsed.error?.code !== ErrorCode.UrlElicitationRequired) {
+      return null;
+    }
+    return parsed.error.data?.elicitations?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
 import type { FlowStateManager } from '~/flow/manager';
 
 /**

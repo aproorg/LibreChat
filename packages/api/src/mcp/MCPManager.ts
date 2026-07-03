@@ -22,6 +22,7 @@ import {
 import type { ElicitationFlowResult } from './elicitation';
 import {
   asElicitationFlowManager,
+  extractUrlElicitation,
   generateElicitationFlowId,
   isElicitationSuccess,
   toElicitResultAction,
@@ -41,25 +42,6 @@ import { processMCPEnv } from '~/utils/env';
 /** Extended tool-call timeout when an elicitation (form/url `elicitation/create`,
  *  or a -32042 URL-exception retry) may pause execution waiting on the user. */
 const ELICITATION_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** Raw shape of the `data` payload on a JSON-RPC error with code -32042
- *  (`ErrorCode.UrlElicitationRequired`), whether the SDK deserialized it into an
- *  `UrlElicitationRequiredError` or a gateway-proxied plain `McpError`. */
-type UrlElicitationErrorData = {
-  elicitations?: Array<{ mode?: string; message: string; url: string; elicitationId: string }>;
-};
-
-/** Matches both `UrlElicitationRequiredError` instances and any error object
- *  carrying JSON-RPC code -32042 (e.g. proxied through a gateway without
- *  preserving the SDK's error subclass). */
-function isUrlElicitationError(
-  error: unknown,
-): error is { code: number; data?: UrlElicitationErrorData } {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-  return (error as { code?: unknown }).code === ErrorCode.UrlElicitationRequired;
-}
 
 function createOboToolCallErrorMessage(
   logPrefix: string,
@@ -614,17 +596,18 @@ Please follow these instructions when using tools from the respective MCP server
           requestOptions,
         );
       } catch (toolCallError) {
-        if (!elicitationStart || !userId || !isUrlElicitationError(toolCallError)) {
-          throw toolCallError;
-        }
-
         /**
          * URL-exception mode (spec 2025-11-25): the server rejected `tools/call`
          * with JSON-RPC code -32042 instead of issuing a normal `elicitation/create`
-         * request. Surface the authorization link, wait for the user to complete
-         * (or cancel) it via `flowManager`, then retry the SAME `tools/call` once.
+         * request (possibly wrapped in an HTTP-level transport error by the
+         * gateway — see `extractUrlElicitation`). Surface the authorization link,
+         * wait for the user to complete (or cancel) it via `flowManager`, then
+         * retry the SAME `tools/call` once.
          */
-        const first = toolCallError.data?.elicitations?.[0];
+        if (!elicitationStart || !userId) {
+          throw toolCallError;
+        }
+        const first = extractUrlElicitation(toolCallError);
         if (!first) {
           throw toolCallError;
         }

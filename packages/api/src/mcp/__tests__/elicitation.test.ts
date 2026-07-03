@@ -1,5 +1,6 @@
 import {
   asElicitationFlowManager,
+  extractUrlElicitation,
   generateElicitationFlowId,
   parseElicitationFlowId,
 } from '~/mcp/elicitation';
@@ -89,5 +90,60 @@ describe('MCPConnection.setElicitationHandler disposal', () => {
     disposeSecond();
     disposeSecond();
     expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('extractUrlElicitation', () => {
+  const elicitation = {
+    mode: 'url',
+    message: 'Please authorize access to github',
+    url: 'https://bedrock-agentcore.eu-west-1.amazonaws.com/identities/oauth2/authorize?request_uri=abc',
+    elicitationId: '8cd9f2ba-103d-44c9-8471-6dd02df67c1b',
+  };
+
+  it('extracts from a protocol-level McpError shape (code -32042 + data)', () => {
+    const error = { code: -32042, data: { elicitations: [elicitation] } };
+    expect(extractUrlElicitation(error)).toEqual(elicitation);
+  });
+
+  it('extracts from a gateway HTTP-wrapped transport error (the AgentCore wire shape)', () => {
+    // Exact shape observed live: gateway returns JSON-RPC errors with a non-2xx
+    // HTTP status, so the SDK throws a StreamableHTTPError whose message embeds
+    // the raw body and whose `code` is the HTTP status, not -32042.
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 9,
+      error: {
+        code: -32042,
+        message: 'This request requires authorization.',
+        data: { elicitations: [elicitation] },
+      },
+    });
+    const error = Object.assign(
+      new Error(`Streamable HTTP error: Error POSTing to endpoint: ${body}`),
+      {
+        code: 401,
+      },
+    );
+    expect(extractUrlElicitation(error)).toEqual(elicitation);
+  });
+
+  it('returns null for non-elicitation errors in both shapes', () => {
+    expect(extractUrlElicitation(new Error('boom'))).toBeNull();
+    expect(extractUrlElicitation({ code: -32600, data: {} })).toBeNull();
+    expect(
+      extractUrlElicitation(
+        new Error(
+          'Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":2,"error":{"code":-32600,"message":"Session not initialized"}}',
+        ),
+      ),
+    ).toBeNull();
+    expect(extractUrlElicitation(null)).toBeNull();
+  });
+
+  it('returns null for a -32042 mention with an unparseable body', () => {
+    expect(
+      extractUrlElicitation(new Error('Error POSTing to endpoint: {"code":-32042, truncated')),
+    ).toBeNull();
   });
 });
