@@ -22,6 +22,7 @@ const {
   generateCheckAccess,
   validateOAuthSession,
   OAUTH_SESSION_COOKIE,
+  parseElicitationFlowId,
 } = require('@librechat/api');
 const {
   createMCPServerController,
@@ -66,6 +67,24 @@ const canAccessOAuthFlow = (flowId, userId) => {
     return false;
   }
   return parsed.userId === userId || parsed.userId === 'system';
+};
+
+/**
+ * Elicitation flow IDs embed the requesting userId directly (unlike OAuth flow
+ * IDs, which are one-per-server; elicitation flows are one-per-tool-invocation
+ * — see `generateElicitationFlowId` in `@librechat/api`). This enforces the
+ * same per-user ownership OAuth flow routes do, so one user can't complete or
+ * observe another user's pending elicitation via a guessed/observed flowId.
+ */
+const canAccessElicitationFlow = (flowId, userId) => {
+  const parsed = parseElicitationFlowId(flowId);
+  if (!parsed) {
+    return false;
+  }
+  if (parsed.tenantId && parsed.tenantId !== getTenantId()) {
+    return false;
+  }
+  return parsed.userId === userId;
 };
 
 const clearGetTokensFlow = async ({ flowManager, flowId, tokens }) => {
@@ -655,6 +674,46 @@ router.post('/oauth/cancel/:serverName', requireJwtAuth, async (req, res) => {
   } catch (error) {
     logger.error('[MCP OAuth Cancel] Failed to cancel OAuth flow', error);
     res.status(500).json({ error: 'Failed to cancel OAuth flow' });
+  }
+});
+
+/**
+ * Submit a response to an MCP elicitation request. Completes a pending
+ * elicitation flow so `MCPManager.callTool` can resume:
+ * - `action: 'accept' | 'decline' | 'cancel'` — form-mode `elicitation/create`
+ *   response (spec 2025-06-18); `content` carries the submitted field values.
+ * - `action: 'complete' | 'cancel'` — URL-mode card (either a `mode: 'url'`
+ *   `elicitation/create` request, or a -32042 URL-exception retry): `complete`
+ *   means "I've authorized — continue", which resumes/retries the tool call.
+ */
+router.post('/elicitation/:flowId', requireJwtAuth, async (req, res) => {
+  try {
+    const { flowId } = req.params;
+    const { action, content } = req.body ?? {};
+    const user = req.user;
+
+    if (!user?.id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    if (!action || !['accept', 'decline', 'cancel', 'complete'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    if (!canAccessElicitationFlow(flowId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const flowsCache = getLogStores(CacheKeys.FLOWS);
+    const flowManager = getFlowStateManager(flowsCache);
+    const ok = await flowManager.completeFlow(flowId, 'mcp_elicit', { action, content });
+    if (!ok) {
+      return res.status(404).json({ error: 'Flow not found' });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    logger.error('[MCP Elicitation] Failed to complete elicitation flow', error);
+    return res.status(500).json({ error: 'Failed to complete elicitation flow' });
   }
 });
 

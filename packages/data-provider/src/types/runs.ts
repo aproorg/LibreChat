@@ -11,6 +11,7 @@ export enum ContentTypes {
   INPUT_AUDIO = 'input_audio',
   AGENT_UPDATE = 'agent_update',
   SUMMARY = 'summary',
+  ELICITATION = 'elicitation',
   ERROR = 'error',
 }
 
@@ -40,6 +41,7 @@ export enum StepEvents {
   ON_SUMMARIZE_DELTA = 'on_summarize_delta',
   ON_SUMMARIZE_COMPLETE = 'on_summarize_complete',
   ON_SUBAGENT_UPDATE = 'on_subagent_update',
+  ON_ELICITATION = 'on_elicitation',
 }
 
 /** Token-tracking event names streamed to the client (separate from StepEvents dispatch). */

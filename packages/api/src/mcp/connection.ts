@@ -5,7 +5,10 @@ import { fetch as undiciFetch, Agent, ProxyAgent } from 'undici';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
-import { ResourceListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  ElicitRequestSchema,
+  ResourceListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   StdioClientTransport,
@@ -18,6 +21,7 @@ import type {
   Dispatcher,
 } from 'undici';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { Agents } from 'librechat-data-provider';
 import type { MCPOAuthTokens } from './oauth/types';
 import type * as t from './types';
 import { createSSRFSafeUndiciConnect, isSSRFTarget, resolveHostnameSSRF } from '~/auth';
@@ -1277,7 +1281,12 @@ export class MCPConnection extends EventEmitter {
         version: '1.2.3',
       },
       {
-        capabilities: {},
+        /** Declares support for both elicitation wire modes (spec 2025-11-25):
+         *  `form` (2025-06-18 `elicitation/create` with a JSON-schema form) and
+         *  `url` (out-of-band authorization link, either via `elicitation/create`
+         *  with `mode: 'url'`, or the -32042 `UrlElicitationRequired` exception
+         *  path on `tools/call`, which doesn't consult this capability at all). */
+        capabilities: { elicitation: { form: {}, url: {} } },
       },
     );
 
@@ -2414,6 +2423,31 @@ export class MCPConnection extends EventEmitter {
 
   public setOAuthTokens(tokens: MCPOAuthTokens): void {
     this.oauthTokens = tokens;
+  }
+
+  /**
+   * Registers the handler for server-initiated `elicitation/create` requests
+   * (both `mode: 'form'` and `mode: 'url'`). Does NOT handle the -32042
+   * `UrlElicitationRequired` exception path — that arrives as an error on the
+   * `tools/call` response itself and is handled in `MCPManager.callTool`.
+   */
+  public setElicitationHandler(
+    handler: (
+      params:
+        | { mode?: 'form'; message: string; requestedSchema: Agents.ElicitationSchema }
+        | { mode: 'url'; message: string; elicitationId: string; url: string },
+    ) => Promise<{
+      action: 'accept' | 'decline' | 'cancel';
+      content?: Record<string, string | number | boolean>;
+    }>,
+  ): void {
+    this.client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      return handler(
+        request.params as
+          | { mode?: 'form'; message: string; requestedSchema: Agents.ElicitationSchema }
+          | { mode: 'url'; message: string; elicitationId: string; url: string },
+      );
+    });
   }
 
   /**

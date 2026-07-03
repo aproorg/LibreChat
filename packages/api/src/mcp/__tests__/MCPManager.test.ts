@@ -21,6 +21,7 @@ jest.mock('@librechat/data-schemas', () => ({
     error: jest.fn(),
     debug: jest.fn(),
   },
+  getTenantId: jest.fn(),
 }));
 
 jest.mock('~/utils/graph', () => ({
@@ -2005,6 +2006,368 @@ describe('MCPManager', () => {
           user: mockUser,
         }),
       ).rejects.toThrow('requires a flowManager');
+    });
+  });
+
+  describe('callTool - URL Elicitation (-32042)', () => {
+    const mockUser: Partial<IUser> = { id: 'user-url-elicit' };
+
+    function makeUrlElicitationError(overrides: Partial<{ message: string; url: string }> = {}) {
+      const error = new Error('URL elicitation required') as Error & {
+        code: number;
+        data: {
+          elicitations: Array<{
+            mode: string;
+            message: string;
+            url: string;
+            elicitationId: string;
+          }>;
+        };
+      };
+      error.code = -32042;
+      error.data = {
+        elicitations: [
+          {
+            mode: 'url',
+            message: overrides.message ?? 'Please authorize access to your account',
+            url: overrides.url ?? 'https://auth.example.com/authorize?token=abc',
+            elicitationId: 'elicit-1',
+          },
+        ],
+      };
+      return error;
+    }
+
+    let mockFlowManager: {
+      createFlow: jest.Mock;
+    };
+    let mockConnection: MCPConnection;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockFlowManager = { createFlow: jest.fn() };
+      (mockRegistryInstance.getServerConfig as jest.Mock).mockResolvedValue({
+        type: 'stdio',
+        command: 'node',
+        args: ['server.js'],
+      });
+    });
+
+    it('retries tools/call once after the user completes the -32042 authorization flow', async () => {
+      const urlError = makeUrlElicitationError();
+      mockConnection = {
+        isConnected: jest.fn().mockResolvedValue(true),
+        setRequestHeaders: jest.fn(),
+        setElicitationHandler: jest.fn(),
+        timeout: 30000,
+        client: {
+          request: jest
+            .fn()
+            .mockRejectedValueOnce(urlError)
+            .mockResolvedValueOnce({
+              content: [{ type: 'text', text: 'ok after auth' }],
+              isError: false,
+            }),
+        },
+      } as unknown as MCPConnection;
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockFlowManager.createFlow.mockResolvedValue({ action: 'complete' });
+
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      const result = await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      expect(elicitationStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'url',
+          message: 'Please authorize access to your account',
+          url: 'https://auth.example.com/authorize?token=abc',
+        }),
+      );
+      expect(mockFlowManager.createFlow).toHaveBeenCalledWith(
+        expect.any(String),
+        'mcp_elicit',
+        {},
+        undefined,
+      );
+      expect(mockConnection.client.request).toHaveBeenCalledTimes(2);
+      expect(result).toBeDefined();
+    });
+
+    it('fails the tool call with the elicitation message and URL when the user cancels', async () => {
+      const urlError = makeUrlElicitationError();
+      mockConnection = {
+        isConnected: jest.fn().mockResolvedValue(true),
+        setRequestHeaders: jest.fn(),
+        setElicitationHandler: jest.fn(),
+        timeout: 30000,
+        client: { request: jest.fn().mockRejectedValueOnce(urlError) },
+      } as unknown as MCPConnection;
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockFlowManager.createFlow.mockResolvedValue({ action: 'cancel' });
+
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      await expect(
+        manager.callTool({
+          user: mockUser as IUser,
+          serverName,
+          toolName: 'test_tool',
+          provider: 'openai',
+          flowManager: mockFlowManager as unknown as Parameters<
+            typeof manager.callTool
+          >[0]['flowManager'],
+          elicitationStart,
+        }),
+      ).rejects.toThrow(
+        /Please authorize access to your account[\s\S]*https:\/\/auth\.example\.com/,
+      );
+      expect(mockConnection.client.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails the tool call with the elicitation message and URL when the flow times out', async () => {
+      const urlError = makeUrlElicitationError();
+      mockConnection = {
+        isConnected: jest.fn().mockResolvedValue(true),
+        setRequestHeaders: jest.fn(),
+        setElicitationHandler: jest.fn(),
+        timeout: 30000,
+        client: { request: jest.fn().mockRejectedValueOnce(urlError) },
+      } as unknown as MCPConnection;
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockFlowManager.createFlow.mockRejectedValue(new Error('mcp_elicit flow timed out'));
+
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      await expect(
+        manager.callTool({
+          user: mockUser as IUser,
+          serverName,
+          toolName: 'test_tool',
+          provider: 'openai',
+          flowManager: mockFlowManager as unknown as Parameters<
+            typeof manager.callTool
+          >[0]['flowManager'],
+          elicitationStart,
+        }),
+      ).rejects.toThrow(
+        /Please authorize access to your account[\s\S]*https:\/\/auth\.example\.com[\s\S]*timed out/,
+      );
+    });
+
+    it('does not intercept the -32042 error when elicitationStart is not provided', async () => {
+      const urlError = makeUrlElicitationError();
+      mockConnection = {
+        isConnected: jest.fn().mockResolvedValue(true),
+        setRequestHeaders: jest.fn(),
+        setElicitationHandler: jest.fn(),
+        timeout: 30000,
+        client: { request: jest.fn().mockRejectedValueOnce(urlError) },
+      } as unknown as MCPConnection;
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      await expect(
+        manager.callTool({
+          user: mockUser as IUser,
+          serverName,
+          toolName: 'test_tool',
+          provider: 'openai',
+          flowManager: mockFlowManager as unknown as Parameters<
+            typeof manager.callTool
+          >[0]['flowManager'],
+        }),
+      ).rejects.toBe(urlError);
+      expect(mockConnection.setElicitationHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('callTool - Elicitation (form/url elicitation/create)', () => {
+    const mockUser: Partial<IUser> = { id: 'user-elicit' };
+
+    const mockFlowManager = {
+      getState: jest.fn(),
+      setState: jest.fn(),
+      clearState: jest.fn(),
+      createFlow: jest.fn().mockResolvedValue({
+        action: 'accept',
+        content: { name: 'Alice' },
+      }),
+    };
+
+    const mockConnection = {
+      isConnected: jest.fn().mockResolvedValue(true),
+      setRequestHeaders: jest.fn(),
+      setElicitationHandler: jest.fn(),
+      timeout: 30000,
+      client: {
+        request: jest.fn().mockResolvedValue({
+          content: [{ type: 'text', text: 'Elicitation result' }],
+          isError: false,
+        }),
+      },
+    } as unknown as MCPConnection;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      (mockRegistryInstance.getServerConfig as jest.Mock).mockResolvedValue({
+        type: 'stdio',
+        command: 'node',
+        args: ['server.js'],
+      });
+    });
+
+    it('registers an elicitation handler on the connection when elicitationStart is provided', async () => {
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      expect(mockConnection.setElicitationHandler).toHaveBeenCalledTimes(1);
+      expect(mockConnection.setElicitationHandler).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it('forwards form-mode elicitation/create requests and resolves via the flow manager', async () => {
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockFlowManager.createFlow.mockResolvedValueOnce({
+        action: 'accept',
+        content: { name: 'Alice' },
+      });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      const registeredHandler = (mockConnection.setElicitationHandler as jest.Mock).mock
+        .calls[0][0];
+      const requestedSchema = { type: 'object', properties: { name: { type: 'string' } } };
+      const result = await registeredHandler({ message: 'Please fill this in', requestedSchema });
+
+      expect(elicitationStart).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'form', message: 'Please fill this in', requestedSchema }),
+      );
+      expect(result).toEqual({ action: 'accept', content: { name: 'Alice' } });
+    });
+
+    it('forwards url-mode elicitation/create requests and maps a "complete" flow result to "accept"', async () => {
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockFlowManager.createFlow.mockResolvedValueOnce({ action: 'complete' });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      const registeredHandler = (mockConnection.setElicitationHandler as jest.Mock).mock
+        .calls[0][0];
+      const result = await registeredHandler({
+        mode: 'url',
+        message: 'Please authorize',
+        elicitationId: 'elicit-2',
+        url: 'https://auth.example.com',
+      });
+
+      expect(elicitationStart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'url',
+          message: 'Please authorize',
+          url: 'https://auth.example.com',
+          requestedSchema: undefined,
+        }),
+      );
+      /** ElicitResultSchema only accepts accept/decline/cancel — 'complete' isn't a
+       *  valid protocol response, so it must be mapped onto 'accept'. */
+      expect(result).toEqual({ action: 'accept', content: undefined });
+    });
+
+    it('uses extended timeout when elicitationStart is provided', async () => {
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      const elicitationStart = jest.fn().mockResolvedValue(undefined);
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+        elicitationStart,
+      });
+
+      expect(mockConnection.client.request).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({ timeout: 10 * 60 * 1000 }),
+      );
+    });
+
+    it('uses default timeout when elicitationStart is not provided', async () => {
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+
+      await manager.callTool({
+        user: mockUser as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+      });
+
+      expect(mockConnection.setElicitationHandler).not.toHaveBeenCalled();
+      expect(mockConnection.client.request).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({ timeout: mockConnection.timeout }),
+      );
     });
   });
 });

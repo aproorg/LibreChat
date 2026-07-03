@@ -378,6 +378,33 @@ function createOAuthCallback({ runStepEmitter, runStepDeltaEmitter }) {
 }
 
 /**
+ * Emits the `on_elicitation` SSE event so the chat UI can render an
+ * authorization/form card. Covers both wire mechanisms: a `mode: 'form'|'url'`
+ * `elicitation/create` request, and the -32042 URL-exception path (always
+ * `mode: 'url'`, no `requestedSchema`).
+ * @param {object} params
+ * @param {ServerResponse} params.res - The Express response object for sending events.
+ * @param {string} params.stepId - The ID of the step.
+ * @param {string | null} [params.streamId] - The stream ID for resumable mode.
+ * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; requestedSchema?: object; url?: string }) => Promise<void>}
+ */
+function createElicitationStart({ res, stepId, streamId = null }) {
+  return async function ({ flowId, mode, message, requestedSchema, url }) {
+    const data = {
+      id: stepId,
+      runId: Constants.USE_PRELIM_RESPONSE_MESSAGE_ID,
+      elicitation: { flowId, mode, message, requestedSchema, url },
+    };
+    const eventData = { event: 'on_elicitation', data };
+    if (streamId) {
+      await GenerationJobManager.emitChunk(streamId, eventData);
+    } else {
+      sendEvent(res, eventData);
+    }
+  };
+}
+
+/**
  * @param {Object} params
  * @param {ServerResponse} params.res - The Express response object for sending events.
  * @param {IUser} params.user - The user from the request object.
@@ -807,6 +834,11 @@ function createToolInstance({
         toolCall,
         streamId,
       });
+      const elicitationStart = createElicitationStart({
+        res,
+        stepId,
+        streamId,
+      });
 
       if (derivedSignal) {
         const tenantId = config?.configurable?.user?.tenantId ?? getTenantId();
@@ -840,6 +872,7 @@ function createToolInstance({
         },
         oauthStart,
         oauthEnd,
+        elicitationStart,
         graphTokenResolver: getGraphApiToken,
         oboTokenResolver: exchangeOboToken,
         oboTrustChecker: createOboTrustChecker(),

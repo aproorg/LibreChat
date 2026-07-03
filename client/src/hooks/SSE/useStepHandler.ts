@@ -54,7 +54,8 @@ type TStepEvent =
   | { event: StepEvents.ON_SUMMARIZE_START; data: Agents.SummarizeStartEvent }
   | { event: StepEvents.ON_SUMMARIZE_DELTA; data: Agents.SummarizeDeltaEvent }
   | { event: StepEvents.ON_SUMMARIZE_COMPLETE; data: Agents.SummarizeCompleteEvent }
-  | { event: StepEvents.ON_SUBAGENT_UPDATE; data: SubagentUpdateEvent };
+  | { event: StepEvents.ON_SUBAGENT_UPDATE; data: SubagentUpdateEvent }
+  | { event: StepEvents.ON_ELICITATION; data: Agents.ElicitationEvent };
 
 type MessageDeltaUpdate = { type: ContentTypes.TEXT; text: string; tool_call_ids?: string[] };
 
@@ -965,6 +966,48 @@ export default function useStepHandler({
         }
       } else if (stepEvent.event === StepEvents.ON_SUBAGENT_UPDATE) {
         applySubagentUpdate(stepEvent.data);
+      } else if (stepEvent.event === StepEvents.ON_ELICITATION) {
+        const { id: eventStepId, runId: eventRunId, elicitation } = stepEvent.data;
+        const runStep = stepMap.current.get(eventStepId);
+        let responseMessageId = runStep?.runId ?? eventRunId ?? '';
+        if (responseMessageId === Constants.USE_PRELIM_RESPONSE_MESSAGE_ID) {
+          responseMessageId = submission?.initialResponse?.messageId ?? '';
+          parentMessageId = submission?.initialResponse?.parentMessageId ?? '';
+        }
+        if (!responseMessageId) {
+          console.warn('No message id found in elicitation event');
+          return;
+        }
+
+        const response = messageMap.current.get(responseMessageId);
+        if (!response) {
+          console.warn('[on_elicitation] No response message found for', responseMessageId);
+          return;
+        }
+
+        const contentPart: Agents.ElicitationContent = {
+          type: ContentTypes.ELICITATION,
+          elicitation,
+        };
+        /** Elicitation content is a standalone card, not an incremental delta onto an
+         *  existing content-typed slot (e.g. the originating tool call) — append it as
+         *  its own part, deduping by flowId so a re-emitted event replaces in place. */
+        const existingContent = (response.content ?? []) as TMessageContentParts[];
+        const updatedContentArr = [
+          ...existingContent.filter(
+            (part) =>
+              part?.type !== ContentTypes.ELICITATION ||
+              (part as Agents.ElicitationContent).elicitation?.flowId !== elicitation.flowId,
+          ),
+          contentPart,
+        ];
+        const updatedResponse = { ...response, content: updatedContentArr };
+        messageMap.current.set(responseMessageId, updatedResponse);
+        setMessages(
+          mergeResponseMessage(messages, updatedResponse, responseMessageId, {
+            ensureUserMessage: true,
+          }),
+        );
       } else if (stepEvent.event === StepEvents.ON_SUMMARIZE_START) {
         announcePolite({ message: 'summarize_started', isStatus: true });
       } else if (stepEvent.event === StepEvents.ON_SUMMARIZE_DELTA) {

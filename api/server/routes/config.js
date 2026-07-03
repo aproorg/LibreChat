@@ -331,6 +331,12 @@ router.get('/', async function (req, res) {
       payload.buildInfo = buildInfo;
     }
 
+    if (appConfig?.mcpSettings) {
+      payload.mcpSettings = {
+        elicitationMode: appConfig.mcpSettings.elicitationMode ?? 'inline',
+      };
+    }
+
     if (!payload.allowAccountDeletion) {
       try {
         const userId = req.user.id ?? req.user._id?.toString();

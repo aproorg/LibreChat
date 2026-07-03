@@ -1442,6 +1442,8 @@ export type TStartupConfig = {
     }
   >;
   mcpPlaceholder?: string;
+  /** Surfaced from the admin `mcpSettings` config so the client can gate elicitation UI. */
+  mcpSettings?: { elicitationMode?: 'inline' | 'standalone' };
   conversationImportMaxFileSize?: number;
   buildInfo?: {
     commit?: string | null;
@@ -1722,6 +1724,7 @@ export const configSchema = z.object({
     .object({
       allowedDomains: z.array(z.string()).optional(),
       allowedAddresses: allowedAddressesSchema,
+      elicitationMode: z.enum(['inline', 'standalone']).default('inline'),
     })
     .optional(),
   interface: interfaceSchema,

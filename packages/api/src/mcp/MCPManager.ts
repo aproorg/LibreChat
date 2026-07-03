@@ -1,9 +1,10 @@
 import pick from 'lodash/pick';
-import { logger } from '@librechat/data-schemas';
+import { logger, getTenantId } from '@librechat/data-schemas';
 import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { TokenMethods, IUser } from '@librechat/data-schemas';
+import type { Agents } from 'librechat-data-provider';
 import type { OboTokenResolver, OboTrustChecker } from '~/mcp/oauth/obo';
 import type { GraphTokenResolver } from '~/utils/graph';
 import type { FlowStateManager } from '~/flow/manager';
@@ -18,6 +19,12 @@ import {
   requiresOAuthMachinery,
   requiresUserScopedConnection,
 } from './utils';
+import type { ElicitationFlowResult } from './elicitation';
+import {
+  generateElicitationFlowId,
+  isElicitationSuccess,
+  toElicitResultAction,
+} from './elicitation';
 import { MCPServersInitializer } from './registry/MCPServersInitializer';
 import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
 import { MCPServerInspector } from './registry/MCPServerInspector';
@@ -29,6 +36,29 @@ import { preProcessGraphTokens } from '~/utils/graph';
 import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
 import { processMCPEnv } from '~/utils/env';
+
+/** Extended tool-call timeout when an elicitation (form/url `elicitation/create`,
+ *  or a -32042 URL-exception retry) may pause execution waiting on the user. */
+const ELICITATION_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Raw shape of the `data` payload on a JSON-RPC error with code -32042
+ *  (`ErrorCode.UrlElicitationRequired`), whether the SDK deserialized it into an
+ *  `UrlElicitationRequiredError` or a gateway-proxied plain `McpError`. */
+type UrlElicitationErrorData = {
+  elicitations?: Array<{ mode?: string; message: string; url: string; elicitationId: string }>;
+};
+
+/** Matches both `UrlElicitationRequiredError` instances and any error object
+ *  carrying JSON-RPC code -32042 (e.g. proxied through a gateway without
+ *  preserving the SDK's error subclass). */
+function isUrlElicitationError(
+  error: unknown,
+): error is { code: number; data?: UrlElicitationErrorData } {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  return (error as { code?: unknown }).code === ErrorCode.UrlElicitationRequired;
+}
 
 function createOboToolCallErrorMessage(
   logPrefix: string,
@@ -353,6 +383,7 @@ Please follow these instructions when using tools from the respective MCP server
     flowManager,
     oauthStart,
     oauthEnd,
+    elicitationStart,
     customUserVars,
     graphTokenResolver,
     oboTokenResolver,
@@ -373,6 +404,23 @@ Please follow these instructions when using tools from the respective MCP server
     flowManager: FlowStateManager<MCPOAuthTokens | null>;
     oauthStart?: t.OAuthStartHandler;
     oauthEnd?: () => Promise<void>;
+    /**
+     * When provided: (1) declares support for MCP elicitation, extending the
+     * `tools/call` timeout to {@link ELICITATION_TIMEOUT_MS}; (2) registers a
+     * handler for server-initiated `elicitation/create` requests (form/url
+     * modes); and (3) catches the -32042 `UrlElicitationRequired` exception on
+     * the initial `tools/call` response and retries once after the user
+     * authorizes. Called once per elicitation with enough context to render an
+     * in-chat card; resolution arrives via `flowManager` (same pattern as
+     * `oauthStart`/OAuth).
+     */
+    elicitationStart?: (params: {
+      flowId: string;
+      mode: 'form' | 'url';
+      message: string;
+      requestedSchema?: Agents.ElicitationSchema;
+      url?: string;
+    }) => Promise<void>;
     graphTokenResolver?: GraphTokenResolver;
     oboTokenResolver?: OboTokenResolver;
     oboTrustChecker?: OboTrustChecker;
@@ -513,21 +561,109 @@ Please follow these instructions when using tools from the respective MCP server
 
       connection.setRequestHeaders(resolvedHeaders);
 
-      const result = await connection.client.request(
-        {
-          method: 'tools/call',
-          params: {
-            name: toolName,
-            arguments: toolArguments,
-          },
+      if (elicitationStart && userId) {
+        connection.setElicitationHandler(async (params) => {
+          const mode = params.mode === 'url' ? 'url' : 'form';
+          const flowId = generateElicitationFlowId(userId, serverName, toolName, getTenantId());
+          logger.debug(
+            `${logPrefix}[${toolName}] Elicitation requested (${mode}), flowId: ${flowId}`,
+          );
+          await elicitationStart({
+            flowId,
+            mode,
+            message: params.message,
+            requestedSchema:
+              mode === 'form'
+                ? (params as { requestedSchema: Agents.ElicitationSchema }).requestedSchema
+                : undefined,
+            url: mode === 'url' ? (params as { url: string }).url : undefined,
+          });
+          const flowResult = await (
+            flowManager as unknown as FlowStateManager<ElicitationFlowResult>
+          ).createFlow(flowId, 'mcp_elicit', {}, options?.signal);
+          logger.debug(`${logPrefix}[${toolName}] Elicitation resolved: ${flowResult.action}`);
+          return {
+            action: toElicitResultAction(flowResult.action),
+            content: flowResult.content,
+          };
+        });
+      }
+
+      const requestParams = {
+        method: 'tools/call' as const,
+        params: {
+          name: toolName,
+          arguments: toolArguments,
         },
-        CallToolResultSchema,
-        {
-          timeout: connection.timeout,
-          resetTimeoutOnProgress: true,
-          ...options,
-        },
-      );
+      };
+      const requestOptions = {
+        timeout: elicitationStart ? ELICITATION_TIMEOUT_MS : connection.timeout,
+        resetTimeoutOnProgress: true,
+        ...options,
+      };
+
+      let result: unknown;
+      try {
+        result = await connection.client.request(
+          requestParams,
+          CallToolResultSchema,
+          requestOptions,
+        );
+      } catch (toolCallError) {
+        if (!elicitationStart || !userId || !isUrlElicitationError(toolCallError)) {
+          throw toolCallError;
+        }
+
+        /**
+         * URL-exception mode (spec 2025-11-25): the server rejected `tools/call`
+         * with JSON-RPC code -32042 instead of issuing a normal `elicitation/create`
+         * request. Surface the authorization link, wait for the user to complete
+         * (or cancel) it via `flowManager`, then retry the SAME `tools/call` once.
+         */
+        const first = toolCallError.data?.elicitations?.[0];
+        if (!first) {
+          throw toolCallError;
+        }
+
+        const flowId = generateElicitationFlowId(userId, serverName, toolName, getTenantId());
+        logger.info(
+          `${logPrefix}[${toolName}] URL elicitation required (-32042), flowId: ${flowId}`,
+        );
+        await elicitationStart({
+          flowId,
+          mode: 'url',
+          message: first.message,
+          url: first.url,
+        });
+
+        let flowResult: ElicitationFlowResult;
+        try {
+          flowResult = await (
+            flowManager as unknown as FlowStateManager<ElicitationFlowResult>
+          ).createFlow(flowId, 'mcp_elicit', {}, options?.signal);
+        } catch (flowError) {
+          const reason = flowError instanceof Error ? flowError.message : String(flowError);
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `${first.message} Open ${first.url} to authorize, then retry. (${reason})`,
+          );
+        }
+
+        if (!isElicitationSuccess(flowResult.action)) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `${first.message} Authorization was cancelled. Open ${first.url} to authorize, then retry.`,
+          );
+        }
+
+        logger.debug(`${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`);
+        result = await connection.client.request(
+          requestParams,
+          CallToolResultSchema,
+          requestOptions,
+        );
+      }
+
       if (userId) {
         this.updateUserLastActivity(userId);
       }
