@@ -1,6 +1,15 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { dataService } from 'librechat-data-provider';
-import { Button, Input, Label } from '@librechat/client';
+import { Button, Input, Label, Spinner } from '@librechat/client';
+import {
+  ShieldCheck,
+  ClipboardList,
+  ExternalLink,
+  RotateCw,
+  CheckCircle2,
+  XCircle,
+} from 'lucide-react';
 import type { Agents } from 'librechat-data-provider';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import { useLocalize } from '~/hooks';
@@ -47,6 +56,57 @@ function getStatusText(
   return localize('com_ui_elicitation_declined');
 }
 
+/** Header chrome shared by both modes: a tinted circular icon, a title, and the
+ *  requesting server/tool identity. Keeps the card visually native to LibreChat's
+ *  other in-chat system cards (see `ToolCall` OAuth sign-in). */
+function CardHeader({
+  icon,
+  title,
+  identity,
+}: {
+  icon: ReactNode;
+  title: string;
+  identity?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-tertiary text-text-secondary">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-text-primary">{title}</p>
+        {identity && <p className="truncate text-xs text-text-secondary">{identity}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Button label with a stable footprint: when `acting`, the label is kept in the
+ *  layout but hidden, and the Spinner is overlaid — so a click never shifts the row. */
+function ActionLabel({
+  label,
+  icon,
+  acting,
+}: {
+  label: string;
+  icon?: ReactNode;
+  acting: boolean;
+}) {
+  return (
+    <span className="relative inline-flex items-center justify-center gap-2">
+      <span className={cn('inline-flex items-center gap-2', acting && 'invisible')}>
+        {icon}
+        {label}
+      </span>
+      {acting && (
+        <span className="absolute inset-0 flex items-center justify-center">
+          <Spinner size={16} />
+        </span>
+      )}
+    </span>
+  );
+}
+
 /**
  * Renders an in-chat card for MCP elicitation. Covers both wire mechanisms:
  * - `mode: 'form'` — a 2025-06-18 `elicitation/create` request; renders the
@@ -64,6 +124,8 @@ export default function ElicitationForm({
   flowId,
   mode,
   message,
+  serverName,
+  toolName,
   url,
   requestedSchema,
   action: initialAction,
@@ -74,16 +136,26 @@ export default function ElicitationForm({
   const [values, setValues] = useState<Record<string, FieldValue>>(() =>
     getDefaultValues(properties),
   );
-  const [submitting, setSubmitting] = useState(false);
+  const [pendingAction, setPendingAction] = useState<ElicitationAction | undefined>();
+  const [sendFailed, setSendFailed] = useState(false);
+  const [urlOpened, setUrlOpened] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [resolvedAction, setResolvedAction] = useState<ElicitationAction | undefined>(
     initialAction,
   );
 
+  const submitting = pendingAction != null;
+  const identity = [serverName, toolName].filter(Boolean).join(' · ') || undefined;
+
   const fields: ElicitationField[] = Object.entries(properties).map(([key, schema]) => ({
     key,
     schema,
   }));
+
+  // Form mode: show the server's message, or a fallback so a schema-less request
+  // never renders bare buttons over blank space.
+  const formIntro =
+    message || (fields.length === 0 ? localize('com_ui_elicitation_form_empty') : undefined);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -119,7 +191,8 @@ export default function ElicitationForm({
     if (action === 'accept' && !isUrlMode && !validate()) {
       return;
     }
-    setSubmitting(true);
+    setSendFailed(false);
+    setPendingAction(action);
     try {
       const content =
         action === 'accept' && !isUrlMode
@@ -136,36 +209,51 @@ export default function ElicitationForm({
       await dataService.respondToElicitation(flowId, { action, content });
       setResolvedAction(action);
     } catch {
-      // Server-side flow will time out on its own; leave the card interactive
-      // so the user can retry the click.
+      // Surface an inline retry affordance; the server-side flow keeps waiting
+      // (or times out on its own), so the card stays interactive for a retry.
+      setSendFailed(true);
     } finally {
-      setSubmitting(false);
+      setPendingAction(undefined);
     }
   };
 
-  const requiredMark = (key: string) =>
-    requestedSchema?.required?.includes(key) ? <span className="ml-1 text-red-500">*</span> : null;
+  const requiredMark = (required: boolean) =>
+    required ? (
+      <span aria-hidden="true" className="ml-1 text-destructive">
+        *
+      </span>
+    ) : null;
 
   const renderField = ({ key, schema }: ElicitationField) => {
     const label = schema.title ?? key;
     const fieldId = `elicitation-${flowId}-${key}`;
     const error = errors[key];
+    const required = requestedSchema?.required?.includes(key) ?? false;
+    const descId = schema.description ? `${fieldId}-description` : undefined;
+    const errId = error ? `${fieldId}-error` : undefined;
+    const describedBy = [descId, errId].filter(Boolean).join(' ') || undefined;
 
     if (schema.enum) {
       return (
         <div key={key} className="flex flex-col gap-1">
           <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
             {label}
-            {requiredMark(key)}
+            {requiredMark(required)}
           </Label>
           {schema.description && (
-            <p className="text-xs text-text-secondary">{schema.description}</p>
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
           )}
           <select
             id={fieldId}
             value={String(values[key] ?? '')}
             onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
             disabled={submitting}
+            required={required}
+            aria-required={required || undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
             className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-ring-primary"
           >
             <option value="">{localize('com_ui_select')}</option>
@@ -175,30 +263,46 @@ export default function ElicitationForm({
               </option>
             ))}
           </select>
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && (
+            <p id={errId} className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
       );
     }
 
     if (schema.type === 'boolean') {
       return (
-        <div key={key} className="flex items-center gap-2">
-          <input
-            id={fieldId}
-            type="checkbox"
-            checked={Boolean(values[key])}
-            onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.checked }))}
-            disabled={submitting}
-            className="h-4 w-4 rounded border-border-light accent-ring-primary"
-          />
-          <Label htmlFor={fieldId} className="text-sm text-text-primary">
-            {label}
-            {requiredMark(key)}
-          </Label>
+        <div key={key} className="flex flex-col gap-1">
+          {/* Nested label grows the click target past the 16px box toward ~28px. */}
+          <label htmlFor={fieldId} className="flex cursor-pointer items-center gap-2 py-1.5">
+            <input
+              id={fieldId}
+              type="checkbox"
+              checked={Boolean(values[key])}
+              onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.checked }))}
+              disabled={submitting}
+              aria-required={required || undefined}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={describedBy}
+              className="h-4 w-4 rounded border-border-light accent-ring-primary"
+            />
+            <span className="text-sm text-text-primary">
+              {label}
+              {requiredMark(required)}
+            </span>
+          </label>
           {schema.description && (
-            <p className="text-xs text-text-secondary">{schema.description}</p>
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
           )}
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && (
+            <p id={errId} className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
       );
     }
@@ -207,88 +311,194 @@ export default function ElicitationForm({
       <div key={key} className="flex flex-col gap-1">
         <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
           {label}
-          {requiredMark(key)}
+          {requiredMark(required)}
         </Label>
-        {schema.description && <p className="text-xs text-text-secondary">{schema.description}</p>}
+        {schema.description && (
+          <p id={descId} className="text-xs text-text-secondary">
+            {schema.description}
+          </p>
+        )}
         <Input
           id={fieldId}
           type={schema.type === 'number' || schema.type === 'integer' ? 'number' : 'text'}
           value={String(values[key] ?? '')}
           onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
           disabled={submitting}
+          required={required}
+          aria-required={required || undefined}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
           min={schema.minimum}
           max={schema.maximum}
           minLength={schema.minLength}
           maxLength={schema.maxLength}
-          className={cn(error && 'border-red-500 focus-visible:ring-red-500')}
+          className={cn(error && 'border-border-destructive focus-visible:ring-border-destructive')}
         />
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && (
+          <p id={errId} className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
       </div>
     );
   };
 
   if (resolvedAction) {
+    const succeeded = resolvedAction === 'accept' || resolvedAction === 'complete';
     return (
-      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
-        <p className="text-sm text-text-secondary">{getStatusText(resolvedAction, localize)}</p>
+      <div
+        aria-live="polite"
+        className="my-2 flex items-center gap-2.5 rounded-xl border border-border-light bg-surface-secondary p-3"
+      >
+        {succeeded ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" aria-hidden="true" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+        )}
+        <span className="text-sm text-text-secondary">
+          {getStatusText(resolvedAction, localize)}
+        </span>
       </div>
     );
   }
 
+  const errorLine = sendFailed ? (
+    <p role="alert" className="text-xs text-destructive">
+      {localize('com_ui_elicitation_error')}
+    </p>
+  ) : null;
+
   if (isUrlMode) {
     return (
-      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4 shadow-md">
-        <p className="mb-4 text-sm text-text-primary">{message}</p>
-        <div className="mb-4">
-          <Button asChild variant="submit" size="sm">
-            <a href={url} target="_blank" rel="noopener noreferrer">
-              {localize('com_ui_elicitation_open_url')}
-            </a>
-          </Button>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            disabled={submitting}
-            onClick={() => submitAction('complete')}
-          >
-            {localize('com_ui_elicitation_continue')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={submitting}
-            onClick={() => submitAction('cancel')}
-          >
-            {localize('com_ui_elicitation_cancel')}
-          </Button>
+      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
+        <div className="flex flex-col gap-3">
+          <CardHeader
+            icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+            title={localize('com_ui_elicitation_title')}
+            identity={identity}
+          />
+          <p className="text-sm text-text-secondary">{message}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {!urlOpened ? (
+              <>
+                <Button
+                  asChild
+                  variant="submit"
+                  size="sm"
+                  aria-disabled={submitting || undefined}
+                  className={cn(submitting && 'pointer-events-none opacity-50')}
+                >
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    tabIndex={submitting ? -1 : undefined}
+                    onClick={() => setUrlOpened(true)}
+                  >
+                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    {localize('com_ui_elicitation_open_url')}
+                  </a>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => submitAction('complete')}
+                >
+                  <ActionLabel
+                    label={localize('com_ui_elicitation_continue')}
+                    acting={pendingAction === 'complete'}
+                  />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="submit"
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => submitAction('complete')}
+                >
+                  <ActionLabel
+                    label={localize('com_ui_elicitation_continue')}
+                    acting={pendingAction === 'complete'}
+                  />
+                </Button>
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  aria-disabled={submitting || undefined}
+                  className={cn(submitting && 'pointer-events-none opacity-50')}
+                >
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    tabIndex={submitting ? -1 : undefined}
+                    onClick={() => setUrlOpened(true)}
+                  >
+                    <RotateCw className="h-4 w-4" aria-hidden="true" />
+                    {localize('com_ui_elicitation_reopen')}
+                  </a>
+                </Button>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={submitting}
+              onClick={() => submitAction('cancel')}
+            >
+              <ActionLabel
+                label={localize('com_ui_elicitation_cancel')}
+                acting={pendingAction === 'cancel'}
+              />
+            </Button>
+          </div>
+          {errorLine}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4 shadow-md">
-      <p className="mb-4 text-sm text-text-primary">{message}</p>
-      <div className="flex flex-col gap-3">{fields.map((field) => renderField(field))}</div>
-      <div className="mt-4 flex gap-2">
-        <Button
-          variant="default"
-          size="sm"
-          disabled={submitting}
-          onClick={() => submitAction('accept')}
-        >
-          {localize('com_ui_elicitation_submit')}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={submitting}
-          onClick={() => submitAction('decline')}
-        >
-          {localize('com_ui_elicitation_decline')}
-        </Button>
+    <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
+      <div className="flex flex-col gap-3">
+        <CardHeader
+          icon={<ClipboardList className="h-4 w-4" aria-hidden="true" />}
+          title={localize('com_ui_elicitation_form_title')}
+          identity={identity}
+        />
+        {formIntro && <p className="text-sm text-text-secondary">{formIntro}</p>}
+        {fields.length > 0 && (
+          <div className="flex flex-col gap-3">{fields.map((field) => renderField(field))}</div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="submit"
+            size="sm"
+            disabled={submitting}
+            onClick={() => submitAction('accept')}
+          >
+            <ActionLabel
+              label={localize('com_ui_elicitation_submit')}
+              acting={pendingAction === 'accept'}
+            />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={submitting}
+            onClick={() => submitAction('decline')}
+          >
+            <ActionLabel
+              label={localize('com_ui_elicitation_decline')}
+              acting={pendingAction === 'decline'}
+            />
+          </Button>
+        </div>
+        {errorLine}
       </div>
     </div>
   );
