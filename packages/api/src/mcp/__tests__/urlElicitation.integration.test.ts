@@ -131,9 +131,7 @@ describe('URL elicitation (-32042) integration', () => {
     connection = built.connection;
 
     const init = server.state.initializeRequest;
-    // Ground truth of what the real client stack put on the wire — reported verbatim.
-    console.log('CAPTURED_INITIALIZE', JSON.stringify(init, null, 2));
-
+    // Ground truth of what the real client stack put on the wire.
     expect(init).toBeDefined();
     // URL-mode elicitation passthrough is gated on version 2025-11-25 + capability.
     expect(init?.protocolVersion).toBe('2025-11-25');
