@@ -2093,12 +2093,16 @@ describe('MCPManager', () => {
           mode: 'url',
           message: 'Please authorize access to your account',
           url: 'https://auth.example.com/authorize?token=abc',
+          elicitationId: 'elicit-1',
         }),
       );
+      /** The server-supplied elicitationId is retained in the flow's persisted
+       *  metadata alongside the generated flowId (currently unused, sets up
+       *  future notifications/elicitation/complete correlation). */
       expect(mockFlowManager.createFlow).toHaveBeenCalledWith(
         expect.any(String),
         'mcp_elicit',
-        {},
+        { elicitationId: 'elicit-1' },
         undefined,
       );
       expect(mockConnection.client.request).toHaveBeenCalledTimes(2);
@@ -2358,11 +2362,20 @@ describe('MCPManager', () => {
           message: 'Please authorize',
           url: 'https://auth.example.com',
           requestedSchema: undefined,
+          elicitationId: 'elicit-2',
         }),
       );
       /** ElicitResultSchema only accepts accept/decline/cancel — 'complete' isn't a
        *  valid protocol response, so it must be mapped onto 'accept'. */
       expect(result).toEqual({ action: 'accept', content: undefined });
+      /** The server-supplied elicitationId is retained in the flow's persisted
+       *  metadata alongside the generated flowId. */
+      expect(mockFlowManager.createFlow).toHaveBeenCalledWith(
+        expect.any(String),
+        'mcp_elicit',
+        { requestedSchema: undefined, elicitationId: 'elicit-2' },
+        undefined,
+      );
     });
 
     it('extends the tool-call timeout to outlive the flow TTL when elicitationStart is provided', async () => {

@@ -253,6 +253,30 @@ describe('createElicitationStart', () => {
       expect.objectContaining({ requestedSchema, streamId: 'stream-ctx', stepId: 'step-ctx' }),
     );
   });
+
+  it('retains the server-supplied elicitationId in the flow context without leaking it onto the SSE event', async () => {
+    const start = createElicitationStart({ res: {}, stepId: 'step-eid', streamId: 'stream-eid' });
+
+    await start({
+      flowId: 'flow-eid',
+      mode: 'url',
+      message: 'Authorize',
+      url: 'https://x/auth',
+      elicitationId: 'elicit-9',
+    });
+
+    expect(getElicitationFlowContext('flow-eid')).toEqual(
+      expect.objectContaining({ elicitationId: 'elicit-9' }),
+    );
+    expect(GenerationJobManager.emitChunk).toHaveBeenCalledWith(
+      'stream-eid',
+      expect.objectContaining({
+        data: expect.objectContaining({
+          elicitation: expect.not.objectContaining({ elicitationId: expect.anything() }),
+        }),
+      }),
+    );
+  });
 });
 
 describe('resolveElicitationFlow', () => {

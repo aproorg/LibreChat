@@ -60,7 +60,9 @@ const MISSING_TOOL_TTL_MS = 10_000;
  * none of it. Keyed by `flowId`, this registry lets the route re-validate the
  * submitted `content` against the real schema and emit `on_elicitation_resolved`
  * back onto the originating stream. Entries are evicted on resolution or by TTL.
- * @type {Map<string, { res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, createdAt: number }>}
+ * `elicitationId` (url mode only) is retained alongside them for future
+ * `notifications/elicitation/complete` correlation.
+ * @type {Map<string, { res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, elicitationId?: string, createdAt: number }>}
  */
 const elicitationFlowContext = new Map();
 const ELICITATION_CONTEXT_TTL_MS = 10 * 60 * 1000;
@@ -403,17 +405,30 @@ function createOAuthCallback({ runStepEmitter, runStepDeltaEmitter }) {
  * @param {ServerResponse} params.res - The Express response object for sending events.
  * @param {string} params.stepId - The ID of the step.
  * @param {string | null} [params.streamId] - The stream ID for resumable mode.
- * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; serverName?: string; toolName?: string; requestedSchema?: object; url?: string }) => Promise<void>}
+ * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; serverName?: string; toolName?: string; requestedSchema?: object; url?: string; elicitationId?: string }) => Promise<void>}
  */
 function createElicitationStart({ res, stepId, streamId = null }) {
-  return async function ({ flowId, mode, message, serverName, toolName, requestedSchema, url }) {
+  return async function ({
+    flowId,
+    mode,
+    message,
+    serverName,
+    toolName,
+    requestedSchema,
+    url,
+    elicitationId,
+  }) {
     // Capture stream context + schema so the out-of-band completion route can
     // validate the response and emit `on_elicitation_resolved` onto this stream.
+    // `elicitationId` (url mode only) is retained for future
+    // `notifications/elicitation/complete` correlation; it is not part of the
+    // client-facing `on_elicitation` payload below.
     elicitationFlowContext.set(flowId, {
       res,
       streamId,
       stepId,
       requestedSchema,
+      elicitationId,
       createdAt: Date.now(),
     });
     evictStale(elicitationFlowContext, ELICITATION_CONTEXT_TTL_MS);
@@ -438,7 +453,7 @@ function createElicitationStart({ res, stepId, streamId = null }) {
  * recover the form `requestedSchema` for server-side validation when it is not
  * (yet) threaded through the flow's persisted metadata.
  * @param {string} flowId
- * @returns {{ res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, createdAt: number } | undefined}
+ * @returns {{ res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, elicitationId?: string, createdAt: number } | undefined}
  */
 function getElicitationFlowContext(flowId) {
   return elicitationFlowContext.get(flowId);

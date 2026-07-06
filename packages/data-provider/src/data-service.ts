@@ -245,7 +245,7 @@ export const respondToElicitation = (
   flowId: string,
   body: {
     action: ag.Agents.ElicitationAction;
-    content?: Record<string, string | number | boolean>;
+    content?: Record<string, ag.Agents.ElicitationValue>;
   },
 ): Promise<{ ok: boolean }> => {
   return request.post(endpoints.mcpElicitationRespond(flowId), body);
