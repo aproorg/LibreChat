@@ -8,6 +8,7 @@ const {
   PermissionBits,
   hasPermissions,
   AgentCapabilities,
+  stripUiOnlyContentParts,
 } = require('librechat-data-provider');
 const {
   createRun,
@@ -621,7 +622,8 @@ const createResponse = async (req, res) => {
     const allMessages = [...previousMessages, ...inputMessages];
 
     const toolSet = buildToolSet(primaryConfig);
-    const formatted = formatAgentMessages(allMessages, {}, toolSet);
+    // Elicitation cards are UI-only; strip them so a persisted card never leaks to the model.
+    const formatted = formatAgentMessages(stripUiOnlyContentParts(allMessages), {}, toolSet);
     const formattedMessages = formatted.messages;
     const initialSummary = formatted.summary;
     let indexTokenCountMap = formatted.indexTokenCountMap;

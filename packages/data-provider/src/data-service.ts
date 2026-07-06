@@ -235,6 +235,22 @@ export function cancelMCPOAuth(serverName: string): Promise<m.CancelMCPOAuthResp
   return request.post(endpoints.cancelMCPOAuth(serverName), {});
 }
 
+/**
+ * Resolves a pending MCP elicitation flow (form submission, URL-mode `elicitation/create`
+ * acknowledgement, or a -32042 URL-exception authorization continuation). `action:
+ * 'complete'` is the URL-exception "I've authorized — continue" signal; `'accept'` is the
+ * 2025-06-18 form-mode equivalent. Both resume the same waiting `MCPManager.callTool`.
+ */
+export const respondToElicitation = (
+  flowId: string,
+  body: {
+    action: ag.Agents.ElicitationAction;
+    content?: Record<string, string | number | boolean>;
+  },
+): Promise<{ ok: boolean }> => {
+  return request.post(endpoints.mcpElicitationRespond(flowId), body);
+};
+
 /* Config */
 
 export type StartupConfigOptions = {
