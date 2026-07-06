@@ -89,17 +89,111 @@ const canAccessElicitationFlow = (flowId, userId) => {
   return parsed.userId === userId;
 };
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Validates the restricted `format` keyword on a string property (spec
+ * 2025-11-25: email, uri, date, date-time — the subset the client renders as a
+ * specialized input). Returns an error message on violation, or `null`.
+ * @param {string} key
+ * @param {string} value
+ * @param {string} format
+ * @returns {string | null}
+ */
+const validateElicitationFormat = (key, value, format) => {
+  if (format === 'email') {
+    return EMAIL_PATTERN.test(value) ? null : `Field '${key}' must be a valid email address`;
+  }
+  if (format === 'uri') {
+    try {
+      new URL(value);
+      return null;
+    } catch {
+      return `Field '${key}' must be a valid URI`;
+    }
+  }
+  if (format === 'date' || format === 'date-time') {
+    return Number.isNaN(Date.parse(value)) ? `Field '${key}' must be a valid ${format}` : null;
+  }
+  return null;
+};
+
+/**
+ * Resolves the permitted member values for an array-type (multi-select)
+ * property's `items` schema, supporting both shapes the client renders:
+ * `items.enum` (bare values) and `items.anyOf: [{ const }]` (labeled options).
+ * Returns `null` when `items` carries neither, i.e. any array is permitted.
+ * @param {unknown} items
+ * @returns {unknown[] | null}
+ */
+const getArrayItemMembers = (items) => {
+  if (!items || typeof items !== 'object') {
+    return null;
+  }
+  if (Array.isArray(items.enum)) {
+    return items.enum;
+  }
+  if (Array.isArray(items.anyOf)) {
+    return items.anyOf.map((option) => option?.const);
+  }
+  return null;
+};
+
 /**
  * Validates a single submitted elicitation field value against its property
  * schema (the MCP form-mode elicitation subset of JSON Schema). Returns an error
  * message on the first violation, or `null` when the value conforms.
+ *
+ * Beyond the base `Agents.ElicitationPropertySchema` type, this also validates
+ * the extended subset the client renders: `pattern`, `format`, `oneOf`
+ * (single-select from a labeled const list), and `array`/`items`/`minItems`/
+ * `maxItems` (multi-select). `enumNames` is display-only labeling for `enum`
+ * and is intentionally never validated.
  * @param {string} key
  * @param {unknown} value
  * @param {import('librechat-data-provider').Agents.ElicitationPropertySchema} property
  * @returns {string | null}
  */
 const validateElicitationField = (key, value, property) => {
-  const { type, enum: enumValues, minimum, maximum, minLength, maxLength } = property ?? {};
+  const {
+    type,
+    enum: enumValues,
+    minimum,
+    maximum,
+    minLength,
+    maxLength,
+    pattern,
+    format,
+    oneOf,
+    items,
+    minItems,
+    maxItems,
+  } = property ?? {};
+
+  if (Array.isArray(oneOf) && oneOf.length > 0) {
+    const allowedConsts = oneOf.map((option) => option?.const);
+    if (!allowedConsts.includes(value)) {
+      return `Field '${key}' must be one of the allowed options`;
+    }
+    return null;
+  }
+
+  if (type === 'array') {
+    if (!Array.isArray(value)) {
+      return `Field '${key}' must be an array`;
+    }
+    if (typeof minItems === 'number' && value.length < minItems) {
+      return `Field '${key}' must have at least ${minItems} item(s)`;
+    }
+    if (typeof maxItems === 'number' && value.length > maxItems) {
+      return `Field '${key}' must have at most ${maxItems} item(s)`;
+    }
+    const allowedMembers = getArrayItemMembers(items);
+    if (allowedMembers && value.some((element) => !allowedMembers.includes(element))) {
+      return `Field '${key}' contains an invalid selection`;
+    }
+    return null;
+  }
 
   if (type === 'string') {
     if (typeof value !== 'string') {
@@ -110,6 +204,23 @@ const validateElicitationField = (key, value, property) => {
     }
     if (typeof maxLength === 'number' && value.length > maxLength) {
       return `Field '${key}' must be at most ${maxLength} characters`;
+    }
+    if (typeof pattern === 'string') {
+      let regex;
+      try {
+        regex = new RegExp(pattern);
+      } catch {
+        return `Field '${key}' has an invalid pattern`;
+      }
+      if (!regex.test(value)) {
+        return `Field '${key}' does not match the required pattern`;
+      }
+    }
+    if (typeof format === 'string') {
+      const formatError = validateElicitationFormat(key, value, format);
+      if (formatError) {
+        return formatError;
+      }
     }
   } else if (type === 'number' || type === 'integer') {
     if (typeof value !== 'number' || Number.isNaN(value)) {

@@ -9,6 +9,7 @@ import {
   RotateCw,
   CheckCircle2,
   XCircle,
+  TriangleAlert,
 } from 'lucide-react';
 import type { Agents } from 'librechat-data-provider';
 import type { TranslationKeys } from '~/hooks/useLocalize';
@@ -23,7 +24,25 @@ type ElicitationField = {
   schema: Agents.ElicitationPropertySchema;
 };
 
-type FieldValue = string | number | boolean;
+type FieldValue = string | number | boolean | string[] | number[];
+
+/** Normalizes a `type: 'array'` property's option source — either a plain
+ *  `items.enum` value list or titled `items.anyOf` const/title pairs — into a
+ *  single shape the multi-select checkbox group renders from. */
+type ArrayOption = { value: string | number; label: string };
+
+function getArrayOptions(schema: Agents.ElicitationPropertySchema): ArrayOption[] {
+  if (schema.items?.anyOf) {
+    return schema.items.anyOf.map((option) => ({
+      value: option.const as string | number,
+      label: option.title ?? String(option.const),
+    }));
+  }
+  if (schema.items?.enum) {
+    return schema.items.enum.map((value) => ({ value, label: String(value) }));
+  }
+  return [];
+}
 
 function getDefaultValues(
   properties: Record<string, Agents.ElicitationPropertySchema>,
@@ -34,11 +53,19 @@ function getDefaultValues(
       defaults[key] = schema.default;
     } else if (schema.type === 'boolean') {
       defaults[key] = false;
+    } else if (schema.type === 'array') {
+      defaults[key] = [];
     } else {
       defaults[key] = '';
     }
   }
   return defaults;
+}
+
+/** Lightweight `format: 'email'` check — not RFC-5322-exhaustive, just enough
+ *  to catch obviously malformed input before it's sent to the server. */
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function getStatusText(
@@ -70,6 +97,25 @@ function getSafeUrl(url?: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Hostname of a URL already known to be a safe http(s) target (see
+ *  `getSafeUrl`) — used to highlight the domain the user is about to visit,
+ *  mitigating long-path/subdomain spoofing where the real host is buried. */
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/** True when any label of the hostname is IDNA/Punycode-encoded (`xn--...`).
+ *  The URL parser itself converts any non-ASCII (mixed-script/homograph)
+ *  hostname label to its `xn--` form, so this single check also catches
+ *  Cyrillic/Greek lookalike domains — not just literal Punycode input. */
+function hasPunycodeLabel(hostname: string): boolean {
+  return hostname.split('.').some((label) => label.toLowerCase().startsWith('xn--'));
 }
 
 /** Header chrome shared by both modes: a tinted circular icon, a title, and the
@@ -170,6 +216,10 @@ export default function ElicitationForm({
   // `getSafeUrl`. A present-but-unsafe `url` renders a warning instead of a link
   // and permanently withholds the `urlOpened` unlock (no link, nothing to click).
   const safeUrl = useMemo(() => getSafeUrl(url), [url]);
+  // Domain highlight + Punycode/homograph warning, shown alongside the full URL
+  // text so the user can examine the real destination before clicking anything.
+  const hostname = useMemo(() => (safeUrl ? getHostname(safeUrl) : ''), [safeUrl]);
+  const suspiciousHostname = useMemo(() => hasPunycodeLabel(hostname), [hostname]);
 
   const fields: ElicitationField[] = Object.entries(properties).map(([key, schema]) => ({
     key,
@@ -187,7 +237,11 @@ export default function ElicitationForm({
       const required = requestedSchema?.required?.includes(key) ?? false;
       const val = values[key];
       const label = schema.title ?? key;
-      if (required && (val === '' || val == null)) {
+      const isEmpty =
+        schema.type === 'array'
+          ? !Array.isArray(val) || val.length === 0
+          : val === '' || val == null;
+      if (required && isEmpty) {
         newErrors[key] = localize('com_ui_elicitation_field_required', { field: label });
       }
       if (schema.type === 'string' && typeof val === 'string') {
@@ -196,6 +250,31 @@ export default function ElicitationForm({
         }
         if (schema.maxLength != null && val.length > schema.maxLength) {
           newErrors[key] = localize('com_ui_elicitation_max_length', { max: schema.maxLength });
+        }
+        if (val !== '' && schema.pattern != null) {
+          let matchesPattern = true;
+          try {
+            matchesPattern = new RegExp(schema.pattern).test(val);
+          } catch {
+            // A malformed server-supplied pattern shouldn't block the user.
+            matchesPattern = true;
+          }
+          if (!matchesPattern) {
+            newErrors[key] = localize('com_ui_elicitation_pattern_mismatch', { field: label });
+          }
+        }
+        if (val !== '' && schema.format === 'email' && !isValidEmail(val)) {
+          newErrors[key] = localize('com_ui_elicitation_not_an_email', { field: label });
+        }
+        if (val !== '' && schema.format === 'uri' && getSafeUrl(val) == null) {
+          newErrors[key] = localize('com_ui_elicitation_not_a_url', { field: label });
+        }
+        if (
+          val !== '' &&
+          (schema.format === 'date' || schema.format === 'date-time') &&
+          Number.isNaN(Date.parse(val))
+        ) {
+          newErrors[key] = localize('com_ui_elicitation_not_a_date', { field: label });
         }
       }
       if ((schema.type === 'number' || schema.type === 'integer') && val !== '' && val != null) {
@@ -206,6 +285,21 @@ export default function ElicitationForm({
           newErrors[key] = localize('com_ui_elicitation_min_value', { min: schema.minimum });
         } else if (schema.maximum != null && num > schema.maximum) {
           newErrors[key] = localize('com_ui_elicitation_max_value', { max: schema.maximum });
+        }
+      }
+      if (schema.oneOf && val !== '' && val != null) {
+        const isAllowed = schema.oneOf.some((option) => String(option.const) === String(val));
+        if (!isAllowed) {
+          newErrors[key] = localize('com_ui_elicitation_invalid_selection', { field: label });
+        }
+      }
+      if (schema.type === 'array') {
+        const arr = Array.isArray(val) ? val : [];
+        if (schema.minItems != null && arr.length < schema.minItems) {
+          newErrors[key] = localize('com_ui_elicitation_min_items', { min: schema.minItems });
+        }
+        if (schema.maxItems != null && arr.length > schema.maxItems) {
+          newErrors[key] = localize('com_ui_elicitation_max_items', { max: schema.maxItems });
         }
       }
     }
@@ -261,11 +355,25 @@ export default function ElicitationForm({
               fields
                 // Omit empty optional fields instead of defaulting them to 0/null —
                 // required fields are already guaranteed non-empty by `validate`.
-                .filter(({ key }) => values[key] !== '' && values[key] != null)
+                .filter(({ key, schema }) => {
+                  const val = values[key];
+                  if (schema.type === 'array') {
+                    return Array.isArray(val) && val.length > 0;
+                  }
+                  return val !== '' && val != null;
+                })
                 .map(({ key, schema }) => {
                   const val = values[key];
                   if (schema.type === 'number' || schema.type === 'integer') {
                     return [key, Number(val)];
+                  }
+                  if (schema.oneOf) {
+                    // The `<select>` always yields a string; recover the schema's
+                    // typed `const` (string | number | boolean) for the payload.
+                    const match = schema.oneOf.find(
+                      (option) => String(option.const) === String(val),
+                    );
+                    return [key, match ? match.const : val];
                   }
                   return [key, val];
                 }),
@@ -285,6 +393,19 @@ export default function ElicitationForm({
 
   const markUrlOpened = () => setUrlOpened(true);
 
+  /** Toggles one option of a `type: 'array'` (multi-select) field's checkbox
+   *  group, keeping the stored value a real array rather than a delimited
+   *  string — the payload builder below sends it as JSON array as-is. */
+  const toggleArrayValue = (key: string, optionValue: string | number, checked: boolean) => {
+    setValues((prev) => {
+      const current = Array.isArray(prev[key]) ? (prev[key] as Array<string | number>) : [];
+      const next = checked
+        ? [...current, optionValue]
+        : current.filter((value) => value !== optionValue);
+      return { ...prev, [key]: next as string[] | number[] };
+    });
+  };
+
   const requiredMark = (required: boolean) =>
     required ? (
       <span aria-hidden="true" className="ml-1 text-text-destructive">
@@ -300,6 +421,91 @@ export default function ElicitationForm({
     const descId = schema.description ? `${fieldId}-description` : undefined;
     const errId = error ? `${fieldId}-error` : undefined;
     const describedBy = [descId, errId].filter(Boolean).join(' ') || undefined;
+
+    if (schema.type === 'array') {
+      const options = getArrayOptions(schema);
+      const selected = Array.isArray(values[key]) ? (values[key] as Array<string | number>) : [];
+      return (
+        <fieldset key={key} className="flex flex-col gap-1">
+          <legend className="text-sm font-medium text-text-primary">
+            {label}
+            {requiredMark(required)}
+          </legend>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          <div className="flex flex-col gap-1.5" aria-describedby={describedBy}>
+            {options.map((option) => {
+              const optionId = `${fieldId}-${option.value}`;
+              return (
+                // Nested label grows the click target past the 16px box toward ~28px.
+                <label
+                  key={optionId}
+                  htmlFor={optionId}
+                  className="flex cursor-pointer items-center gap-2 py-1"
+                >
+                  <input
+                    id={optionId}
+                    type="checkbox"
+                    checked={selected.includes(option.value)}
+                    onChange={(e) => toggleArrayValue(key, option.value, e.target.checked)}
+                    disabled={submitting}
+                    className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <span className="text-sm text-text-primary">{option.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </fieldset>
+      );
+    }
+
+    if (schema.oneOf) {
+      return (
+        <div key={key} className="flex flex-col gap-1">
+          <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+            {label}
+            {requiredMark(required)}
+          </Label>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          <select
+            id={fieldId}
+            value={String(values[key] ?? '')}
+            onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+            disabled={submitting}
+            required={required}
+            aria-required={required || undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <option value="">{localize('com_ui_select')}</option>
+            {schema.oneOf.map((option) => (
+              <option key={String(option.const)} value={String(option.const)}>
+                {option.title ?? String(option.const)}
+              </option>
+            ))}
+          </select>
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
 
     if (schema.enum) {
       return (
@@ -325,9 +531,9 @@ export default function ElicitationForm({
             className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <option value="">{localize('com_ui_select')}</option>
-            {schema.enum.map((opt) => (
+            {schema.enum.map((opt, i) => (
               <option key={opt} value={opt}>
-                {opt}
+                {schema.enumNames?.[i] ?? opt}
               </option>
             ))}
           </select>
@@ -375,6 +581,22 @@ export default function ElicitationForm({
       );
     }
 
+    // Maps `format` to the closest native input type/keyboard for each — the
+    // format-specific `validate()` checks below still run since native
+    // constraint validation alone isn't localized or wired to `errors`.
+    let inputType: 'number' | 'email' | 'url' | 'date' | 'datetime-local' | 'text' = 'text';
+    if (schema.type === 'number' || schema.type === 'integer') {
+      inputType = 'number';
+    } else if (schema.format === 'email') {
+      inputType = 'email';
+    } else if (schema.format === 'uri') {
+      inputType = 'url';
+    } else if (schema.format === 'date') {
+      inputType = 'date';
+    } else if (schema.format === 'date-time') {
+      inputType = 'datetime-local';
+    }
+
     return (
       <div key={key} className="flex flex-col gap-1">
         <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
@@ -388,7 +610,8 @@ export default function ElicitationForm({
         )}
         <Input
           id={fieldId}
-          type={schema.type === 'number' || schema.type === 'integer' ? 'number' : 'text'}
+          type={inputType}
+          pattern={schema.pattern}
           value={String(values[key] ?? '')}
           onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
           disabled={submitting}
@@ -446,6 +669,27 @@ export default function ElicitationForm({
             identity={identity}
           />
           <p className="text-sm text-text-secondary">{message}</p>
+          {/* MUST be visible and readable before the user clicks anything — see
+              `getSafeUrl`/`getHostname`/`hasPunycodeLabel`. Rendered above the
+              button row regardless of `urlOpened` so it stays available to
+              re-examine before Continue, too. */}
+          {safeUrl && (
+            <div className="flex flex-col gap-1 rounded-lg border border-border-light bg-surface-tertiary p-2.5">
+              <p className="text-xs text-text-secondary">
+                {localize('com_ui_elicitation_url_domain_label')}{' '}
+                <span className="font-semibold text-text-primary">{hostname}</span>
+              </p>
+              <p title={safeUrl} className="break-all text-xs text-text-secondary">
+                {safeUrl}
+              </p>
+              {suspiciousHostname && (
+                <p role="alert" className="flex items-center gap-1.5 text-xs text-text-warning">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  {localize('com_ui_elicitation_suspicious_url')}
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             {!urlOpened ? (
               <>

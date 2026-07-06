@@ -462,6 +462,10 @@ Please follow these instructions when using tools from the respective MCP server
       toolName?: string;
       requestedSchema?: Agents.ElicitationSchema;
       url?: string;
+      /** Url-mode only: the server-supplied id from `elicitation/create` or the
+       *  -32042 `data.elicitations[]` entry, retained for future
+       *  `notifications/elicitation/complete` correlation. */
+      elicitationId?: string;
     }) => Promise<void>;
     graphTokenResolver?: GraphTokenResolver;
     oboTokenResolver?: OboTokenResolver;
@@ -627,6 +631,7 @@ Please follow these instructions when using tools from the respective MCP server
               logger.debug(
                 `${logPrefix}[${toolName}] Elicitation requested (${isUrlMode ? 'url' : 'form'}), flowId: ${flowId}`,
               );
+              const elicitationId = params.mode === 'url' ? params.elicitationId : undefined;
               await elicitationStart({
                 flowId,
                 mode: isUrlMode ? 'url' : 'form',
@@ -635,11 +640,15 @@ Please follow these instructions when using tools from the respective MCP server
                 toolName,
                 requestedSchema: params.mode === 'url' ? undefined : params.requestedSchema,
                 url: params.mode === 'url' ? params.url : undefined,
+                elicitationId,
               });
               const flowResult = await elicitationFlowManager.createFlow(
                 flowId,
                 'mcp_elicit',
-                { requestedSchema: params.mode === 'url' ? undefined : params.requestedSchema },
+                {
+                  requestedSchema: params.mode === 'url' ? undefined : params.requestedSchema,
+                  elicitationId,
+                },
                 combineAbortSignals(options?.signal, elicitationSignal),
               );
               logger.debug(`${logPrefix}[${toolName}] Elicitation resolved: ${flowResult.action}`);
@@ -706,6 +715,7 @@ Please follow these instructions when using tools from the respective MCP server
           serverName,
           toolName,
           url: first.url,
+          elicitationId: first.elicitationId,
         });
 
         let flowResult: ElicitationFlowResult;
@@ -713,7 +723,7 @@ Please follow these instructions when using tools from the respective MCP server
           flowResult = await elicitationFlowManager.createFlow(
             flowId,
             'mcp_elicit',
-            {},
+            { elicitationId: first.elicitationId },
             options?.signal,
           );
         } catch (flowError) {

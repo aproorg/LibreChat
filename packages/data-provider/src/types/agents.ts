@@ -113,16 +113,40 @@ export namespace Agents {
    */
   export type ElicitationMode = 'form' | 'url';
 
+  /** A single labeled constant, as used by `oneOf` (titled enum) and
+   *  `items.anyOf` (titled multi-select option) restricted-schema forms. */
+  export type ElicitationConstOption = {
+    const: string | number | boolean;
+    title?: string;
+  };
+
   export type ElicitationPropertySchema = {
-    type: 'string' | 'number' | 'integer' | 'boolean';
+    type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
     title?: string;
     description?: string;
     enum?: string[];
-    default?: string | number | boolean;
+    /** Display labels for `enum`, positionally matched by index. */
+    enumNames?: string[];
+    /** Titled-enum alternative to `enum`: a `<select>` whose options carry a
+     *  `const` value and an optional display `title`. */
+    oneOf?: ElicitationConstOption[];
+    default?: string | number | boolean | string[] | number[];
     minLength?: number;
     maxLength?: number;
     minimum?: number;
     maximum?: number;
+    /** Regular expression a `string` value must match. */
+    pattern?: string;
+    /** Input semantics/validation for a `string` value. */
+    format?: 'email' | 'uri' | 'date' | 'date-time';
+    /** `type: 'array'` option source: either a plain value list or titled
+     *  `const`/`title` options, rendered as a multi-select checkbox group. */
+    items?: {
+      enum?: Array<string | number>;
+      anyOf?: ElicitationConstOption[];
+    };
+    minItems?: number;
+    maxItems?: number;
   };
 
   export type ElicitationSchema = {
@@ -130,6 +154,10 @@ export namespace Agents {
     properties: Record<string, ElicitationPropertySchema>;
     required?: string[];
   };
+
+  /** A resolved field value: primitives for scalar properties, or a string/number
+   *  array for a `type: 'array'` (multi-select) property. */
+  export type ElicitationValue = string | number | boolean | string[] | number[];
 
   /** Terminal resolution states a client can post back to `/api/mcp/elicitation/:flowId`.
    *  `accept`/`decline`/`cancel` mirror the SDK's `ElicitResultSchema.action` (form mode);
@@ -153,7 +181,7 @@ export namespace Agents {
       url?: string;
       /** Set once the card has been resolved (locally, or replayed from persisted history) */
       action?: ElicitationAction;
-      content?: Record<string, string | number | boolean>;
+      content?: Record<string, ElicitationValue>;
     };
   };
 
@@ -177,7 +205,7 @@ export namespace Agents {
     runId?: string;
     flowId: string;
     action: ElicitationAction;
-    content?: Record<string, string | number | boolean>;
+    content?: Record<string, ElicitationValue>;
   };
 
   /**
