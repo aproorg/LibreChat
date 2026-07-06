@@ -369,6 +369,9 @@ actions:
 #     #                     # `tool_search` tool plus a name-only listing instead of each tool's full
 #     #                     # schema. Saves context on large tool sets. A per-agent tool toggle overrides
 #     #                     # this. Requires the `deferred_tools` agent capability to be enabled.
+#     # elicitation: false  # Opt this server out of interactive MCP elicitation cards (URL-authorization
+#     #                     # and form prompts). Enabled by default; set to false to skip elicitation
+#     #                     # handling for this server.
 #   puppeteer:
 #     type: stdio
 #     command: npx
