@@ -1322,8 +1322,13 @@ export class MCPConnection extends EventEmitter {
          *  `form` (2025-06-18 `elicitation/create` with a JSON-schema form) and
          *  `url` (out-of-band authorization link, either via `elicitation/create`
          *  with `mode: 'url'`, or the -32042 `UrlElicitationRequired` exception
-         *  path on `tools/call`, which doesn't consult this capability at all). */
-        capabilities: { elicitation: { form: {}, url: {} } },
+         *  path on `tools/call`, which doesn't consult this capability at all).
+         *  Gated on the per-server `elicitation` flag: when a server opts out
+         *  (`elicitation: false`), the capability is not advertised, so the server
+         *  won't issue `elicitation/create` requests the client isn't wired to
+         *  service. */
+        capabilities:
+          params.serverConfig.elicitation === false ? {} : { elicitation: { form: {}, url: {} } },
       },
     );
 
