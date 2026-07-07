@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
 import { Button, Input, Label, Spinner } from '@librechat/client';
 import { ContentTypes, dataService } from 'librechat-data-provider';
 import {
@@ -12,6 +11,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import type { Agents } from 'librechat-data-provider';
+import type { ReactNode } from 'react';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import { useMessageContext, useOptionalMessagesOperations } from '~/Providers';
 import { useLocalize } from '~/hooks';
@@ -649,14 +649,16 @@ export default function ElicitationForm({
   let card: ReactNode;
   if (resolvedAction) {
     const succeeded = resolvedAction === 'accept' || resolvedAction === 'complete';
+    // Once resolved, recede to a muted one-line trace at the sibling tool call's
+    // "Completed …" altitude rather than lingering as a full card.
     card = (
-      <div className="my-2 flex items-center gap-2.5 rounded-xl border border-border-light bg-surface-secondary p-3">
+      <div className="my-1.5 flex h-5 items-center gap-2 text-text-secondary">
         {succeeded ? (
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" aria-hidden="true" />
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" aria-hidden="true" />
         ) : (
-          <XCircle className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         )}
-        <span className="text-sm text-text-secondary">{statusText}</span>
+        <span className="text-xs">{statusText}</span>
       </div>
     );
   } else if (isUrlMode) {
