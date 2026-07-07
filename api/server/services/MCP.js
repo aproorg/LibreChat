@@ -59,7 +59,9 @@ const MISSING_TOOL_TTL_MS = 10_000;
  * `POST /api/mcp/elicitation/:flowId` route runs in a separate request that has
  * none of it. Keyed by `flowId`, this registry lets the route re-validate the
  * submitted `content` against the real schema and emit `on_elicitation_resolved`
- * back onto the originating stream. Entries are evicted on resolution or by TTL.
+ * back onto the originating stream. Entries are deleted on resolution; any left
+ * abandoned are bounded to {@link MAX_CACHE_SIZE} and TTL-swept once the map
+ * exceeds that cap (see {@link evictStale}).
  * `elicitationId` (url mode only) is retained alongside them for future
  * `notifications/elicitation/complete` correlation.
  * @type {Map<string, { res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, elicitationId?: string, createdAt: number }>}
