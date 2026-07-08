@@ -3694,29 +3694,30 @@ describe('MCP Routes', () => {
 
     it('should complete the flow for a valid array/oneOf submission', async () => {
       const flowManager = mockFlowManager();
-      flowManager.getFlowState.mockResolvedValueOnce({
-        status: 'PENDING',
-        metadata: {
-          requestedSchema: {
-            type: 'object',
-            properties: {
-              plan: {
-                oneOf: [
-                  { const: 'basic', title: 'Basic' },
-                  { const: 'pro', title: 'Pro' },
-                ],
+      flowManager.getFlowState
+        .mockResolvedValueOnce({
+          status: 'PENDING',
+          metadata: {
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                plan: {
+                  oneOf: [
+                    { const: 'basic', title: 'Basic' },
+                    { const: 'pro', title: 'Pro' },
+                  ],
+                },
+                labels: {
+                  type: 'array',
+                  items: { enum: ['bug', 'feature'] },
+                  minItems: 1,
+                  maxItems: 2,
+                },
               },
-              labels: {
-                type: 'array',
-                items: { enum: ['bug', 'feature'] },
-                minItems: 1,
-                maxItems: 2,
-              },
+              required: ['plan', 'labels'],
             },
-            required: ['plan', 'labels'],
           },
-        },
-      })
+        })
         .mockResolvedValue({ status: 'COMPLETED', metadata: {}, result: { action: 'accept' } });
       require('~/config').getFlowStateManager.mockReturnValue(flowManager);
 
