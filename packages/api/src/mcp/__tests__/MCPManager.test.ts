@@ -2071,11 +2071,14 @@ describe('MCPManager', () => {
             }),
         },
       } as unknown as MCPConnection;
-      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      // Elicitation runs on a user-scoped connection (the guard refuses the shared
+      // app-level one), so route the call through getUserConnection.
+      mockAppConnections({ get: jest.fn().mockResolvedValue(undefined) });
       mockFlowManager.createFlow.mockResolvedValue({ action: 'complete' });
 
       const elicitationStart = jest.fn().mockResolvedValue(undefined);
       const manager = await MCPManager.createInstance(newMCPServersConfig());
+      jest.spyOn(manager, 'getUserConnection').mockResolvedValue(mockConnection);
 
       const result = await manager.callTool({
         user: mockUser as IUser,
@@ -2118,11 +2121,12 @@ describe('MCPManager', () => {
         timeout: 30000,
         client: { request: jest.fn().mockRejectedValueOnce(urlError) },
       } as unknown as MCPConnection;
-      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockAppConnections({ get: jest.fn().mockResolvedValue(undefined) });
       mockFlowManager.createFlow.mockResolvedValue({ action: 'cancel' });
 
       const elicitationStart = jest.fn().mockResolvedValue(undefined);
       const manager = await MCPManager.createInstance(newMCPServersConfig());
+      jest.spyOn(manager, 'getUserConnection').mockResolvedValue(mockConnection);
 
       await expect(
         manager.callTool({
@@ -2150,11 +2154,12 @@ describe('MCPManager', () => {
         timeout: 30000,
         client: { request: jest.fn().mockRejectedValueOnce(urlError) },
       } as unknown as MCPConnection;
-      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      mockAppConnections({ get: jest.fn().mockResolvedValue(undefined) });
       mockFlowManager.createFlow.mockRejectedValue(new Error('mcp_elicit flow timed out'));
 
       const elicitationStart = jest.fn().mockResolvedValue(undefined);
       const manager = await MCPManager.createInstance(newMCPServersConfig());
+      jest.spyOn(manager, 'getUserConnection').mockResolvedValue(mockConnection);
 
       await expect(
         manager.callTool({
