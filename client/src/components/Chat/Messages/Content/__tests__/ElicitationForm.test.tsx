@@ -455,4 +455,29 @@ describe('ElicitationForm - url mode', () => {
       ),
     ).not.toBeInTheDocument();
   });
+
+  it('shows an inline error and stays interactive when the response fails to send', async () => {
+    (dataService.respondToElicitation as jest.Mock).mockRejectedValueOnce(new Error('network'));
+    renderUrlForm();
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(await screen.findByText("Couldn't send your response — try again.")).toBeInTheDocument();
+    // The card is still interactive for a retry.
+    expect(screen.getByText("I've authorized — continue")).toBeInTheDocument();
+  });
+
+  it('treats a 409 as already-resolved and shows the resolved status instead of the retry error', async () => {
+    const conflictError = Object.assign(new Error('Conflict'), {
+      response: { status: 409 },
+    });
+    (dataService.respondToElicitation as jest.Mock).mockRejectedValueOnce(conflictError);
+    renderUrlForm();
+    fireEvent.click(screen.getByText('Open authorization page'));
+    fireEvent.click(screen.getByText("I've authorized — continue"));
+
+    expect((await screen.findAllByText('Authorization confirmed')).length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(screen.queryByText("Couldn't send your response — try again.")).not.toBeInTheDocument();
+  });
 });
