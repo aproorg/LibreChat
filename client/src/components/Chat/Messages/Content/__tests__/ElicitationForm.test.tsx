@@ -1,7 +1,7 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { RecoilRoot } from 'recoil';
 import { dataService } from 'librechat-data-provider';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ElicitationForm from '../ElicitationForm';
 
 jest.mock('~/hooks', () => ({
@@ -24,6 +24,7 @@ jest.mock('~/hooks', () => ({
       com_ui_elicitation_max_value: 'Maximum value is {{max}}',
       com_ui_elicitation_not_a_number: '{{field}} must be a number',
       com_ui_elicitation_invalid_url: "This authorization link is invalid and can't be opened.",
+      com_ui_elicitation_error: "Couldn't send your response — try again.",
       com_ui_elicitation_invalid_selection: '{{field}} is not a valid selection',
       com_ui_elicitation_pattern_mismatch: "{{field}} doesn't match the required format",
       com_ui_elicitation_not_an_email: '{{field}} must be a valid email address',

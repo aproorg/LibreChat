@@ -3433,7 +3433,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/priority/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when submitted content includes an unknown field', async () => {
@@ -3449,7 +3449,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/injected/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should complete the flow and emit resolution on the happy path', async () => {
@@ -3474,7 +3474,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ ok: true });
-      expect(flowManager.completeFlow).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
+      expect(flowManager.completeFlowIfPending).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
         action: 'accept',
         content: { priority: 'high' },
       });
@@ -3482,6 +3482,8 @@ describe('MCP Routes', () => {
         flowId: ownedFlowId,
         action: 'accept',
         content: { priority: 'high' },
+        fallbackStreamId: null,
+        fallbackStepId: undefined,
       });
     });
 
@@ -3584,7 +3586,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/zip/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when submitted content violates a format constraint', async () => {
@@ -3607,7 +3609,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/email/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when submitted content is not a member of a oneOf constraint', async () => {
@@ -3637,7 +3639,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/plan/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when a submitted array contains a non-permitted member', async () => {
@@ -3662,7 +3664,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/labels/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when a submitted array violates minItems', async () => {
@@ -3692,7 +3694,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/labels/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should return 400 when a submitted array violates maxItems', async () => {
@@ -3721,7 +3723,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/labels/);
-      expect(flowManager.completeFlow).not.toHaveBeenCalled();
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
     });
 
     it('should complete the flow for a valid array/oneOf submission', async () => {
@@ -3759,7 +3761,7 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ ok: true });
-      expect(flowManager.completeFlow).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
+      expect(flowManager.completeFlowIfPending).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
         action: 'accept',
         content: { plan: 'pro', labels: ['bug', 'feature'] },
       });

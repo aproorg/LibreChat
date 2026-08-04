@@ -389,8 +389,10 @@ export default function ElicitationForm({
       // instead of a misleading "try again".
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 409) {
+        // No content: this request lost the race, so whatever the winner sent is
+        // what the server actually stored — not our payload.
         setResolvedAction(action);
-        patchResolvedElicitation(action, content);
+        patchResolvedElicitation(action);
       } else {
         // Surface an inline retry affordance; the server-side flow keeps waiting
         // (or times out on its own), so the card stays interactive for a retry.

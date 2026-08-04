@@ -2101,11 +2101,13 @@ describe('MCPManager', () => {
       );
       /** The server-supplied elicitationId is retained in the flow's persisted
        *  metadata alongside the generated flowId (currently unused, sets up
-       *  future notifications/elicitation/complete correlation). */
+       *  future notifications/elicitation/complete correlation), plus the
+       *  stream/step context a cross-replica completion needs to publish the
+       *  resolution — null/undefined here since this call supplies neither. */
       expect(mockFlowManager.createFlow).toHaveBeenCalledWith(
         expect.any(String),
         'mcp_elicit',
-        { elicitationId: 'elicit-1' },
+        { elicitationId: 'elicit-1', streamId: null, stepId: undefined },
         undefined,
       );
       expect(mockConnection.client.request).toHaveBeenCalledTimes(2);
