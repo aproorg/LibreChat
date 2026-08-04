@@ -133,12 +133,16 @@ jest.mock('~/server/services/Config/mcp', () => ({
 
 const mockResolveAllMcpConfigs = jest.fn().mockResolvedValue({});
 const mockResolveMcpConfigNames = jest.fn().mockResolvedValue([]);
+const mockGetElicitationFlowContext = jest.fn();
+const mockResolveElicitationFlow = jest.fn().mockResolvedValue(true);
 jest.mock('~/server/services/MCP', () => ({
   getMCPSetupData: jest.fn(),
   resolveConfigServers: jest.fn().mockResolvedValue({}),
   resolveMcpConfigNames: (...args) => mockResolveMcpConfigNames(...args),
   resolveAllMcpConfigs: (...args) => mockResolveAllMcpConfigs(...args),
   getServerConnectionStatus: jest.fn(),
+  getElicitationFlowContext: (...args) => mockGetElicitationFlowContext(...args),
+  resolveElicitationFlow: (...args) => mockResolveElicitationFlow(...args),
 }));
 
 jest.mock('~/server/services/PluginService', () => ({
@@ -3323,6 +3327,444 @@ describe('MCP Routes', () => {
 
       expect(response.status).toBe(500);
       expect(response.body).toEqual({ message: 'Deletion failed' });
+    });
+  });
+
+  describe('POST /elicitation/:flowId', () => {
+    const { getLogStores } = require('~/cache');
+
+    /** Real `parseElicitationFlowId` (via requireActual) parses `user:server:tool:nonce`. */
+    const ownedFlowId = 'test-user-id:jira:create_issue:nonce-1';
+    const otherUserFlowId = 'other-user-id:jira:create_issue:nonce-2';
+
+    const mockFlowManager = () => ({
+      getFlowState: jest.fn().mockResolvedValue({ status: 'PENDING', metadata: {} }),
+      completeFlowIfPending: jest.fn().mockResolvedValue(true),
+    });
+
+    beforeEach(() => {
+      mockGetElicitationFlowContext.mockReset().mockReturnValue(undefined);
+      mockResolveElicitationFlow.mockReset().mockResolvedValue(true);
+      getLogStores.mockReturnValue({});
+    });
+
+    it('should return 401 when user is not authenticated', async () => {
+      currentUser = { role: 'user' };
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({ error: 'User not authenticated' });
+    });
+
+    it('should return 400 for an unknown action', async () => {
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'bogus' });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: 'Invalid action' });
+    });
+
+    it('should return 403 when the flowId is owned by a different user', async () => {
+      const flowManager = mockFlowManager();
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(otherUserFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ error: 'Forbidden' });
+      expect(flowManager.getFlowState).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when the flow state is not found', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue(null);
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'Flow not found' });
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when completeFlowIfPending reports the flow is gone', async () => {
+      const flowManager = mockFlowManager();
+      // Initial check passes (PENDING); the loser re-read finds nothing stored.
+      flowManager.getFlowState
+        .mockReset()
+        .mockResolvedValueOnce({ status: 'PENDING', metadata: {} })
+        .mockResolvedValue(null);
+      flowManager.completeFlowIfPending.mockResolvedValue(false);
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'Flow not found' });
+      expect(mockResolveElicitationFlow).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when submitted content violates the requested schema', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: { priority: { type: 'string', enum: ['low', 'high'] } },
+            required: ['priority'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { priority: 'urgent' } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/priority/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when submitted content includes an unknown field', async () => {
+      const flowManager = mockFlowManager();
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+      mockGetElicitationFlowContext.mockReturnValue({
+        requestedSchema: { type: 'object', properties: { title: { type: 'string' } } },
+      });
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { title: 'ok', injected: 'x' } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/injected/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should complete the flow and emit resolution on the happy path', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState
+        .mockResolvedValueOnce({
+          status: 'PENDING',
+          metadata: {
+            requestedSchema: {
+              type: 'object',
+              properties: { priority: { type: 'string', enum: ['low', 'high'] } },
+              required: ['priority'],
+            },
+          },
+        })
+        .mockResolvedValue({ status: 'COMPLETED', metadata: {}, result: { action: 'accept' } });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { priority: 'high' } });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      expect(flowManager.completeFlowIfPending).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
+        action: 'accept',
+        content: { priority: 'high' },
+      });
+      expect(mockResolveElicitationFlow).toHaveBeenCalledWith({
+        flowId: ownedFlowId,
+        action: 'accept',
+        content: { priority: 'high' },
+        fallbackStreamId: null,
+        fallbackStepId: undefined,
+      });
+    });
+
+    it('should accept a URL-mode complete with no schema', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({ status: 'PENDING', metadata: {} });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      expect(flowManager.completeFlowIfPending).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
+        action: 'complete',
+        content: undefined,
+      });
+      expect(mockResolveElicitationFlow).toHaveBeenCalledWith({
+        flowId: ownedFlowId,
+        action: 'complete',
+        content: undefined,
+        fallbackStreamId: null,
+        fallbackStepId: undefined,
+      });
+    });
+
+    it('passes the flow metadata through as the resolution fallback', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: { streamId: 's1', stepId: 'st1' },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(200);
+      expect(mockResolveElicitationFlow).toHaveBeenCalledWith({
+        flowId: ownedFlowId,
+        action: 'complete',
+        content: undefined,
+        fallbackStreamId: 's1',
+        fallbackStepId: 'st1',
+      });
+    });
+
+    it('rejects the loser of a concurrent submit that lost the race', async () => {
+      const flowManager = mockFlowManager();
+      // Initial check passes (PENDING); completeFlowIfPending loses to a concurrent
+      // submit, and the re-read finds the winner's settled result.
+      flowManager.getFlowState
+        .mockReset()
+        .mockResolvedValueOnce({ status: 'PENDING', metadata: {} })
+        .mockResolvedValue({ status: 'COMPLETED', metadata: {}, result: { action: 'cancel' } });
+      flowManager.completeFlowIfPending.mockResolvedValue(false);
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({ error: 'Elicitation already resolved' });
+      expect(mockResolveElicitationFlow).not.toHaveBeenCalled();
+    });
+
+    it('should return 500 when completeFlowIfPending throws', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.completeFlowIfPending.mockRejectedValue(new Error('keyv down'));
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'complete' });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: 'Failed to complete elicitation flow' });
+    });
+
+    it('should return 400 when submitted content violates a pattern constraint', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: { zip: { type: 'string', pattern: '^\\d{5}$' } },
+            required: ['zip'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { zip: 'not-a-zip' } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/zip/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when submitted content violates a format constraint', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: { email: { type: 'string', format: 'email' } },
+            required: ['email'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { email: 'not-an-email' } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/email/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when submitted content is not a member of a oneOf constraint', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              plan: {
+                oneOf: [
+                  { const: 'basic', title: 'Basic' },
+                  { const: 'pro', title: 'Pro' },
+                ],
+              },
+            },
+            required: ['plan'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { plan: 'enterprise' } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/plan/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when a submitted array contains a non-permitted member', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              labels: { type: 'array', items: { enum: ['bug', 'feature'] } },
+            },
+            required: ['labels'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { labels: ['bug', 'not-allowed'] } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/labels/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when a submitted array violates minItems', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              labels: {
+                type: 'array',
+                items: { enum: ['bug', 'feature'] },
+                minItems: 1,
+                maxItems: 2,
+              },
+            },
+            required: ['labels'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { labels: [] } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/labels/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when a submitted array violates maxItems', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState.mockResolvedValue({
+        status: 'PENDING',
+        metadata: {
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              labels: {
+                type: 'array',
+                items: { enum: ['bug', 'feature', 'chore'] },
+                maxItems: 1,
+              },
+            },
+            required: ['labels'],
+          },
+        },
+      });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { labels: ['bug', 'feature'] } });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/labels/);
+      expect(flowManager.completeFlowIfPending).not.toHaveBeenCalled();
+    });
+
+    it('should complete the flow for a valid array/oneOf submission', async () => {
+      const flowManager = mockFlowManager();
+      flowManager.getFlowState
+        .mockResolvedValueOnce({
+          status: 'PENDING',
+          metadata: {
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                plan: {
+                  oneOf: [
+                    { const: 'basic', title: 'Basic' },
+                    { const: 'pro', title: 'Pro' },
+                  ],
+                },
+                labels: {
+                  type: 'array',
+                  items: { enum: ['bug', 'feature'] },
+                  minItems: 1,
+                  maxItems: 2,
+                },
+              },
+              required: ['plan', 'labels'],
+            },
+          },
+        })
+        .mockResolvedValue({ status: 'COMPLETED', metadata: {}, result: { action: 'accept' } });
+      require('~/config').getFlowStateManager.mockReturnValue(flowManager);
+
+      const response = await request(app)
+        .post(`/api/mcp/elicitation/${encodeURIComponent(ownedFlowId)}`)
+        .send({ action: 'accept', content: { plan: 'pro', labels: ['bug', 'feature'] } });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      expect(flowManager.completeFlowIfPending).toHaveBeenCalledWith(ownedFlowId, 'mcp_elicit', {
+        action: 'accept',
+        content: { plan: 'pro', labels: ['bug', 'feature'] },
+      });
     });
   });
 });
