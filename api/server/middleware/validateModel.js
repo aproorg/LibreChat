@@ -1,4 +1,5 @@
 const { handleError } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { ViolationTypes } = require('librechat-data-provider');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { getEndpointsConfig } = require('~/server/services/Config');
@@ -52,6 +53,18 @@ const validateModel = async (req, res, next) => {
 
   if (validModel) {
     return next();
+  }
+
+  /* An endpoint with no models is unavailable to this request — the gateway
+     serves none of what it declares, or none for this user's grants. Any model
+     named against it is unserveable rather than illegitimate, and a stored
+     conversation or agent pointing at it would otherwise earn its owner a
+     violation, and eventually a ban, for a change in configuration. */
+  if (availableModels.length === 0) {
+    logger.debug(
+      `[validateModel] No models available for endpoint "${endpoint}"; rejecting "${model}" without logging a violation`,
+    );
+    return handleError(res, { text: 'Endpoint unavailable' });
   }
 
   const { ILLEGAL_MODEL_REQ_SCORE: score = 1 } = process.env ?? {};

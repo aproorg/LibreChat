@@ -175,4 +175,30 @@ describe('validateModel', () => {
       expect(handleError).toHaveBeenCalledWith(res, { text: 'Models not loaded' });
     });
   });
+
+  it('rejects without logging a violation when the endpoint has no models', async () => {
+    getModelsConfig.mockResolvedValue({ openAI: [] });
+
+    await validateModel(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(logViolation).not.toHaveBeenCalled();
+    expect(handleError).toHaveBeenCalledWith(res, { text: 'Endpoint unavailable' });
+  });
+
+  it('still logs a violation for an unlisted model when the endpoint has models', async () => {
+    req.body.model = 'not-a-real-model';
+
+    await validateModel(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(logViolation).toHaveBeenCalledWith(
+      req,
+      res,
+      ViolationTypes.ILLEGAL_MODEL_REQUEST,
+      { type: ViolationTypes.ILLEGAL_MODEL_REQUEST },
+      1,
+    );
+    expect(handleError).toHaveBeenCalledWith(res, { text: 'Illegal model request' });
+  });
 });
