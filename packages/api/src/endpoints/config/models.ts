@@ -10,6 +10,7 @@ import type { TModelsConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, GetUserKeyValuesFunction, UserKeyValues } from '~/types';
 import type { FetchModelsParams } from '~/endpoints/models';
+import { declaredModelNames, hasModelSource } from '~/endpoints/config/availability';
 import { fetchModels as defaultFetchModels } from '~/endpoints/models';
 import { getTokenConfigKey } from '~/endpoints/custom/initialize';
 import { validateEndpointURL } from '~/auth';
@@ -101,11 +102,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
 
     const customEndpoints = (appConfig.endpoints[EModelEndpoint.custom] as TEndpoint[]).filter(
       (endpoint) =>
-        endpoint.baseURL &&
-        endpoint.apiKey &&
-        endpoint.name &&
-        endpoint.models &&
-        (endpoint.models.fetch || endpoint.models.default),
+        endpoint.baseURL && endpoint.apiKey && endpoint.name && hasModelSource(endpoint),
     );
 
     const fetchPromisesMap: Record<string, Promise<string[]>> = {};
@@ -262,11 +259,10 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         }
       }
 
-      if (Array.isArray(models?.default)) {
-        modelsConfig[name] = models.default.map((model) =>
-          typeof model === 'string' ? model : model.name,
-        );
-      }
+      /** Nothing is fetched for this endpoint, so there is nothing to
+       *  intersect: `filter` is inert and the declared list is the whole
+       *  catalog the endpoint can offer. */
+      modelsConfig[name] = declaredModelNames(endpoint);
     }
 
     const settledResults = await Promise.allSettled(Object.values(fetchPromisesMap));
@@ -278,21 +274,45 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
       if (settled.status === 'rejected') {
         logger.warn(`[loadConfigModels] Model fetch failed for "${currentKey}":`, settled.reason);
       }
-      const modelData = settled.status === 'fulfilled' ? settled.value : [];
+      /** `null` means the fetch never answered. Kept distinct from an answer of
+       *  `[]`: one is a broken pipe, the other is the gateway stating that this
+       *  identity has no models, and they must not resolve the same way. */
+      const fetchedModels = settled.status === 'fulfilled' ? (settled.value ?? []) : null;
       const associatedNames = uniqueKeyToEndpointsMap[currentKey];
 
       for (const name of associatedNames) {
         const endpoint = endpointsMap[name];
+        const declared = declaredModelNames(endpoint);
+
+        if (fetchedModels == null) {
+          /** Fail open on transport failure, for every endpoint. An empty list
+           *  can now remove an endpoint outright, so treating an unreachable
+           *  gateway as an authoritative empty would delete endpoints during a
+           *  blip and invalidate stored agents that name them. This is the one
+           *  path where an endpoint sending an `authorization` header no longer
+           *  matches its previous behaviour: it used to collapse to `[]` here,
+           *  because a rejected fetch was flattened into an empty answer before
+           *  that check ran. */
+          modelsConfig[name] = declared;
+          continue;
+        }
+
+        if (endpoint.models?.filter) {
+          /** Declared order is preserved — the list is authored for display.
+           *  An empty answer intersects to nothing, which is the same
+           *  fail-closed outcome the `authorization` branch below hard-codes
+           *  for unfiltered endpoints, reached without inspecting headers. */
+          modelsConfig[name] = declared.filter((model) => fetchedModels.includes(model));
+          continue;
+        }
+
         const usesOidcAuth = hasAuthorizationHeader(endpoint.headers);
-        if (!modelData?.length && usesOidcAuth) {
+        if (!fetchedModels.length && usesOidcAuth) {
           modelsConfig[name] = [];
-        } else if (!modelData?.length) {
-          const defaults = (endpoint.models?.default ?? []).map((m) =>
-            typeof m === 'string' ? m : m.name,
-          );
-          modelsConfig[name] = defaults;
+        } else if (!fetchedModels.length) {
+          modelsConfig[name] = declared;
         } else {
-          modelsConfig[name] = modelData;
+          modelsConfig[name] = fetchedModels;
         }
       }
 

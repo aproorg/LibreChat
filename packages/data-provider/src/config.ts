@@ -835,8 +835,21 @@ export const endpointSchema = baseEndpointSchema.merge(
     apiKey: z.string(),
     baseURL: z.string(),
     models: z.object({
-      default: z.array(modelItemSchema).min(1),
+      /**
+       * The models this endpoint may serve. With `filter`, this is an allowlist
+       * intersected against the fetched catalog rather than a fallback list, so
+       * an empty array is meaningful: it declares an endpoint that shows only
+       * what a deployment actually has, and nothing until it has something.
+       */
+      default: z.array(modelItemSchema),
       fetch: z.boolean().optional(),
+      /**
+       * Serves `default ∩ fetched` instead of replacing `default` with the
+       * fetched list. Lets endpoints sharing one gateway (same baseURL, apiKey
+       * and headers, hence one coalesced fetch) each present their own slice of
+       * that gateway's catalog, without a per-deployment list to maintain.
+       */
+      filter: z.boolean().optional(),
       userIdQuery: z.boolean().optional(),
     }),
     iconURL: z.string().optional(),
