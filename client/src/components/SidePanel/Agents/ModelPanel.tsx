@@ -66,6 +66,16 @@ export default function ModelPanel({
 
   const { data: endpointsConfig = {} } = useGetEndpointsQuery();
 
+  /**
+   * Display-only labels declared by the provider's endpoint. `ControlCombobox`
+   * keeps `value` as the id it hands back, so labelling only changes what the
+   * option and the closed control read.
+   */
+  const modelLabels = useMemo(
+    () => getEndpointField(endpointsConfig, provider, 'modelLabels'),
+    [endpointsConfig, provider],
+  );
+
   const bedrockRegions = useMemo(() => {
     return endpointsConfig?.[provider]?.availableRegions ?? [];
   }, [endpointsConfig, provider]);
@@ -194,6 +204,7 @@ export default function ModelPanel({
                 <>
                   <ControlCombobox
                     selectedValue={field.value || ''}
+                    displayValue={modelLabels?.[field.value || ''] ?? field.value ?? ''}
                     selectPlaceholder={
                       provider
                         ? localize('com_ui_select_model')
@@ -202,7 +213,7 @@ export default function ModelPanel({
                     searchPlaceholder={localize('com_ui_select_model')}
                     setValue={field.onChange}
                     items={models.map((model) => ({
-                      label: model,
+                      label: modelLabels?.[model] ?? model,
                       value: model,
                     }))}
                     disabled={!provider}

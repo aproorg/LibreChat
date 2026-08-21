@@ -1,13 +1,13 @@
 import React, { Fragment } from 'react';
 import { VisuallyHidden } from '@ariakit/react';
 import { CheckCircle2, EarthIcon } from 'lucide-react';
-import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import MarketplaceItem, { marketplaceSearchMatches } from './Marketplace';
+import { getModelName, shouldRenderEndpointOption } from '../utils';
 import { useModelSelectorContext } from '../ModelSelectorContext';
 import { CustomMenuItem as MenuItem } from '../CustomMenu';
-import { shouldRenderEndpointOption } from '../utils';
 import SpecDescription from './SpecDescription';
 import SpecIcon from './SpecIcon';
 import { cn } from '~/utils';
@@ -117,20 +117,15 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
             const filteredModels = endpointMatches
               ? models
               : models.filter((model) => {
-                  let modelName = model.name;
-                  if (
-                    isAgentsEndpoint(endpoint.value) &&
-                    endpoint.agentNames &&
-                    endpoint.agentNames[model.name]
-                  ) {
-                    modelName = endpoint.agentNames[model.name];
-                  } else if (
-                    isAssistantsEndpoint(endpoint.value) &&
-                    endpoint.assistantNames &&
-                    endpoint.assistantNames[model.name]
-                  ) {
-                    modelName = endpoint.assistantNames[model.name];
+                  /* A declared label is additive; an agent or assistant name replaces the id. */
+                  const label = endpoint.modelLabels?.[model.name];
+                  if (label != null) {
+                    return (
+                      label.toLowerCase().includes(lowerQuery) ||
+                      model.name.toLowerCase().includes(lowerQuery)
+                    );
                   }
+                  const modelName = getModelName(endpoint, model.name) ?? model.name;
                   return modelName.toLowerCase().includes(lowerQuery);
                 });
 
@@ -158,21 +153,11 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                   const modelId = model.name;
 
                   let isGlobal = false;
-                  let modelName = modelId;
-                  if (
-                    isAgentsEndpoint(endpoint.value) &&
-                    endpoint.agentNames &&
-                    endpoint.agentNames[modelId]
-                  ) {
-                    modelName = endpoint.agentNames[modelId];
+                  const customName = getModelName(endpoint, modelId);
+                  const modelName = customName ?? modelId;
+                  if (customName != null && isAgentsEndpoint(endpoint.value)) {
                     const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
                     isGlobal = modelInfo?.isGlobal ?? false;
-                  } else if (
-                    isAssistantsEndpoint(endpoint.value) &&
-                    endpoint.assistantNames &&
-                    endpoint.assistantNames[modelId]
-                  ) {
-                    modelName = endpoint.assistantNames[modelId];
                   }
 
                   const isModelSelected =

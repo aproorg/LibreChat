@@ -89,6 +89,7 @@ export const useEndpoints = ({
       const iconKey = getIconKey({ endpoint: ep, endpointsConfig, endpointType });
       const Icon = icons[iconKey];
       const endpointIconURL = getEndpointField(endpointsConfig, ep, 'iconURL');
+      const modelLabels = getEndpointField(endpointsConfig, ep, 'modelLabels');
       const hasModels =
         (ep === EModelEndpoint.agents && ((agents?.length ?? 0) > 0 || showAgentMarketplace)) ||
         (ep === EModelEndpoint.assistants && assistants?.length > 0) ||
@@ -105,6 +106,7 @@ export const useEndpoints = ({
         value: ep,
         label: alternateName[ep] || ep,
         hasModels,
+        modelLabels,
         icon: Icon
           ? React.createElement(Icon, {
               size: 20,

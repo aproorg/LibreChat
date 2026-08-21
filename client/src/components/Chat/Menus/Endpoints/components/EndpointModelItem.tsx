@@ -6,6 +6,7 @@ import type { Endpoint } from '~/common';
 import { useFavorites, useLocalize, useIsActiveItem } from '~/hooks';
 import { useModelSelectorContext } from '../ModelSelectorContext';
 import { CustomMenuItem as MenuItem } from '../CustomMenu';
+import { getModelName } from '../utils';
 import { cn } from '~/utils';
 
 interface EndpointModelItemProps {
@@ -29,22 +30,15 @@ export function EndpointModelItem({ modelId, endpoint }: EndpointModelItemProps)
   const { ref: itemRef, isActive } = useIsActiveItem<HTMLDivElement>();
 
   let isGlobal = false;
-  let modelName = modelId;
   const avatarUrl = endpoint?.modelIcons?.[modelId ?? ''] || null;
 
-  // Use custom names if available
-  if (endpoint && modelId && isAgentsEndpoint(endpoint.value) && endpoint.agentNames?.[modelId]) {
-    modelName = endpoint.agentNames[modelId];
+  /* Agent or assistant name, or the endpoint's declared label; else the id. */
+  const customName = getModelName(endpoint, modelId);
+  const modelName = customName ?? modelId;
 
+  if (customName != null && isAgentsEndpoint(endpoint?.value)) {
     const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
     isGlobal = modelInfo?.isGlobal ?? false;
-  } else if (
-    endpoint &&
-    modelId &&
-    isAssistantsEndpoint(endpoint.value) &&
-    endpoint.assistantNames?.[modelId]
-  ) {
-    modelName = endpoint.assistantNames[modelId];
   }
 
   const isAgent = isAgentsEndpoint(endpoint.value);

@@ -11,6 +11,35 @@ import type { useLocalize } from '~/hooks';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import { Endpoint, SelectedValues } from '~/common';
 
+/**
+ * The custom display name for a model within an endpoint, or `undefined` when
+ * the model has none and should render its own id.
+ *
+ * Agents and assistants carry names from their records. Every other endpoint may
+ * declare `modelLabels` in `librechat.yaml`, a display-only map from model id to
+ * label — nothing else reads it, and the id stays what is sent upstream.
+ */
+export function getModelName(
+  endpoint: Pick<Endpoint, 'value' | 'agentNames' | 'assistantNames' | 'modelLabels'> | null,
+  modelId: string | null,
+): string | undefined {
+  if (!endpoint || !modelId) {
+    return undefined;
+  }
+
+  let names: Record<string, string> | undefined;
+  if (isAgentsEndpoint(endpoint.value)) {
+    names = endpoint.agentNames;
+  } else if (isAssistantsEndpoint(endpoint.value)) {
+    names = endpoint.assistantNames;
+  } else {
+    names = endpoint.modelLabels;
+  }
+
+  /* An empty name is no name: agentNames holds '' for an unnamed agent. */
+  return names?.[modelId] || undefined;
+}
+
 export function filterItems<
   T extends {
     label: string;
@@ -18,6 +47,7 @@ export function filterItems<
     value?: string;
     hasModels?: boolean;
     models?: Array<{ name: string; isGlobal?: boolean }>;
+    modelLabels?: Record<string, string>;
     searchAliases?: string[];
     showMarketplace?: boolean;
   },
@@ -56,6 +86,12 @@ export function filterItems<
     if (item.models && item.models.length > 0) {
       return item.models.some((modelId) => {
         if (modelId.name.toLowerCase().includes(searchTermLower)) {
+          return true;
+        }
+
+        /* A declared label is additive — the id above stays searchable. */
+        const label = item.modelLabels?.[modelId.name];
+        if (label != null && label.toLowerCase().includes(searchTermLower)) {
           return true;
         }
 
@@ -101,6 +137,12 @@ export function filterModels(
   }
 
   return models.filter((modelId) => {
+    /* A declared label is additive — the id below stays searchable. */
+    const label = endpoint.modelLabels?.[modelId];
+    if (label != null && label.toLowerCase().includes(searchTermLower)) {
+      return true;
+    }
+
     let modelName = modelId;
 
     if (isAgentsEndpoint(endpoint.value) && agentsMap && agentsMap[modelId]) {
@@ -226,7 +268,7 @@ export const getDisplayValue = ({
       return endpoint.assistantNames[selectedValues.model];
     }
 
-    return selectedValues.model;
+    return endpoint.modelLabels?.[selectedValues.model] || selectedValues.model;
   }
 
   if (selectedValues.endpoint) {
