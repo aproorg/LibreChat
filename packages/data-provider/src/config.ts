@@ -855,6 +855,14 @@ export const endpointSchema = baseEndpointSchema.merge(
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
     /**
+     * Display-only labels for this endpoint's models, keyed by model id
+     * (`claude-opus-4-8: 'Opus 4.8'`). Purely presentational: the id remains
+     * what is declared, fetched, matched and sent upstream, and a model with no
+     * entry renders its id. A label for a model this endpoint does not serve is
+     * inert, so one map can cover a fleet of deployments.
+     */
+    modelLabels: z.record(z.string()).optional(),
+    /**
      * Forces the endpoint to use a provider's native client / request format
      * instead of the default OpenAI-compatible client. Currently supports
      * `anthropic`, for endpoints that speak the Anthropic `/v1/messages` API
