@@ -389,6 +389,95 @@ describe('createEndpointsConfigService', () => {
   });
 });
 
+describe('withholding custom endpoints with no available models', () => {
+  const customEndpoints = {
+    Claude: { userProvide: false },
+    Other: { userProvide: false },
+  };
+
+  function depsWithModels(
+    modelsConfig: Record<string, string[]> | Error,
+  ): EndpointsConfigDeps & { getModelsConfig: jest.Mock } {
+    const getModelsConfig = jest.fn(() =>
+      modelsConfig instanceof Error ? Promise.reject(modelsConfig) : Promise.resolve(modelsConfig),
+    );
+    return {
+      ...createMockDeps({
+        loadCustomEndpointsConfig: jest.fn().mockReturnValue(customEndpoints),
+      }),
+      getModelsConfig,
+    } as EndpointsConfigDeps & { getModelsConfig: jest.Mock };
+  }
+
+  it('drops an endpoint whose model list is empty', async () => {
+    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: [] });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.Claude).toBeDefined();
+    expect(result).not.toHaveProperty('Other');
+  });
+
+  it('keeps every endpoint that has at least one model', async () => {
+    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: ['agentcore-thing'] });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.Claude).toBeDefined();
+    expect(result?.Other).toBeDefined();
+  });
+
+  it('never withholds built-in endpoints, whatever the models config says', async () => {
+    const deps = depsWithModels({
+      Claude: [],
+      Other: [],
+      [EModelEndpoint.openAI]: [],
+    });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.[EModelEndpoint.openAI]).toBeDefined();
+    expect(result).not.toHaveProperty('Claude');
+    expect(result).not.toHaveProperty('Other');
+  });
+
+  it('fails open when the models config cannot be resolved', async () => {
+    const deps = depsWithModels(new Error('gateway unreachable'));
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.Claude).toBeDefined();
+    expect(result?.Other).toBeDefined();
+  });
+
+  it('fails open for an endpoint the models config has no entry for', async () => {
+    const deps = depsWithModels({ Claude: ['claude-sonnet-5'] });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.Other).toBeDefined();
+  });
+
+  it('leaves every endpoint in place when no models resolver is supplied', async () => {
+    const deps = createMockDeps({
+      loadCustomEndpointsConfig: jest.fn().mockReturnValue(customEndpoints),
+    });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    expect(result?.Claude).toBeDefined();
+    expect(result?.Other).toBeDefined();
+  });
+
+  it('resolves the models config once per endpoints-config call', async () => {
+    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: [] });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    await getEndpointsConfig(fakeReq());
+
+    expect(deps.getModelsConfig).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('defaultAgentCapabilities', () => {
   it('includes AgentCapabilities.skills so skills are enabled by default', () => {
     expect(defaultAgentCapabilities).toContain(AgentCapabilities.skills);
