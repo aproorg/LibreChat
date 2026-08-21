@@ -1,17 +1,15 @@
 const { logger } = require('@librechat/data-schemas');
-const { loadDefaultModels, loadConfigModels } = require('~/server/services/Config');
+const { getModelsConfig } = require('~/server/services/Config');
 
-const getModelsConfig = (req) => loadModels(req);
-
-async function loadModels(req) {
-  const defaultModelsConfig = await loadDefaultModels(req);
-  const customModelsConfig = await loadConfigModels(req);
-  return { ...defaultModelsConfig, ...customModelsConfig };
-}
+/**
+ * The request-memoized accessor is the single entry point for a request's
+ * models config; `loadModels` stays exported for callers that predate it.
+ */
+const loadModels = (req) => getModelsConfig(req);
 
 async function modelController(req, res) {
   try {
-    const modelConfig = await loadModels(req);
+    const modelConfig = await getModelsConfig(req);
     res.send(modelConfig);
   } catch (error) {
     logger.error('Error fetching models:', error);
