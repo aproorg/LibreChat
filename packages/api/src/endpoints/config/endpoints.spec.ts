@@ -418,6 +418,21 @@ describe('withholding custom endpoints with no available models', () => {
     expect(result).not.toHaveProperty('Other');
   });
 
+  it('never withholds a user-provided endpoint — its empty list reflects a fixable key', async () => {
+    const deps = depsWithModels({ Anthropic: [], BYOK: [], ByURL: [] });
+    deps.loadCustomEndpointsConfig = jest.fn().mockReturnValue({
+      Anthropic: { userProvide: false },
+      BYOK: { userProvide: true },
+      ByURL: { userProvide: false, userProvideURL: true },
+    });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
+
+    expect(result).not.toHaveProperty('Anthropic');
+    expect(result?.BYOK).toBeDefined();
+    expect(result?.ByURL).toBeDefined();
+  });
+
   it('keeps every endpoint that has at least one model', async () => {
     const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'], Other: ['agentcore-thing'] });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);

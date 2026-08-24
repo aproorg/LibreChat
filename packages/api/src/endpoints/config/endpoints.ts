@@ -203,6 +203,16 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     }
 
     for (const name of customNames) {
+      /* A user-provided endpoint's model list reflects the user's stored key —
+         missing, expired, or granted nothing — and the picker entry is the only
+         way to set or fix that key. Withholding it would lock the user out, so
+         it stays visible even when empty; `validateModel` exempts it the same
+         way. */
+      const config = customEndpointsConfig[name];
+      if (config?.userProvide || config?.userProvideURL) {
+        continue;
+      }
+
       const available = modelsConfig?.[name];
       if (Array.isArray(available) && available.length === 0) {
         logger.debug(
