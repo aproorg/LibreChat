@@ -1192,18 +1192,4 @@ describe('fetchModels caching behavior', () => {
       Time.TWO_MINUTES,
     );
   });
-
-  it("honours the caller's timeout", async () => {
-    await fetchModels({
-      apiKey: 'key',
-      baseURL: 'https://api.test.com',
-      name: 'TestAPI',
-      timeoutMs: 2000,
-    });
-
-    expect(mockedAxios.get).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ timeout: 2000 }),
-    );
-  });
 });

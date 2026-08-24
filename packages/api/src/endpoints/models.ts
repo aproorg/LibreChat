@@ -55,16 +55,7 @@ export interface FetchModelsParams {
   userObject?: Partial<IUser>;
   /** Skip MODEL_QUERIES cache (e.g., for user-provided keys) */
   skipCache?: boolean;
-  /** Request timeout in ms. Shorter is better where the caller can fall back. */
-  timeoutMs?: number;
 }
-
-/**
- * Ceiling on a catalog fetch. A caller that degrades gracefully should pass
- * something tighter — this bound is only reached when the gateway is unwell,
- * and every millisecond of it is spent in front of a waiting user.
- */
-export const DEFAULT_MODELS_FETCH_TIMEOUT_MS = 5000;
 
 function applyUserProvidedBaseURLProtection(
   options: AxiosRequestConfig,
@@ -174,7 +165,6 @@ export async function fetchModels({
   headers,
   userObject,
   skipCache = false,
-  timeoutMs = DEFAULT_MODELS_FETCH_TIMEOUT_MS,
 }: FetchModelsParams): Promise<string[]> {
   let models: string[] = [];
   const baseURL = direct ? extractBaseURL(_baseURL ?? '') : _baseURL;
@@ -269,7 +259,7 @@ export async function fetchModels({
       headers: {
         ...resolvedHeaders,
       },
-      timeout: timeoutMs,
+      timeout: 5000,
     };
 
     if (name === EModelEndpoint.anthropic) {
