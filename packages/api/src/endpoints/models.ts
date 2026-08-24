@@ -197,8 +197,13 @@ export async function fetchModels({
   // {{LIBRECHAT_OPENID_ID_TOKEN}}`), or asks for the user to be named in the
   // query. Keyed by baseURL+apiKey alone, one user's filtered list would be
   // served to the next request sharing that gateway — so the key carries the
-  // requesting user and the header templates in play, and the entry lives only
-  // long enough to cover a page load rather than the full catalog TTL.
+  // requesting user and the header templates in play.
+  //
+  // A stale entry cannot grant anything: the gateway rejects a call for a model
+  // the user lacks either way, so the cost is a list that lags a revoked grant
+  // or a newly rolled-out model. Five minutes keeps a gateway-side rollout
+  // feeling prompt while covering far more than the three requests a page load
+  // makes.
   const hasUserScopedHeaders = !!headers && Object.keys(headers).length > 0 && !!userObject;
   const isUserScoped = hasUserScopedHeaders || !!(userIdQuery && user);
   const scopeId = isUserScoped ? (userObject?.id ?? user ?? '') : '';
@@ -207,7 +212,7 @@ export async function fetchModels({
   const cacheKey = shouldCache
     ? modelsCacheKey(baseURL ?? '', apiKey, scopeId, isUserScoped ? headers : null)
     : '';
-  const cacheTtl = isUserScoped ? Time.THIRTY_SECONDS : Time.TWO_MINUTES;
+  const cacheTtl = isUserScoped ? Time.FIVE_MINUTES : Time.TWO_MINUTES;
   const modelsCache = shouldCache ? standardCache(CacheKeys.MODEL_QUERIES) : null;
   if (modelsCache && cacheKey) {
     const cachedModels = await modelsCache.get(cacheKey);

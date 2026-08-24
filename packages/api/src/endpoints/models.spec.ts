@@ -1065,7 +1065,7 @@ describe('fetchModels caching behavior', () => {
     );
   });
 
-  it('caches a user-scoped response under its own key, with a short TTL', async () => {
+  it('caches a user-scoped response under its own key, with its own TTL', async () => {
     await fetchModels({
       apiKey: 'key',
       baseURL: 'https://api.test.com',
@@ -1078,7 +1078,7 @@ describe('fetchModels caching behavior', () => {
     expect(mockCacheSet).toHaveBeenCalledWith(
       expect.any(String),
       ['cached-model-1', 'cached-model-2'],
-      Time.THIRTY_SECONDS,
+      Time.FIVE_MINUTES,
     );
   });
 
