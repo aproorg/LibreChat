@@ -391,7 +391,7 @@ describe('createEndpointsConfigService', () => {
 
 describe('withholding custom endpoints with no available models', () => {
   const customEndpoints = {
-    Claude: { userProvide: false },
+    Anthropic: { userProvide: false },
     Other: { userProvide: false },
   };
 
@@ -410,50 +410,50 @@ describe('withholding custom endpoints with no available models', () => {
   }
 
   it('drops an endpoint whose model list is empty', async () => {
-    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: [] });
+    const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'], Other: [] });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
-    expect(result?.Claude).toBeDefined();
+    expect(result?.Anthropic).toBeDefined();
     expect(result).not.toHaveProperty('Other');
   });
 
   it('keeps every endpoint that has at least one model', async () => {
-    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: ['agentcore-thing'] });
+    const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'], Other: ['agentcore-thing'] });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
-    expect(result?.Claude).toBeDefined();
+    expect(result?.Anthropic).toBeDefined();
     expect(result?.Other).toBeDefined();
   });
 
   it('never withholds built-in endpoints, whatever the models config says', async () => {
     const deps = depsWithModels({
-      Claude: [],
+      Anthropic: [],
       Other: [],
       [EModelEndpoint.openAI]: [],
     });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
     expect(result?.[EModelEndpoint.openAI]).toBeDefined();
-    expect(result).not.toHaveProperty('Claude');
+    expect(result).not.toHaveProperty('Anthropic');
     expect(result).not.toHaveProperty('Other');
   });
 
   it('fails open when the models config cannot be resolved', async () => {
     const deps = depsWithModels(new Error('gateway unreachable'));
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
-    expect(result?.Claude).toBeDefined();
+    expect(result?.Anthropic).toBeDefined();
     expect(result?.Other).toBeDefined();
   });
 
   it('fails open for an endpoint the models config has no entry for', async () => {
-    const deps = depsWithModels({ Claude: ['claude-sonnet-5'] });
+    const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'] });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
     expect(result?.Other).toBeDefined();
   });
@@ -463,18 +463,39 @@ describe('withholding custom endpoints with no available models', () => {
       loadCustomEndpointsConfig: jest.fn().mockReturnValue(customEndpoints),
     });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    const result = await getEndpointsConfig(fakeReq());
+    const result = await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
-    expect(result?.Claude).toBeDefined();
+    expect(result?.Anthropic).toBeDefined();
     expect(result?.Other).toBeDefined();
   });
 
   it('resolves the models config once per endpoints-config call', async () => {
-    const deps = depsWithModels({ Claude: ['claude-sonnet-5'], Other: [] });
+    const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'], Other: [] });
     const { getEndpointsConfig } = createEndpointsConfigService(deps);
-    await getEndpointsConfig(fakeReq());
+    await getEndpointsConfig(fakeReq(), { withholdEmpty: true });
 
     expect(deps.getModelsConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds nothing unless the caller asks, and does not resolve models to find out', async () => {
+    const deps = depsWithModels({ Anthropic: ['claude-sonnet-5'], Other: [] });
+    const { getEndpointsConfig } = createEndpointsConfigService(deps);
+    const result = await getEndpointsConfig(fakeReq());
+
+    /* The request path reads `defaultParamsEndpoint` and `userProvide` off these
+       keys, so a caller that has not asked for pruning must see all of them —
+       and must not pay a catalog fetch to be told so. */
+    expect(result?.Anthropic).toBeDefined();
+    expect(result?.Other).toBeDefined();
+    expect(deps.getModelsConfig).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve models for a capability check', async () => {
+    const deps = depsWithModels({ Anthropic: [], Other: [] });
+    const { checkCapability } = createEndpointsConfigService(deps);
+    await checkCapability(fakeReq(), AgentCapabilities.execute_code);
+
+    expect(deps.getModelsConfig).not.toHaveBeenCalled();
   });
 });
 

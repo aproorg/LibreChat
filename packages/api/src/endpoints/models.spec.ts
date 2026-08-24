@@ -1065,13 +1065,99 @@ describe('fetchModels caching behavior', () => {
     );
   });
 
-  it('skips MODEL_QUERIES cache when both headers and userObject are supplied (user-scoped response)', async () => {
+  it('caches a user-scoped response under its own key, with a short TTL', async () => {
     await fetchModels({
       apiKey: 'key',
       baseURL: 'https://api.test.com',
       name: 'TestAPI',
       headers: { Authorization: 'Bearer some-user-token' },
       userObject: { id: 'user-1' },
+    });
+
+    expect(mockCacheGet).toHaveBeenCalled();
+    expect(mockCacheSet).toHaveBeenCalledWith(
+      expect.any(String),
+      ['cached-model-1', 'cached-model-2'],
+      Time.THIRTY_SECONDS,
+    );
+  });
+
+  it('serves one user their own cached list across requests', async () => {
+    const params = {
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { Authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      userObject: { id: 'user-1' },
+    };
+
+    await fetchModels(params);
+    const firstKey = mockCacheSet.mock.calls[0][0];
+
+    mockCacheGet.mockResolvedValue(['from-cache']);
+    const second = await fetchModels(params);
+
+    expect(mockCacheGet).toHaveBeenLastCalledWith(firstKey);
+    expect(second).toEqual(['from-cache']);
+  });
+
+  it('never serves one user the list fetched for another', async () => {
+    const shared = {
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { Authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+    };
+
+    await fetchModels({ ...shared, userObject: { id: 'user-1' } });
+    await fetchModels({ ...shared, userObject: { id: 'user-2' } });
+
+    const [keyOne, keyTwo] = mockCacheSet.mock.calls.map((call) => call[0]);
+    expect(keyOne).not.toEqual(keyTwo);
+  });
+
+  it('separates two endpoints that scope differently over one gateway', async () => {
+    const shared = {
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      userObject: { id: 'user-1' },
+    };
+
+    await fetchModels({
+      ...shared,
+      name: 'Scoped',
+      headers: { Authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+    });
+    await fetchModels({
+      ...shared,
+      name: 'Unscoped',
+      headers: { 'x-user-email': '{{LIBRECHAT_USER_EMAIL}}' },
+    });
+
+    const [keyOne, keyTwo] = mockCacheSet.mock.calls.map((call) => call[0]);
+    expect(keyOne).not.toEqual(keyTwo);
+  });
+
+  it('caches nothing when a user-scoped fetch has no identity to key on', async () => {
+    await fetchModels({
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      headers: { Authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+      userObject: {},
+    });
+
+    expect(mockCacheGet).not.toHaveBeenCalled();
+    expect(mockCacheSet).not.toHaveBeenCalled();
+  });
+
+  it('still respects skipCache for a user-provided credential', async () => {
+    await fetchModels({
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      userObject: { id: 'user-1' },
+      skipCache: true,
     });
 
     expect(mockCacheGet).not.toHaveBeenCalled();
@@ -1099,6 +1185,25 @@ describe('fetchModels caching behavior', () => {
     });
 
     expect(mockCacheGet).toHaveBeenCalled();
-    expect(mockCacheSet).toHaveBeenCalled();
+    /* Nothing scopes this response, so it keeps the shared key and TTL. */
+    expect(mockCacheSet).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      Time.TWO_MINUTES,
+    );
+  });
+
+  it("honours the caller's timeout", async () => {
+    await fetchModels({
+      apiKey: 'key',
+      baseURL: 'https://api.test.com',
+      name: 'TestAPI',
+      timeoutMs: 2000,
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ timeout: 2000 }),
+    );
   });
 });

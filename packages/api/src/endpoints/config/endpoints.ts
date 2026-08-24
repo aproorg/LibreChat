@@ -36,8 +36,24 @@ export interface EndpointsConfigDeps {
   getModelsConfig?: (req: ServerRequest) => Promise<TModelsConfig>;
 }
 
+export interface GetEndpointsConfigOptions {
+  /**
+   * Drop custom endpoints that can serve nothing for this request.
+   *
+   * Off by default, and deliberately: it costs a models resolution, which for a
+   * user-scoped endpoint means a live catalog fetch, and it removes keys that
+   * callers on the request path read for reasons unrelated to presentation —
+   * `defaultParamsEndpoint`, `userProvide`. Only a caller answering "what may
+   * this user be offered" wants it.
+   */
+  withholdEmpty?: boolean;
+}
+
 export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
-  getEndpointsConfig: (req: ServerRequest) => Promise<TEndpointsConfig>;
+  getEndpointsConfig: (
+    req: ServerRequest,
+    options?: GetEndpointsConfigOptions,
+  ) => Promise<TEndpointsConfig>;
   checkCapability: (req: ServerRequest, capability: AgentCapabilities) => Promise<boolean>;
 } {
   const {
@@ -47,7 +63,10 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     getModelsConfig,
   } = deps;
 
-  async function getEndpointsConfig(req: ServerRequest): Promise<TEndpointsConfig> {
+  async function getEndpointsConfig(
+    req: ServerRequest,
+    options: GetEndpointsConfigOptions = {},
+  ): Promise<TEndpointsConfig> {
     const appConfig =
       req.config ??
       (await getAppConfig({
@@ -137,7 +156,9 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
       };
     }
 
-    await withholdEmptyCustomEndpoints(req, mergedConfig, customEndpointsConfig);
+    if (options.withholdEmpty) {
+      await withholdEmptyCustomEndpoints(req, mergedConfig, customEndpointsConfig);
+    }
 
     return orderEndpointsConfig(mergedConfig as TEndpointsConfig);
   }
@@ -153,6 +174,8 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
    * Fails open. Only an explicit empty list withholds an endpoint; a models
    * loader that throws, or that has no entry for an endpoint at all, leaves
    * every declared endpoint in place.
+   *
+   * Reached only when the caller asks for it — see `withholdEmpty`.
    */
   async function withholdEmptyCustomEndpoints(
     req: ServerRequest,

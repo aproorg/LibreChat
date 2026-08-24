@@ -12,6 +12,14 @@ import type { ServerRequest, GetUserKeyValuesFunction, UserKeyValues } from '~/t
 import type { FetchModelsParams } from '~/endpoints/models';
 import { declaredModelNames, hasModelSource } from '~/endpoints/config/availability';
 import { fetchModels as defaultFetchModels } from '~/endpoints/models';
+
+/**
+ * Tighter than `fetchModels`' own ceiling because every caller of this loader
+ * degrades gracefully: a fetch that does not answer falls back to the declared
+ * list, and the gateway rejects a model the user lacks regardless. Waiting
+ * longer buys a more accurate list at the cost of a blank picker.
+ */
+const CATALOG_FETCH_TIMEOUT_MS = 2000;
 import { getTokenConfigKey } from '~/endpoints/custom/initialize';
 import { validateEndpointURL } from '~/auth';
 import { tokenConfigCache } from '~/cache';
@@ -206,6 +214,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
             direct: endpoint.directEndpoint,
             userIdQuery: models.userIdQuery,
             tokenKey,
+            timeoutMs: CATALOG_FETCH_TIMEOUT_MS,
           });
         }
         uniqueKeyToEndpointsMap[uniqueKey] = uniqueKeyToEndpointsMap[uniqueKey] || [];
@@ -251,6 +260,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
                 skipCache: true,
                 /** Fetched with the user's key/URL — always user-scoped */
                 tokenKey: getTokenConfigKey(endpoint, name, req.user?.id ?? '', tenantId),
+                timeoutMs: CATALOG_FETCH_TIMEOUT_MS,
               });
             })();
           uniqueKeyToEndpointsMap[userFetchKey] = uniqueKeyToEndpointsMap[userFetchKey] || [];
