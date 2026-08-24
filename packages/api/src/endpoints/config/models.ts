@@ -278,6 +278,9 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
        *  `[]`: one is a broken pipe, the other is the gateway stating that this
        *  identity has no models, and they must not resolve the same way. */
       const fetchedModels = settled.status === 'fulfilled' ? (settled.value ?? []) : null;
+      /** Built lazily, at most once per fetch result, and shared by every
+       *  endpoint intersecting against it. */
+      let fetchedSet: Set<string> | null = null;
       const associatedNames = uniqueKeyToEndpointsMap[currentKey];
 
       for (const name of associatedNames) {
@@ -302,7 +305,9 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
            *  An empty answer intersects to nothing, which is the same
            *  fail-closed outcome the `authorization` branch below hard-codes
            *  for unfiltered endpoints, reached without inspecting headers. */
-          modelsConfig[name] = declared.filter((model) => fetchedModels.includes(model));
+          fetchedSet ??= new Set(fetchedModels);
+          const fetched = fetchedSet;
+          modelsConfig[name] = declared.filter((model) => fetched.has(model));
           continue;
         }
 
