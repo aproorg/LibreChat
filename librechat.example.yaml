@@ -570,10 +570,17 @@ endpoints:
 
       # Models configuration
       models:
-        # List of default models to use. At least one value is required.
+        # List of default models to use. At least one value is required,
+        # unless `filter` is set — see below.
         default: ['mistral-tiny', 'mistral-small', 'mistral-medium']
         # Fetch option: Set to true to fetch models from API.
         fetch: true # Defaults to false.
+        # Filter option: serve `default` ∩ fetched instead of replacing `default`
+        # with everything the API returns. Lets several endpoints over one gateway
+        # each offer their own slice of its catalog, in the order declared above.
+        # Declaring a model the gateway does not serve is inert, and an endpoint
+        # left with no models is hidden. Requires `fetch: true` to do anything.
+        # filter: true # Defaults to false.
 
       # Optional configurations
 
@@ -594,6 +601,14 @@ endpoints:
 
       # The label displayed for the AI model in messages.
       modelDisplayLabel: 'Mistral' # Default is "AI" when not set.
+
+      # Display labels for this endpoint's models, keyed by model id. Presentational
+      # only: the id is still what is selected, stored and sent to the provider, and
+      # a model with no entry here renders its id. An entry for a model this endpoint
+      # does not serve is simply never shown.
+      # modelLabels:
+      #   mistral-tiny: 'Mistral Tiny'
+      #   mistral-small: 'Mistral Small'
 
       # Add additional parameters to the request. Default params will be overwritten.
       # addParams:
