@@ -259,9 +259,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         }
       }
 
-      /** Nothing is fetched for this endpoint, so there is nothing to
-       *  intersect: `filter` is inert and the declared list is the whole
-       *  catalog the endpoint can offer. */
+      /** No fetch, so nothing to intersect: `filter` is inert here. */
       modelsConfig[name] = declaredModelNames(endpoint);
     }
 
@@ -274,12 +272,10 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
       if (settled.status === 'rejected') {
         logger.warn(`[loadConfigModels] Model fetch failed for "${currentKey}":`, settled.reason);
       }
-      /** `null` means the fetch never answered. Kept distinct from an answer of
-       *  `[]`: one is a broken pipe, the other is the gateway stating that this
-       *  identity has no models, and they must not resolve the same way. */
+      /** `null` is a fetch that never answered, kept distinct from an answer of
+       *  `[]` — a broken pipe is not the gateway saying "no models". */
       const fetchedModels = settled.status === 'fulfilled' ? (settled.value ?? []) : null;
-      /** Built lazily, at most once per fetch result, and shared by every
-       *  endpoint intersecting against it. */
+      /** Built once per fetch result, shared by every endpoint over that gateway. */
       let fetchedSet: Set<string> | null = null;
       const associatedNames = uniqueKeyToEndpointsMap[currentKey];
 
@@ -287,24 +283,15 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         const endpoint = endpointsMap[name];
         const declared = declaredModelNames(endpoint);
 
+        /** Fail open on transport failure: an empty list can remove an endpoint,
+         *  so an unreachable gateway must not read as an authoritative empty. */
         if (fetchedModels == null) {
-          /** Fail open on transport failure, for every endpoint. An empty list
-           *  can now remove an endpoint outright, so treating an unreachable
-           *  gateway as an authoritative empty would delete endpoints during a
-           *  blip and invalidate stored agents that name them. This is the one
-           *  path where an endpoint sending an `authorization` header no longer
-           *  matches its previous behaviour: it used to collapse to `[]` here,
-           *  because a rejected fetch was flattened into an empty answer before
-           *  that check ran. */
           modelsConfig[name] = declared;
           continue;
         }
 
+        /** Declared order is preserved — the list is authored for display. */
         if (endpoint.models?.filter) {
-          /** Declared order is preserved — the list is authored for display.
-           *  An empty answer intersects to nothing, which is the same
-           *  fail-closed outcome the `authorization` branch below hard-codes
-           *  for unfiltered endpoints, reached without inspecting headers. */
           fetchedSet ??= new Set(fetchedModels);
           const fetched = fetchedSet;
           modelsConfig[name] = declared.filter((model) => fetched.has(model));

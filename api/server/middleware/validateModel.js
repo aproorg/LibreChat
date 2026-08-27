@@ -55,15 +55,12 @@ const validateModel = async (req, res, next) => {
     return next();
   }
 
-  /* An endpoint with no models is unavailable to this request — the gateway
-     serves none of what it declares, or none for this user's grants. Any model
-     named against it is unserveable rather than illegitimate, and a stored
-     conversation or agent pointing at it would otherwise earn its owner a
-     violation, and eventually a ban, for a change in configuration. */
+  /* An endpoint serving nothing is unavailable, not being asked for an illegal
+     model: the requests that arrive are stored conversations and agents naming
+     an endpoint that has stopped serving them, and a violation here would earn
+     their owners a ban for a configuration change they had no part in. */
   if (availableModels.length === 0) {
-    logger.debug(
-      `[validateModel] No models available for endpoint "${endpoint}"; rejecting "${model}" without logging a violation`,
-    );
+    logger.debug(`[validateModel] "${endpoint}" has no models available; rejecting "${model}"`);
     return handleError(res, { text: 'Endpoint unavailable' });
   }
 

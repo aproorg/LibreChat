@@ -1,10 +1,7 @@
 const { logger } = require('@librechat/data-schemas');
 const { getModelsConfig } = require('~/server/services/Config');
 
-/**
- * The request-memoized accessor is the single entry point for a request's
- * models config; `loadModels` stays exported for callers that predate it.
- */
+/** Retained as the pre-memo name for this accessor; nothing in-tree uses it. */
 const loadModels = (req) => getModelsConfig(req);
 
 async function modelController(req, res) {

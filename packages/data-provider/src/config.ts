@@ -835,19 +835,13 @@ export const endpointSchema = baseEndpointSchema.merge(
     apiKey: z.string(),
     baseURL: z.string(),
     models: z.object({
-      /**
-       * The models this endpoint may serve. With `filter`, this is an allowlist
-       * intersected against the fetched catalog rather than a fallback list, so
-       * an empty array is meaningful: it declares an endpoint that shows only
-       * what a deployment actually has, and nothing until it has something.
-       */
+      /** An allowlist under `filter`, a fallback otherwise; may be empty under `filter`. */
       default: z.array(modelItemSchema),
       fetch: z.boolean().optional(),
       /**
-       * Serves `default ∩ fetched` instead of replacing `default` with the
-       * fetched list. Lets endpoints sharing one gateway (same baseURL, apiKey
-       * and headers, hence one coalesced fetch) each present their own slice of
-       * that gateway's catalog, without a per-deployment list to maintain.
+       * Serves `default ∩ fetched` instead of replacing `default` with the fetched
+       * list, so endpoints sharing one gateway can each present their own slice of
+       * its catalog. Declaring a model the gateway lacks is inert.
        */
       filter: z.boolean().optional(),
       userIdQuery: z.boolean().optional(),
@@ -855,11 +849,9 @@ export const endpointSchema = baseEndpointSchema.merge(
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
     /**
-     * Display-only labels for this endpoint's models, keyed by model id
-     * (`claude-opus-4-8: 'Opus 4.8'`). Purely presentational: the id remains
-     * what is declared, fetched, matched and sent upstream, and a model with no
-     * entry renders its id. A label for a model this endpoint does not serve is
-     * inert, so one map can cover a fleet of deployments.
+     * Display labels keyed by model id (`claude-opus-4-8: 'Opus 4.8'`). Purely
+     * presentational — the id stays what is declared, matched and sent upstream,
+     * and an unlabelled model renders its id.
      */
     modelLabels: z.record(z.string()).optional(),
     /**
