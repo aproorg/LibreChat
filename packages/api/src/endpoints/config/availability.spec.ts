@@ -1,6 +1,7 @@
 import { EModelEndpoint } from 'librechat-data-provider';
+import type { TConfig } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types';
-import { declaredModelNames, hasModelSource } from './availability';
+import { declaredModelNames, hasModelSource, withholdEmptyEndpoints } from './availability';
 import { createLoadConfigModels } from './models';
 
 const GATEWAY = {
@@ -226,5 +227,79 @@ describe('loadConfigModels – endpoints without `filter` are unchanged', () => 
     );
 
     expect(result.LiteLLM).toEqual(['claude-sonnet-5']);
+  });
+});
+
+describe('withholdEmptyEndpoints', () => {
+  const custom = (extra: Partial<TConfig> = {}): TConfig =>
+    ({ order: 0, type: EModelEndpoint.custom, userProvide: false, ...extra }) as TConfig;
+
+  it('drops a custom endpoint whose model list is empty', () => {
+    const result = withholdEmptyEndpoints(
+      { Anthropic: custom(), Google: custom() },
+      { Anthropic: ['claude-sonnet-5'], Google: [] },
+    );
+
+    expect(result?.Anthropic).toBeDefined();
+    expect(result).not.toHaveProperty('Google');
+  });
+
+  it('keeps every endpoint that has at least one model', () => {
+    const result = withholdEmptyEndpoints(
+      { Anthropic: custom(), Google: custom() },
+      { Anthropic: ['claude-sonnet-5'], Google: ['gemini-3-pro'] },
+    );
+
+    expect(Object.keys(result ?? {})).toEqual(['Anthropic', 'Google']);
+  });
+
+  it('never withholds a user-provided endpoint — its empty list reflects a fixable key', () => {
+    const result = withholdEmptyEndpoints(
+      {
+        Shared: custom(),
+        BYOK: custom({ userProvide: true }),
+        ByURL: custom({ userProvideURL: true }),
+      },
+      { Shared: [], BYOK: [], ByURL: [] },
+    );
+
+    expect(result).not.toHaveProperty('Shared');
+    expect(result?.BYOK).toBeDefined();
+    expect(result?.ByURL).toBeDefined();
+  });
+
+  it('never withholds a built-in endpoint, whatever the models config says', () => {
+    const result = withholdEmptyEndpoints(
+      { [EModelEndpoint.openAI]: { order: 0 } as TConfig, Google: custom() },
+      { [EModelEndpoint.openAI]: [], Google: [] },
+    );
+
+    expect(result?.[EModelEndpoint.openAI]).toBeDefined();
+    expect(result).not.toHaveProperty('Google');
+  });
+
+  it('fails open when there is no models config to judge against', () => {
+    const endpointsConfig = { Google: custom() };
+
+    expect(withholdEmptyEndpoints(endpointsConfig, null)).toBe(endpointsConfig);
+    expect(withholdEmptyEndpoints(endpointsConfig, undefined)).toBe(endpointsConfig);
+  });
+
+  it('fails open for an endpoint the models config has no entry for', () => {
+    const result = withholdEmptyEndpoints(
+      { Anthropic: custom(), Google: custom() },
+      { Anthropic: ['claude-sonnet-5'] },
+    );
+
+    expect(result?.Google).toBeDefined();
+  });
+
+  it('preserves endpoint order, which the caller has already resolved', () => {
+    const result = withholdEmptyEndpoints(
+      { First: custom(), Dropped: custom(), Second: custom() },
+      { First: ['a'], Dropped: [], Second: ['b'] },
+    );
+
+    expect(Object.keys(result ?? {})).toEqual(['First', 'Second']);
   });
 });
