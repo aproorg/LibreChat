@@ -29,19 +29,12 @@ export function EndpointModelItem({ modelId, endpoint }: EndpointModelItemProps)
 
   const { ref: itemRef, isActive } = useIsActiveItem<HTMLDivElement>();
 
-  let isGlobal = false;
   const avatarUrl = endpoint?.modelIcons?.[modelId ?? ''] || null;
-
-  /* Agent or assistant name, or the endpoint's declared label; else the id. */
-  const customName = getModelName(endpoint, modelId);
-  const modelName = customName ?? modelId;
-
-  if (customName != null && isAgentsEndpoint(endpoint?.value)) {
-    const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
-    isGlobal = modelInfo?.isGlobal ?? false;
-  }
+  const modelName = getModelName(endpoint, modelId) ?? modelId;
 
   const isAgent = isAgentsEndpoint(endpoint.value);
+  const isGlobal =
+    isAgent && (endpoint?.models?.find((m) => m.name === modelId)?.isGlobal ?? false);
   const isFavorite = isAgent
     ? isFavoriteAgent(modelId ?? '')
     : isFavoriteModel(modelId ?? '', endpoint.value);

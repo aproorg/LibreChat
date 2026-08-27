@@ -5,7 +5,7 @@ import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import MarketplaceItem, { marketplaceSearchMatches } from './Marketplace';
-import { getModelName, shouldRenderEndpointOption } from '../utils';
+import { getModelName, modelSearchNames, shouldRenderEndpointOption } from '../utils';
 import { useModelSelectorContext } from '../ModelSelectorContext';
 import { CustomMenuItem as MenuItem } from '../CustomMenu';
 import SpecDescription from './SpecDescription';
@@ -116,18 +116,11 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
             const models = endpoint.models ?? [];
             const filteredModels = endpointMatches
               ? models
-              : models.filter((model) => {
-                  /* A declared label is additive; an agent or assistant name replaces the id. */
-                  const label = endpoint.modelLabels?.[model.name];
-                  if (label != null) {
-                    return (
-                      label.toLowerCase().includes(lowerQuery) ||
-                      model.name.toLowerCase().includes(lowerQuery)
-                    );
-                  }
-                  const modelName = getModelName(endpoint, model.name) ?? model.name;
-                  return modelName.toLowerCase().includes(lowerQuery);
-                });
+              : models.filter((model) =>
+                  modelSearchNames(endpoint, model.name).some((name) =>
+                    name.toLowerCase().includes(lowerQuery),
+                  ),
+                );
 
             if (!filteredModels.length && !showMarketplace) {
               return null; // skip if no models match
@@ -152,13 +145,10 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                 {filteredModels.map((model) => {
                   const modelId = model.name;
 
-                  let isGlobal = false;
-                  const customName = getModelName(endpoint, modelId);
-                  const modelName = customName ?? modelId;
-                  if (customName != null && isAgentsEndpoint(endpoint.value)) {
-                    const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
-                    isGlobal = modelInfo?.isGlobal ?? false;
-                  }
+                  const modelName = getModelName(endpoint, modelId) ?? modelId;
+                  const isGlobal =
+                    isAgentsEndpoint(endpoint.value) &&
+                    (endpoint.models?.find((m) => m.name === modelId)?.isGlobal ?? false);
 
                   const isModelSelected =
                     !selectedSpec &&
