@@ -182,27 +182,17 @@ export async function fetchModels({
     await validateEndpointURL(baseURL, name, allowedAddresses);
   }
 
-  // A response is user-scoped when the caller forwards header templates resolved
-  // against a specific user (e.g. `Authorization: Bearer
-  // {{LIBRECHAT_OPENID_ID_TOKEN}}`), or asks for the user to be named in the
-  // query. Keyed by baseURL+apiKey alone, one user's filtered list would be
-  // served to the next request sharing that gateway — so the key carries the
-  // requesting user and the header templates in play.
-  //
-  // A stale entry cannot grant anything: the gateway rejects a call for a model
-  // the user lacks either way, so the cost is a list that lags a revoked grant
-  // or a newly rolled-out model. Five minutes keeps a gateway-side rollout
-  // feeling prompt while covering far more than the three requests a page load
-  // makes.
+  // The MODEL_QUERIES cache is keyed by baseURL+apiKey only. That's safe
+  // when the response is identical for every caller, but fails when callers
+  // forward header templates that resolve to a user-bound value (e.g.
+  // `Authorization: Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}`): one user's
+  // filtered list could otherwise be served to the next request that
+  // shares the same baseURL+apiKey. Skip the cache whenever both `headers`
+  // and `userObject` are supplied, since that's the signal the caller is
+  // resolving headers against a specific user's identity.
   const hasUserScopedHeaders = !!headers && Object.keys(headers).length > 0 && !!userObject;
-  const isUserScoped = hasUserScopedHeaders || !!(userIdQuery && user);
-  const scopeId = isUserScoped ? (userObject?.id ?? user ?? '') : '';
-  // No identity to key on: cache nothing rather than share one user's list.
-  const shouldCache = !skipCache && (!isUserScoped || scopeId !== '');
-  const cacheKey = shouldCache
-    ? modelsCacheKey(baseURL ?? '', apiKey, scopeId, isUserScoped ? headers : null)
-    : '';
-  const cacheTtl = isUserScoped ? Time.FIVE_MINUTES : Time.TWO_MINUTES;
+  const shouldCache = !skipCache && !(userIdQuery && user) && !hasUserScopedHeaders;
+  const cacheKey = shouldCache ? modelsCacheKey(baseURL ?? '', apiKey) : '';
   const modelsCache = shouldCache ? standardCache(CacheKeys.MODEL_QUERIES) : null;
   if (modelsCache && cacheKey) {
     const cachedModels = await modelsCache.get(cacheKey);
@@ -237,7 +227,7 @@ export async function fetchModels({
     }
     if (ollamaModels !== null) {
       if (modelsCache && cacheKey && ollamaModels.length > 0) {
-        await modelsCache.set(cacheKey, ollamaModels, cacheTtl);
+        await modelsCache.set(cacheKey, ollamaModels, Time.TWO_MINUTES);
       }
       return ollamaModels;
     }
@@ -313,33 +303,14 @@ export async function fetchModels({
   }
 
   if (modelsCache && cacheKey && models.length > 0) {
-    await modelsCache.set(cacheKey, models, cacheTtl);
+    await modelsCache.set(cacheKey, models, Time.TWO_MINUTES);
   }
 
   return models;
 }
 
-/**
- * `scopeId` is the requesting user, empty for a response every caller shares.
- *
- * `headers` are the configured templates, not the resolved values: templates are
- * static config, so they separate two endpoints that scope differently over one
- * gateway while staying identical across a user's requests. Resolved values
- * would not — several carry a per-request conversation or message id, and such a
- * key would never be hit twice.
- */
-function modelsCacheKey(
-  baseURL: string,
-  apiKey: string,
-  scopeId = '',
-  headers: Record<string, string> | null = null,
-): string {
-  const headerScope = headers ? JSON.stringify(Object.entries(headers).sort()) : '';
-  return crypto
-    .createHash('sha256')
-    .update(`${baseURL}:${apiKey}:${scopeId}:${headerScope}`)
-    .digest('hex')
-    .slice(0, 32);
+function modelsCacheKey(baseURL: string, apiKey: string): string {
+  return crypto.createHash('sha256').update(`${baseURL}:${apiKey}`).digest('hex').slice(0, 32);
 }
 
 /** Options for fetching OpenAI models */
