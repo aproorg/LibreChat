@@ -29,11 +29,12 @@ export function getModelName(
     return undefined;
   }
 
-  const names = isAgentsEndpoint(endpoint.value)
-    ? endpoint.agentNames
-    : isAssistantsEndpoint(endpoint.value)
-      ? endpoint.assistantNames
-      : endpoint.modelLabels;
+  let names = endpoint.modelLabels;
+  if (isAgentsEndpoint(endpoint.value)) {
+    names = endpoint.agentNames;
+  } else if (isAssistantsEndpoint(endpoint.value)) {
+    names = endpoint.assistantNames;
+  }
 
   /* An empty name is no name: agentNames holds '' for an unnamed agent. */
   return names?.[modelId] || undefined;

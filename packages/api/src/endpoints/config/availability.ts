@@ -1,11 +1,6 @@
 import { logger } from '@librechat/data-schemas';
 import { EModelEndpoint } from 'librechat-data-provider';
-import type {
-  TEndpointsConfig,
-  TModelsConfig,
-  TEndpoint,
-  TConfig,
-} from 'librechat-data-provider';
+import type { TEndpointsConfig, TModelsConfig, TEndpoint, TConfig } from 'librechat-data-provider';
 
 /**
  * Model availability helpers for custom endpoints.
