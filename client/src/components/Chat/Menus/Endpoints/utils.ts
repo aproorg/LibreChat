@@ -10,6 +10,7 @@ import type {
 import type { useLocalize } from '~/hooks';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import { Endpoint, SelectedValues } from '~/common';
+import { getModelLabel } from '~/utils';
 
 type NamedEndpoint = Pick<Endpoint, 'value' | 'agentNames' | 'assistantNames' | 'modelLabels'>;
 
@@ -36,8 +37,7 @@ export function getModelName(
     names = endpoint.assistantNames;
   }
 
-  /* An empty name is no name: agentNames holds '' for an unnamed agent. */
-  return names?.[modelId] || undefined;
+  return getModelLabel(names, modelId);
 }
 
 /**
@@ -46,7 +46,7 @@ export function getModelName(
  * replaces the id on screen and so is searched in its place.
  */
 export function modelSearchNames(endpoint: NamedEndpoint, modelId: string): string[] {
-  const label = endpoint.modelLabels?.[modelId];
+  const label = getModelLabel(endpoint.modelLabels, modelId);
   return label ? [label, modelId] : [getModelName(endpoint, modelId) ?? modelId];
 }
 
@@ -100,8 +100,8 @@ export function filterItems<
         }
 
         /* A declared label is additive — the id above stays searchable. */
-        const label = item.modelLabels?.[modelId.name];
-        if (label != null && label.toLowerCase().includes(searchTermLower)) {
+        const label = getModelLabel(item.modelLabels, modelId.name);
+        if (label?.toLowerCase().includes(searchTermLower)) {
           return true;
         }
 
@@ -148,8 +148,8 @@ export function filterModels(
 
   return models.filter((modelId) => {
     /* A declared label is additive — the id below stays searchable. */
-    const label = endpoint.modelLabels?.[modelId];
-    if (label != null && label.toLowerCase().includes(searchTermLower)) {
+    const label = getModelLabel(endpoint.modelLabels, modelId);
+    if (label?.toLowerCase().includes(searchTermLower)) {
       return true;
     }
 

@@ -17,6 +17,7 @@ import {
   processAgentOption,
   defaultTextProps,
   validateEmail,
+  getModelLabel,
   getIconKey,
   cn,
 } from '~/utils';
@@ -237,7 +238,7 @@ export default function AgentConfig() {
 
   const providerValue = typeof provider === 'string' ? provider : provider?.value;
   const modelLabels = getEndpointField(endpointsConfig, providerValue as string, 'modelLabels');
-  const modelDisplayName = model ? modelLabels?.[model] || model : undefined;
+  const modelDisplayName = model ? (getModelLabel(modelLabels, model) ?? model) : undefined;
   let Icon: IconComponentTypes | null | undefined;
   let endpointType: EModelEndpoint | undefined;
   let endpointIconURL: string | undefined;

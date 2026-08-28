@@ -52,6 +52,7 @@ jest.mock('~/hooks', () => ({
 
 jest.mock('~/utils', () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
+  getModelLabel: (labels?: Record<string, string>, id?: string) => labels?.[id ?? '']?.trim(),
 }));
 
 function TestForm() {
@@ -82,7 +83,7 @@ describe('ModelPanel model labels', () => {
 
   it('displays a configured label while retaining the model id', () => {
     mockEndpointsConfig = {
-      custom: { order: 0, modelLabels: { 'custom-model': 'Custom Model' } },
+      custom: { order: 0, modelLabels: { 'custom-model': ' Custom Model ' } },
     };
 
     const { getByTestId } = render(<TestForm />);

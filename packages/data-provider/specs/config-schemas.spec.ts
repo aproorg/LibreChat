@@ -274,6 +274,17 @@ describe('endpointSchema modelLabels', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('trims declared labels', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': ' Opus 4.8 ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelLabels).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+    }
+  });
 });
 
 describe('endpointSchema addParams validation', () => {

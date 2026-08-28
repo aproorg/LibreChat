@@ -852,7 +852,7 @@ export const endpointSchema = baseEndpointSchema.merge(
      * presentational — the id stays what is declared, matched and sent upstream,
      * and an unlabelled model renders its id.
      */
-    modelLabels: z.record(z.string()).optional(),
+    modelLabels: z.record(z.string().transform((label) => label.trim())).optional(),
     /**
      * Forces the endpoint to use a provider's native client / request format
      * instead of the default OpenAI-compatible client. Currently supports
