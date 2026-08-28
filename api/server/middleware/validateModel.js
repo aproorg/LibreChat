@@ -1,4 +1,4 @@
-const { handleError } = require('@librechat/api');
+const { handleError, filterManagedEndpoints } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { ViolationTypes } = require('librechat-data-provider');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
@@ -55,11 +55,12 @@ const validateModel = async (req, res, next) => {
     return next();
   }
 
-  /* An endpoint serving nothing is unavailable, not being asked for an illegal
-     model: the requests that arrive are stored conversations and agents naming
-     an endpoint that has stopped serving them, and a violation here would earn
-     their owners a ban for a configuration change they had no part in. */
-  if (availableModels.length === 0) {
+  /* A filter-managed endpoint serving nothing is unavailable, not being asked
+     for an illegal model: the requests that arrive are stored conversations
+     naming an endpoint that has stopped serving them, and a violation here
+     would earn their owners a ban for a configuration change they had no part
+     in. Endpoints that do not filter keep the violation they always logged. */
+  if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(endpoint)) {
     logger.debug(`[validateModel] "${endpoint}" has no models available; rejecting "${model}"`);
     return handleError(res, { text: 'Endpoint unavailable' });
   }

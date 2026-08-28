@@ -1,6 +1,7 @@
 import { logger } from '@librechat/data-schemas';
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, normalizeEndpointName } from 'librechat-data-provider';
 import type { TEndpointsConfig, TModelsConfig, TEndpoint, TConfig } from 'librechat-data-provider';
+import type { AppConfig } from '@librechat/data-schemas';
 
 /**
  * Model availability helpers for custom endpoints.
@@ -40,6 +41,33 @@ export function hasModelSource(endpoint?: EndpointModelsSource | null): boolean 
 }
 
 /**
+ * Names of the custom endpoints whose served list is decided by `models.filter`.
+ *
+ * Nothing outside this set may change behaviour: an endpoint that does not
+ * filter cannot end up with an unexpectedly empty list, so withholding it or
+ * exempting it from a violation would be a change no deployment asked for.
+ * `filter` also needs `fetch` to mean anything — without one there is no
+ * fetched catalog to intersect against, and the served list is just the
+ * declared one.
+ *
+ * Keyed by `normalizeEndpointName`, matching how the models config is keyed.
+ */
+export function filterManagedEndpoints(appConfig?: AppConfig | null): Set<string> {
+  const managed = new Set<string>();
+  const custom = appConfig?.endpoints?.[EModelEndpoint.custom] as TEndpoint[] | undefined;
+  if (!Array.isArray(custom)) {
+    return managed;
+  }
+
+  for (const endpoint of custom) {
+    if (endpoint?.name && endpoint.models?.filter && endpoint.models.fetch) {
+      managed.add(normalizeEndpointName(endpoint.name));
+    }
+  }
+  return managed;
+}
+
+/**
  * Custom endpoints with nothing to serve this request, removed.
  *
  * An empty model list is not a usable endpoint: it renders as an empty picker
@@ -51,14 +79,18 @@ export function hasModelSource(endpoint?: EndpointModelsSource | null): boolean 
  * which the picker entry is the only route to a fix. `validateModel` exempts the
  * latter the same way.
  *
+ * Only `filterManaged` endpoints are considered, so this is inert for a
+ * deployment that does not use `models.filter`.
+ *
  * Fails open: an absent models config, or one with no entry for an endpoint,
  * withholds nothing.
  */
 export function withholdEmptyEndpoints(
   endpointsConfig: TEndpointsConfig,
-  modelsConfig?: TModelsConfig | null,
+  modelsConfig: TModelsConfig | null | undefined,
+  filterManaged: ReadonlySet<string>,
 ): TEndpointsConfig {
-  if (endpointsConfig == null || modelsConfig == null) {
+  if (endpointsConfig == null || modelsConfig == null || filterManaged.size === 0) {
     return endpointsConfig;
   }
 
@@ -66,6 +98,7 @@ export function withholdEmptyEndpoints(
   for (const [name, config] of Object.entries(endpointsConfig)) {
     const models = modelsConfig[name];
     const withhold =
+      filterManaged.has(name) &&
       config?.type === EModelEndpoint.custom &&
       !config.userProvide &&
       !config.userProvideURL &&

@@ -10,16 +10,28 @@ const endpointController = require('~/server/controllers/EndpointController');
 
 const custom = (extra = {}) => ({ order: 0, type: EModelEndpoint.custom, ...extra });
 
-const respond = async () => {
+/** A request whose app config declares `name` as a filter-managed endpoint. */
+const filtering = (...names) => ({
+  config: {
+    endpoints: {
+      [EModelEndpoint.custom]: names.map((name) => ({
+        name,
+        models: { default: ['claude-sonnet-5'], fetch: true, filter: true },
+      })),
+    },
+  },
+});
+
+const respond = async (req = filtering('Anthropic', 'Google')) => {
   const res = { send: jest.fn() };
-  await endpointController({}, res);
+  await endpointController(req, res);
   return JSON.parse(res.send.mock.calls[0][0]);
 };
 
 describe('endpointController', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('withholds a custom endpoint with no models available to the request', async () => {
+  it('withholds a filter-managed endpoint with no models available to the request', async () => {
     getEndpointsConfig.mockResolvedValue({ Anthropic: custom(), Google: custom() });
     getModelsConfig.mockResolvedValue({ Anthropic: ['claude-sonnet-5'], Google: [] });
 
@@ -36,6 +48,38 @@ describe('endpointController', () => {
     const body = await respond();
 
     expect(body.Anthropic).toBeDefined();
+    expect(body.Google).toBeDefined();
+  });
+
+  /* The route is on the first-page-load path. A deployment that does not use
+     `models.filter` must not start paying for a models resolution here. */
+  it('never resolves the models config when no endpoint filters', async () => {
+    getEndpointsConfig.mockResolvedValue({ Anthropic: custom(), Google: custom() });
+    getModelsConfig.mockResolvedValue({ Anthropic: ['claude-sonnet-5'], Google: [] });
+
+    const body = await respond({ config: { endpoints: { [EModelEndpoint.custom]: [] } } });
+
+    expect(getModelsConfig).not.toHaveBeenCalled();
+    expect(body.Anthropic).toBeDefined();
+    expect(body.Google).toBeDefined();
+  });
+
+  it('leaves an empty endpoint alone when a different endpoint is the one filtering', async () => {
+    getEndpointsConfig.mockResolvedValue({ Anthropic: custom(), Google: custom() });
+    getModelsConfig.mockResolvedValue({ Anthropic: ['claude-sonnet-5'], Google: [] });
+
+    const body = await respond(filtering('Anthropic'));
+
+    expect(body.Google).toBeDefined();
+  });
+
+  it('withholds nothing when the request carries no app config', async () => {
+    getEndpointsConfig.mockResolvedValue({ Google: custom() });
+    getModelsConfig.mockResolvedValue({ Google: [] });
+
+    const body = await respond({});
+
+    expect(getModelsConfig).not.toHaveBeenCalled();
     expect(body.Google).toBeDefined();
   });
 });

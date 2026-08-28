@@ -1,4 +1,9 @@
-export { declaredModelNames, hasModelSource, withholdEmptyEndpoints } from './availability';
+export {
+  declaredModelNames,
+  hasModelSource,
+  filterManagedEndpoints,
+  withholdEmptyEndpoints,
+} from './availability';
 export { createEndpointsConfigService } from './endpoints';
 export { createLoadConfigModels } from './models';
 export * from './providers';

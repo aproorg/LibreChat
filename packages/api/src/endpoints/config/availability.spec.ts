@@ -1,7 +1,12 @@
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, normalizeEndpointName } from 'librechat-data-provider';
 import type { TConfig } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types';
-import { declaredModelNames, hasModelSource, withholdEmptyEndpoints } from './availability';
+import {
+  declaredModelNames,
+  hasModelSource,
+  filterManagedEndpoints,
+  withholdEmptyEndpoints,
+} from './availability';
 import { createLoadConfigModels } from './models';
 
 const GATEWAY = {
@@ -230,14 +235,76 @@ describe('loadConfigModels – endpoints without `filter` are unchanged', () => 
   });
 });
 
+describe('filterManagedEndpoints', () => {
+  const appConfig = (endpoints: Record<string, unknown>[]) =>
+    ({ endpoints: { [EModelEndpoint.custom]: endpoints } }) as never;
+
+  it('collects only endpoints that both filter and fetch', () => {
+    const managed = filterManagedEndpoints(
+      appConfig([
+        { name: 'Claude', models: { default: ['a'], fetch: true, filter: true } },
+        { name: 'Gemini', models: { default: ['b'], fetch: true, filter: true } },
+        { name: 'Plain', models: { default: ['c'], fetch: true } },
+      ]),
+    );
+
+    expect([...managed].sort()).toEqual(['Claude', 'Gemini']);
+  });
+
+  it('excludes `filter` without `fetch` — there is no catalog to intersect', () => {
+    const managed = filterManagedEndpoints(
+      appConfig([{ name: 'Claude', models: { default: ['a'], filter: true } }]),
+    );
+
+    expect(managed.size).toBe(0);
+  });
+
+  it('keys by the normalized endpoint name, as the models config is', () => {
+    const managed = filterManagedEndpoints(
+      appConfig([{ name: ' Claude ', models: { default: ['a'], fetch: true, filter: true } }]),
+    );
+
+    expect(managed.has(normalizeEndpointName(' Claude '))).toBe(true);
+  });
+
+  it('is empty for a config with no custom endpoints at all', () => {
+    expect(filterManagedEndpoints(undefined).size).toBe(0);
+    expect(filterManagedEndpoints(null).size).toBe(0);
+    expect(filterManagedEndpoints({ endpoints: {} } as never).size).toBe(0);
+  });
+});
+
 describe('withholdEmptyEndpoints', () => {
   const custom = (extra: Partial<TConfig> = {}): TConfig =>
     ({ order: 0, type: EModelEndpoint.custom, userProvide: false, ...extra }) as TConfig;
+  const managed = (...names: string[]) => new Set(names);
 
-  it('drops a custom endpoint whose model list is empty', () => {
+  it('withholds nothing when no endpoint is filter-managed', () => {
+    const endpointsConfig = { Anthropic: custom(), Google: custom() };
+    const result = withholdEmptyEndpoints(
+      endpointsConfig,
+      { Anthropic: ['claude-sonnet-5'], Google: [] },
+      managed(),
+    );
+
+    expect(result).toBe(endpointsConfig);
+  });
+
+  it('leaves an empty endpoint alone when it is not the one filtering', () => {
+    const result = withholdEmptyEndpoints(
+      { Filtered: custom(), Plain: custom() },
+      { Filtered: ['claude-sonnet-5'], Plain: [] },
+      managed('Filtered'),
+    );
+
+    expect(result?.Plain).toBeDefined();
+  });
+
+  it('drops a filter-managed endpoint whose model list is empty', () => {
     const result = withholdEmptyEndpoints(
       { Anthropic: custom(), Google: custom() },
       { Anthropic: ['claude-sonnet-5'], Google: [] },
+      managed('Anthropic', 'Google'),
     );
 
     expect(result?.Anthropic).toBeDefined();
@@ -248,6 +315,7 @@ describe('withholdEmptyEndpoints', () => {
     const result = withholdEmptyEndpoints(
       { Anthropic: custom(), Google: custom() },
       { Anthropic: ['claude-sonnet-5'], Google: ['gemini-3-pro'] },
+      managed('Anthropic', 'Google'),
     );
 
     expect(Object.keys(result ?? {})).toEqual(['Anthropic', 'Google']);
@@ -261,6 +329,7 @@ describe('withholdEmptyEndpoints', () => {
         ByURL: custom({ userProvideURL: true }),
       },
       { Shared: [], BYOK: [], ByURL: [] },
+      managed('Shared', 'BYOK', 'ByURL'),
     );
 
     expect(result).not.toHaveProperty('Shared');
@@ -272,6 +341,7 @@ describe('withholdEmptyEndpoints', () => {
     const result = withholdEmptyEndpoints(
       { [EModelEndpoint.openAI]: { order: 0 } as TConfig, Google: custom() },
       { [EModelEndpoint.openAI]: [], Google: [] },
+      managed(EModelEndpoint.openAI, 'Google'),
     );
 
     expect(result?.[EModelEndpoint.openAI]).toBeDefined();
@@ -281,14 +351,17 @@ describe('withholdEmptyEndpoints', () => {
   it('fails open when there is no models config to judge against', () => {
     const endpointsConfig = { Google: custom() };
 
-    expect(withholdEmptyEndpoints(endpointsConfig, null)).toBe(endpointsConfig);
-    expect(withholdEmptyEndpoints(endpointsConfig, undefined)).toBe(endpointsConfig);
+    expect(withholdEmptyEndpoints(endpointsConfig, null, managed('Google'))).toBe(endpointsConfig);
+    expect(withholdEmptyEndpoints(endpointsConfig, undefined, managed('Google'))).toBe(
+      endpointsConfig,
+    );
   });
 
   it('fails open for an endpoint the models config has no entry for', () => {
     const result = withholdEmptyEndpoints(
       { Anthropic: custom(), Google: custom() },
       { Anthropic: ['claude-sonnet-5'] },
+      managed('Anthropic', 'Google'),
     );
 
     expect(result?.Google).toBeDefined();
@@ -298,6 +371,7 @@ describe('withholdEmptyEndpoints', () => {
     const result = withholdEmptyEndpoints(
       { First: custom(), Dropped: custom(), Second: custom() },
       { First: ['a'], Dropped: [], Second: ['b'] },
+      managed('First', 'Dropped', 'Second'),
     );
 
     expect(Object.keys(result ?? {})).toEqual(['First', 'Second']);
