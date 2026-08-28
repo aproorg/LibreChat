@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { Agent, TModelSpec } from 'librechat-data-provider';
+import type { Agent, TEndpointsConfig, TModelSpec } from 'librechat-data-provider';
 import type { FavoriteModel } from '~/store/favorites';
 import FavoriteItem from '../FavoriteItem';
 
@@ -27,12 +27,13 @@ jest.mock('~/components/Endpoints/MinimalIcon', () => ({
 }));
 
 jest.mock('~/utils', () => ({
-  ...jest.requireActual('~/utils'),
+  cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
+  getModelDisplayName: (labels: Record<string, string> | undefined, modelId: string) =>
+    labels?.[modelId] || modelId || undefined,
   renderAgentAvatar: () => <span data-testid="agent-avatar" />,
 }));
 
 jest.mock('@librechat/client', () => ({
-  ...jest.requireActual('@librechat/client'),
   DropdownPopup: () => <div data-testid="dropdown-popup" />,
 }));
 
@@ -102,6 +103,27 @@ describe('FavoriteItem', () => {
     it('has aria-label formatted as "<model> (com_ui_model)"', () => {
       render(<FavoriteItem type="model" item={baseModel} />);
       expect(screen.getByRole('button', { name: 'gpt-5 (com_ui_model)' })).toBeInTheDocument();
+    });
+
+    it('renders the configured model label while selecting by model id', () => {
+      const onSelectEndpoint = jest.fn();
+      const endpointsConfig: TEndpointsConfig = {
+        openai: { order: 0, modelLabels: { 'gpt-5': 'GPT-5' } },
+      };
+      render(
+        <FavoriteItem
+          type="model"
+          item={baseModel}
+          endpointsConfig={endpointsConfig}
+          onSelectEndpoint={onSelectEndpoint}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId('favorite-item'));
+
+      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'GPT-5 (com_ui_model)' })).toBeInTheDocument();
+      expect(onSelectEndpoint).toHaveBeenCalledWith('openai', { model: 'gpt-5' });
     });
 
     it('calls onSelectEndpoint with endpoint + model on click', () => {

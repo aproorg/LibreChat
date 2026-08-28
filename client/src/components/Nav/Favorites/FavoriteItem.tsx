@@ -8,7 +8,7 @@ import type { FavoriteModel } from '~/store/favorites';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import MinimalIcon from '~/components/Endpoints/MinimalIcon';
 import { useFavorites, useLocalize } from '~/hooks';
-import { renderAgentAvatar, cn } from '~/utils';
+import { getModelDisplayName, renderAgentAvatar, cn } from '~/utils';
 
 type Kwargs = {
   model?: string;
@@ -30,6 +30,7 @@ type AgentFavoriteProps = FavoriteItemBaseProps & {
 type ModelFavoriteProps = FavoriteItemBaseProps & {
   type: 'model';
   item: FavoriteModel;
+  endpointsConfig?: TEndpointsConfig;
   onSelectEndpoint?: (endpoint?: EModelEndpoint | string | null, kwargs?: Kwargs) => void;
 };
 
@@ -114,7 +115,11 @@ export default function FavoriteItem(props: FavoriteItemProps) {
     name = props.item.label;
     typeLabel = localize('com_ui_model_spec');
   } else {
-    name = props.item.model;
+    name =
+      getModelDisplayName(
+        props.endpointsConfig?.[props.item.endpoint]?.modelLabels,
+        props.item.model,
+      ) ?? props.item.model;
     typeLabel = localize('com_ui_model');
   }
   const ariaLabel = `${name} (${typeLabel})`;

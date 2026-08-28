@@ -5,6 +5,7 @@ import type { SetterOrUpdater } from 'recoil';
 import { useGetEndpointsQuery } from '~/data-provider';
 import { EndpointIcon } from '~/components/Endpoints';
 import { useAgentsMapContext } from '~/Providers';
+import { getModelDisplayName } from '~/utils';
 
 export default function AddedConvo({
   addedConvo,
@@ -16,7 +17,7 @@ export default function AddedConvo({
   const agentsMap = useAgentsMapContext();
   const { data: endpointsConfig } = useGetEndpointsQuery();
   const title = useMemo(() => {
-    // Priority: agent name > modelDisplayLabel > modelLabel > model
+    // Priority: agent name > modelDisplayLabel > modelLabel > declared model name > model
     if (isAgentsEndpoint(addedConvo?.endpoint) && addedConvo?.agent_id) {
       const agent = agentsMap?.[addedConvo.agent_id];
       if (agent?.name) {
@@ -25,8 +26,9 @@ export default function AddedConvo({
     }
 
     const endpointConfig = endpointsConfig?.[addedConvo?.endpoint ?? ''];
+    const declaredModelName = getModelDisplayName(endpointConfig?.modelLabels, addedConvo?.model);
     const displayLabel =
-      endpointConfig?.modelDisplayLabel || addedConvo?.modelLabel || addedConvo?.model || 'AI';
+      endpointConfig?.modelDisplayLabel || addedConvo?.modelLabel || declaredModelName || 'AI';
 
     return `+ ${displayLabel}`;
   }, [addedConvo, agentsMap, endpointsConfig]);

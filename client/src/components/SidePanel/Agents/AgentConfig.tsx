@@ -16,6 +16,7 @@ import {
   removeFocusOutlines,
   processAgentOption,
   defaultTextProps,
+  getModelDisplayName,
   validateEmail,
   getIconKey,
   cn,
@@ -236,6 +237,13 @@ export default function AgentConfig() {
   }, [agent_id, setActivePanel, showToast, localize]);
 
   const providerValue = typeof provider === 'string' ? provider : provider?.value;
+  const modelId = model != null ? String(model) : '';
+  const modelDisplayName = getModelDisplayName(
+    providerValue != null
+      ? getEndpointField(endpointsConfig, String(providerValue), 'modelLabels')
+      : undefined,
+    modelId,
+  );
   let Icon: IconComponentTypes | null | undefined;
   let endpointType: EModelEndpoint | undefined;
   let endpointIconURL: string | undefined;
@@ -344,6 +352,7 @@ export default function AgentConfig() {
           <button
             type="button"
             onClick={() => setActivePanel(Panel.model)}
+            title={modelDisplayName || undefined}
             className="btn btn-neutral border-token-border-light relative h-9 w-full rounded-lg font-medium"
           >
             <div className="flex w-full items-center gap-2">
@@ -357,7 +366,7 @@ export default function AgentConfig() {
                   />
                 </div>
               )}
-              <span>{model != null && model ? model : localize('com_ui_select_model')}</span>
+              <span>{modelDisplayName || localize('com_ui_select_model')}</span>
             </div>
           </button>
         </div>
