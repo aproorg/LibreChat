@@ -1,12 +1,7 @@
 import { EModelEndpoint, normalizeEndpointName } from 'librechat-data-provider';
 import type { TConfig } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types';
-import {
-  declaredModelNames,
-  hasModelSource,
-  filterManagedEndpoints,
-  withholdEmptyEndpoints,
-} from './availability';
+import { filterManagedEndpoints, withholdEmptyEndpoints } from './availability';
 import { createLoadConfigModels } from './models';
 
 const GATEWAY = {
@@ -30,38 +25,6 @@ const load = (endpoints: Record<string, unknown>[], fetchModels: jest.Mock) =>
     getUserKeyValues: jest.fn().mockResolvedValue(null),
     fetchModels,
   })(buildRequest());
-
-describe('declaredModelNames', () => {
-  it('normalizes both string and object model entries', () => {
-    expect(
-      declaredModelNames({
-        models: { default: ['a', { name: 'b', description: 'B' }] },
-      } as never),
-    ).toEqual(['a', 'b']);
-  });
-
-  it('treats a missing or malformed list as no declaration', () => {
-    expect(declaredModelNames(undefined)).toEqual([]);
-    expect(declaredModelNames({ models: { default: [] } } as never)).toEqual([]);
-    expect(declaredModelNames({ models: {} } as never)).toEqual([]);
-  });
-});
-
-describe('hasModelSource', () => {
-  it('is true for a fetching endpoint even with nothing declared', () => {
-    expect(hasModelSource({ models: { default: [], fetch: true } } as never)).toBe(true);
-  });
-
-  it('is true for a declared list with no fetch', () => {
-    expect(hasModelSource({ models: { default: ['a'] } } as never)).toBe(true);
-  });
-
-  it('is false for an empty declaration with no fetch, where a truthiness test would pass', () => {
-    const endpoint = { models: { default: [] } } as never;
-    expect(Boolean((endpoint as { models: { default: string[] } }).models.default)).toBe(true);
-    expect(hasModelSource(endpoint)).toBe(false);
-  });
-});
 
 describe('loadConfigModels – declared ∩ fetched', () => {
   let fetchModels: jest.Mock;
@@ -172,19 +135,6 @@ describe('loadConfigModels – declared ∩ fetched', () => {
 
     expect(result.Claude).toEqual(['claude-sonnet-5']);
     expect(fetchModels).not.toHaveBeenCalled();
-  });
-
-  it('skips an endpoint that declares nothing and fetches nothing', async () => {
-    const result = await load(
-      [
-        { name: 'Other', models: { default: [], filter: true } },
-        { name: 'Claude', models: { default: ['claude-sonnet-5'] } },
-      ],
-      fetchModels,
-    );
-
-    expect(result).not.toHaveProperty('Other');
-    expect(result.Claude).toEqual(['claude-sonnet-5']);
   });
 });
 

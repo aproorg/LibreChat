@@ -1435,10 +1435,9 @@ export async function validateAgentModel(
     return { isValid: true };
   }
 
-  /* A filter-managed endpoint with nothing to serve is unavailable, not being
-     asked for an illegal model: what arrives is a stored agent naming an
-     endpoint whose gateway has stopped answering, and a violation would ban its
-     owner for a configuration change they had no part in. */
+  /* A filter-managed endpoint serving no models is unavailable, not being
+     asked for an illegal model — a violation would penalize the owner of a
+     stored agent naming an endpoint that no longer serves it. */
   if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(endpoint)) {
     return {
       isValid: false,

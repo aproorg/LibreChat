@@ -570,8 +570,7 @@ endpoints:
 
       # Models configuration
       models:
-        # List of default models to use. At least one value is required,
-        # unless `filter` is set — see below.
+        # List of default models to use. At least one value is required.
         default: ['mistral-tiny', 'mistral-small', 'mistral-medium']
         # Fetch option: Set to true to fetch models from API.
         fetch: true # Defaults to false.

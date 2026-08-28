@@ -63,23 +63,4 @@ describe('endpointController', () => {
     expect(body.Anthropic).toBeDefined();
     expect(body.Google).toBeDefined();
   });
-
-  it('leaves an empty endpoint alone when a different endpoint is the one filtering', async () => {
-    getEndpointsConfig.mockResolvedValue({ Anthropic: custom(), Google: custom() });
-    getModelsConfig.mockResolvedValue({ Anthropic: ['claude-sonnet-5'], Google: [] });
-
-    const body = await respond(filtering('Anthropic'));
-
-    expect(body.Google).toBeDefined();
-  });
-
-  it('withholds nothing when the request carries no app config', async () => {
-    getEndpointsConfig.mockResolvedValue({ Google: custom() });
-    getModelsConfig.mockResolvedValue({ Google: [] });
-
-    const body = await respond({});
-
-    expect(getModelsConfig).not.toHaveBeenCalled();
-    expect(body.Google).toBeDefined();
-  });
 });

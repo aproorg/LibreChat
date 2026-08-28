@@ -1,7 +1,6 @@
 import { EModelEndpoint, extractEnvVariable, normalizeEndpointName } from 'librechat-data-provider';
 import type { TCustomEndpoints, TEndpoint } from 'librechat-data-provider';
 import type { TCustomEndpointsConfig } from '~/types/endpoints';
-import { hasModelSource } from '~/endpoints/config/availability';
 import { isUserProvided } from '~/utils';
 
 /**
@@ -20,7 +19,11 @@ export function loadCustomEndpointsConfig(
   if (Array.isArray(customEndpoints)) {
     const filteredEndpoints = customEndpoints.filter(
       (endpoint) =>
-        endpoint.baseURL && endpoint.apiKey && endpoint.name && hasModelSource(endpoint),
+        endpoint.baseURL &&
+        endpoint.apiKey &&
+        endpoint.name &&
+        endpoint.models &&
+        (endpoint.models.fetch || endpoint.models.default),
     );
 
     for (let i = 0; i < filteredEndpoints.length; i++) {

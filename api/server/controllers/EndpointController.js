@@ -3,16 +3,14 @@ const { withholdEmptyEndpoints, filterManagedEndpoints } = require('@librechat/a
 const { getEndpointsConfig, getModelsConfig } = require('~/server/services/Config');
 
 /**
- * The one caller that answers "what may this user be offered" — the selector, the
- * Agent Builder and model-spec pruning all derive from this response — so an
- * endpoint with nothing to serve is withheld here and nowhere else. Every other
- * caller of `getEndpointsConfig` wants the endpoint's configuration, and two read
- * keys off it (`defaultParamsEndpoint`, `userProvide`) that withholding removes.
+ * Withholding happens here and nowhere else: this route decides what the user
+ * may be offered, while other callers of `getEndpointsConfig` read
+ * configuration keys (`defaultParamsEndpoint`, `userProvide`) that withholding
+ * would remove.
  */
 async function endpointController(req, res) {
-  /* Only `models.filter` can leave an endpoint with nothing to serve, so a
-     deployment without one never pays for the models resolution below — this
-     route stays the cached config read it has always been. */
+  /* Without `models.filter` this route stays the cached config read it has
+     always been — no models resolution. */
   const filterManaged = filterManagedEndpoints(req.config);
   if (filterManaged.size === 0) {
     return res.send(JSON.stringify(await getEndpointsConfig(req)));
@@ -20,8 +18,7 @@ async function endpointController(req, res) {
 
   const [endpointsConfig, modelsConfig] = await Promise.all([
     getEndpointsConfig(req),
-    /* Fail open: an unresolvable models config withholds nothing rather than
-       taking down the picker. */
+    /* Fail open: an unresolvable models config withholds nothing. */
     getModelsConfig(req).catch((error) => {
       logger.error('[endpointController] Could not resolve available models', error);
       return null;

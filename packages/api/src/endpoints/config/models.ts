@@ -10,7 +10,6 @@ import type { TModelsConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, GetUserKeyValuesFunction, UserKeyValues } from '~/types';
 import type { FetchModelsParams } from '~/endpoints/models';
-import { declaredModelNames, hasModelSource } from '~/endpoints/config/availability';
 import { fetchModels as defaultFetchModels } from '~/endpoints/models';
 import { getTokenConfigKey } from '~/endpoints/custom/initialize';
 import { validateEndpointURL } from '~/auth';
@@ -102,7 +101,11 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
 
     const customEndpoints = (appConfig.endpoints[EModelEndpoint.custom] as TEndpoint[]).filter(
       (endpoint) =>
-        endpoint.baseURL && endpoint.apiKey && endpoint.name && hasModelSource(endpoint),
+        endpoint.baseURL &&
+        endpoint.apiKey &&
+        endpoint.name &&
+        endpoint.models &&
+        (endpoint.models.fetch || endpoint.models.default),
     );
 
     const fetchPromisesMap: Record<string, Promise<string[]>> = {};
@@ -263,8 +266,11 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         }
       }
 
-      /** No fetch, so nothing to intersect: `filter` is inert here. */
-      modelsConfig[name] = declaredModelNames(endpoint);
+      if (Array.isArray(models?.default)) {
+        modelsConfig[name] = models.default.map((model) =>
+          typeof model === 'string' ? model : model.name,
+        );
+      }
     }
 
     const settledResults = await Promise.allSettled(Object.values(fetchPromisesMap));
@@ -285,7 +291,9 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
 
       for (const name of associatedNames) {
         const endpoint = endpointsMap[name];
-        const declared = declaredModelNames(endpoint);
+        const declared = (endpoint.models?.default ?? []).map((m) =>
+          typeof m === 'string' ? m : m.name,
+        );
 
         /** Fail open on transport failure: an empty list can remove an endpoint,
          *  so an unreachable gateway must not read as an authoritative empty. */

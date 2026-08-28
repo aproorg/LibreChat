@@ -55,11 +55,9 @@ const validateModel = async (req, res, next) => {
     return next();
   }
 
-  /* A filter-managed endpoint serving nothing is unavailable, not being asked
-     for an illegal model: the requests that arrive are stored conversations
-     naming an endpoint that has stopped serving them, and a violation here
-     would earn their owners a ban for a configuration change they had no part
-     in. Endpoints that do not filter keep the violation they always logged. */
+  /* A filter-managed endpoint serving no models is unavailable, not being
+     asked for an illegal model — a violation would penalize users whose stored
+     conversations name an endpoint that no longer serves them. */
   if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(endpoint)) {
     logger.debug(`[validateModel] "${endpoint}" has no models available; rejecting "${model}"`);
     return handleError(res, { text: 'Endpoint unavailable' });

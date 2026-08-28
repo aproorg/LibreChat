@@ -1,9 +1,6 @@
 const { logger } = require('@librechat/data-schemas');
 const { getModelsConfig } = require('~/server/services/Config');
 
-/** Retained as the pre-memo name for this accessor; nothing in-tree uses it. */
-const loadModels = (req) => getModelsConfig(req);
-
 async function modelController(req, res) {
   try {
     const modelConfig = await getModelsConfig(req);
@@ -14,4 +11,4 @@ async function modelController(req, res) {
   }
 }
 
-module.exports = { modelController, loadModels, getModelsConfig };
+module.exports = { modelController, getModelsConfig };

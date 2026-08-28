@@ -834,26 +834,17 @@ export const endpointSchema = baseEndpointSchema.merge(
     }),
     apiKey: z.string(),
     baseURL: z.string(),
-    models: z
-      .object({
-        /** An allowlist under `filter`, a fallback otherwise; may be empty under `filter`. */
-        default: z.array(modelItemSchema),
-        fetch: z.boolean().optional(),
-        /**
-         * Serves `default ∩ fetched` instead of replacing `default` with the fetched
-         * list, so endpoints sharing one gateway can each present their own slice of
-         * its catalog. Declaring a model the gateway lacks is inert.
-         */
-        filter: z.boolean().optional(),
-        userIdQuery: z.boolean().optional(),
-      })
-      /* An empty list is only meaningful under `filter`, where it is an endpoint
-         template a deployment fills in. Everywhere else it can never produce a
-         model, and the endpoint would be dropped without a word. */
-      .refine((models) => models.filter === true || models.default.length > 0, {
-        message: 'At least one default model is required unless `filter` is set',
-        path: ['default'],
-      }),
+    models: z.object({
+      default: z.array(modelItemSchema).min(1),
+      fetch: z.boolean().optional(),
+      /**
+       * Serves `default ∩ fetched` instead of replacing `default` with the
+       * fetched list, so endpoints sharing one gateway can each present their
+       * own slice of its catalog. Requires `fetch`.
+       */
+      filter: z.boolean().optional(),
+      userIdQuery: z.boolean().optional(),
+    }),
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
     /**

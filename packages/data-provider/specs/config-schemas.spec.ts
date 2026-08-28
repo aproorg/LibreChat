@@ -1207,7 +1207,7 @@ describe('specsConfigSchema', () => {
   });
 });
 
-describe('custom endpoint models.default', () => {
+describe('custom endpoint models.filter', () => {
   const parse = (models: Record<string, unknown>) =>
     endpointSchema.partial().safeParse({
       name: 'Claude',
@@ -1216,30 +1216,17 @@ describe('custom endpoint models.default', () => {
       models,
     });
 
-  it('accepts a declared list, as it always has', () => {
-    expect(parse({ default: ['claude-opus-5'], fetch: true }).success).toBe(true);
+  it('accepts filter alongside fetch', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true, filter: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBe(true);
   });
 
-  /* An endpoint that declares nothing and never fetches can never produce a
-     model. Without this it validates, then vanishes from the picker unexplained. */
-  it('rejects an empty list when the endpoint does not filter', () => {
-    const result = parse({ default: [] });
+  it('leaves filter undefined when not declared, so existing configs are unchanged', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true });
 
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0].path).toEqual(['models', 'default']);
-  });
-
-  it('rejects an empty list even with fetch, when the endpoint does not filter', () => {
-    expect(parse({ default: [], fetch: true }).success).toBe(false);
-  });
-
-  /* Under `filter` an empty list is a base configuration shipping an endpoint
-     template for a deployment to fill in. */
-  it('accepts an empty list under `filter`', () => {
-    expect(parse({ default: [], fetch: true, filter: true }).success).toBe(true);
-  });
-
-  it('rejects a non-boolean filter', () => {
-    expect(parse({ default: ['claude-opus-5'], fetch: true, filter: 'yes' }).success).toBe(false);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBeUndefined();
   });
 });

@@ -117,8 +117,8 @@ describe('validateAgentModel', () => {
     expect(result.isValid).toBe(false);
   });
 
-  /* A dead gateway empties a filtered list. Banning the agent's owner for that
-     is the failure this guard exists to prevent. */
+  /* A filtered list goes empty when the gateway stops offering the declared
+     models; banning the agent's owner for that is what this guard prevents. */
   it('does not log a violation when a filter-managed endpoint has nothing to serve', async () => {
     const logViolation = jest.fn().mockResolvedValue(undefined);
 
