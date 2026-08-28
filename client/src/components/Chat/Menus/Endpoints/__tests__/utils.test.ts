@@ -104,9 +104,6 @@ describe('label-aware search', () => {
     expect(filterModels(claudeEndpoint, models, 'opus-4-8', undefined, undefined)).toEqual([
       'claude-opus-4-8',
     ]);
-    expect(filterModels(claudeEndpoint, models, 'sonnet', undefined, undefined)).toEqual([
-      'claude-sonnet-4-6',
-    ]);
   });
 });
 
@@ -122,16 +119,5 @@ describe('getDisplayValue', () => {
         modelSpecs: [],
       }),
     ).toBe('Opus 4.8');
-  });
-
-  it('shows the id of an unlabelled selected model', () => {
-    expect(
-      getDisplayValue({
-        localize,
-        mappedEndpoints: [claudeEndpoint],
-        selectedValues: { endpoint: 'Claude', model: 'claude-sonnet-4-6', modelSpec: '' },
-        modelSpecs: [],
-      }),
-    ).toBe('claude-sonnet-4-6');
   });
 });

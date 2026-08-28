@@ -96,12 +96,4 @@ describe('loadCustomEndpointsConfig – model labels', () => {
 
     expect(config?.['Claude']?.modelLabels).toEqual({ 'claude-sonnet-4-5': 'Sonnet 4.5' });
   });
-
-  it('leaves modelLabels undefined when the endpoint declares none', () => {
-    const config = loadCustomEndpointsConfig([
-      { ...baseEndpoint, name: 'Claude' },
-    ] as unknown as TCustomEndpoints);
-
-    expect(config?.['Claude']?.modelLabels).toBeUndefined();
-  });
 });

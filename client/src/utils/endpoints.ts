@@ -50,17 +50,6 @@ export const getEntityName = ({
   }
 };
 
-export function getModelDisplayName(
-  modelLabels: Record<string, string> | null | undefined,
-  modelId: string | null | undefined,
-): string | undefined {
-  if (!modelId) {
-    return undefined;
-  }
-
-  return modelLabels?.[modelId] || modelId;
-}
-
 export const getEndpointsFilter = (endpointsConfig: t.TEndpointsConfig) => {
   const filter: Record<string, boolean> = {};
   if (!endpointsConfig) {

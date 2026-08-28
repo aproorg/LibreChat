@@ -157,7 +157,7 @@ describe('SearchResults', () => {
     expect(mockHandleSelectModel).not.toHaveBeenCalled();
   });
 
-  it('finds a labelled model by its label and renders the label', () => {
+  it('finds a labelled model by its label, renders the label, and selects by id', () => {
     mockSelectedValues = { endpoint: '', model: '', modelSpec: '' };
     render(
       <SearchResults results={[labelledEndpoint]} localize={localize} searchValue="opus 4.8" />,
@@ -166,6 +166,9 @@ describe('SearchResults', () => {
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent('Opus 4.8');
+
+    fireEvent.click(items[0]);
+    expect(mockHandleSelectModel).toHaveBeenCalledWith(labelledEndpoint, 'claude-opus-4-8');
   });
 
   it('still finds a labelled model by its id', () => {
@@ -177,16 +180,6 @@ describe('SearchResults', () => {
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent('Opus 4.8');
-  });
-
-  it('selects a labelled model by its id', () => {
-    mockSelectedValues = { endpoint: '', model: '', modelSpec: '' };
-    render(
-      <SearchResults results={[labelledEndpoint]} localize={localize} searchValue="opus 4.8" />,
-    );
-
-    fireEvent.click(screen.getByRole('menuitem'));
-    expect(mockHandleSelectModel).toHaveBeenCalledWith(labelledEndpoint, 'claude-opus-4-8');
   });
 
   it('does not render agents as a selectable endpoint when marketplace and agent rows are unavailable', () => {

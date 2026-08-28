@@ -19,7 +19,7 @@ import { useGetEndpointsQuery } from '~/data-provider';
 import { useLiveAnnouncer } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { Panel } from '~/common';
-import { cn, getModelDisplayName } from '~/utils';
+import { cn } from '~/utils';
 
 export default function ModelPanel({
   providers,
@@ -204,7 +204,7 @@ export default function ModelPanel({
                 <>
                   <ControlCombobox
                     selectedValue={field.value || ''}
-                    displayValue={getModelDisplayName(modelLabels, field.value)}
+                    displayValue={modelLabels?.[field.value ?? ''] || undefined}
                     selectPlaceholder={
                       provider
                         ? localize('com_ui_select_model')
@@ -213,7 +213,7 @@ export default function ModelPanel({
                     searchPlaceholder={localize('com_ui_select_model')}
                     setValue={field.onChange}
                     items={models.map((model) => ({
-                      label: getModelDisplayName(modelLabels, model) ?? model,
+                      label: modelLabels?.[model] || model,
                       value: model,
                     }))}
                     disabled={!provider}

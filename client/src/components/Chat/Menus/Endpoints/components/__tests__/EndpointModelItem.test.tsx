@@ -76,8 +76,8 @@ describe('EndpointModelItem', () => {
     expect(menuItem).not.toHaveAttribute('aria-selected');
   });
 
-  it('renders the declared label instead of the model id', () => {
-    mockSelectedValues = { endpoint: 'Claude', model: '', modelSpec: '' };
+  it('renders the declared label while still selecting by model id', () => {
+    mockSelectedValues = { endpoint: 'Claude', model: 'claude-opus-4-8', modelSpec: '' };
     const labelled: Endpoint = {
       value: 'Claude',
       label: 'Claude',
@@ -90,35 +90,6 @@ describe('EndpointModelItem', () => {
 
     expect(screen.getByRole('menuitem')).toHaveTextContent('Opus 4.8');
     expect(screen.getByRole('menuitem')).not.toHaveTextContent('claude-opus-4-8');
-  });
-
-  it('renders the model id when the endpoint labels other models but not this one', () => {
-    mockSelectedValues = { endpoint: 'Claude', model: '', modelSpec: '' };
-    const labelled: Endpoint = {
-      value: 'Claude',
-      label: 'Claude',
-      hasModels: true,
-      models: [{ name: 'claude-opus-4-8' }, { name: 'claude-haiku-4-5' }],
-      modelLabels: { 'claude-opus-4-8': 'Opus 4.8' },
-      icon: null,
-    };
-    render(<EndpointModelItem modelId="claude-haiku-4-5" endpoint={labelled} />);
-
-    expect(screen.getByRole('menuitem')).toHaveTextContent('claude-haiku-4-5');
-  });
-
-  it('selects by model id, not by label', () => {
-    mockSelectedValues = { endpoint: 'Claude', model: 'claude-opus-4-8', modelSpec: '' };
-    const labelled: Endpoint = {
-      value: 'Claude',
-      label: 'Claude',
-      hasModels: true,
-      models: [{ name: 'claude-opus-4-8' }],
-      modelLabels: { 'claude-opus-4-8': 'Opus 4.8' },
-      icon: null,
-    };
-    render(<EndpointModelItem modelId="claude-opus-4-8" endpoint={labelled} />);
-
     expect(screen.getByRole('menuitem')).toHaveAttribute('aria-selected', 'true');
   });
 

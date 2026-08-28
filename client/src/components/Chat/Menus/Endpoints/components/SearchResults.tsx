@@ -146,9 +146,7 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                   const modelId = model.name;
 
                   const modelName = getModelName(endpoint, modelId) ?? modelId;
-                  const isGlobal =
-                    isAgentsEndpoint(endpoint.value) &&
-                    (endpoint.models?.find((m) => m.name === modelId)?.isGlobal ?? false);
+                  const isGlobal = isAgentsEndpoint(endpoint.value) && (model.isGlobal ?? false);
 
                   const isModelSelected =
                     !selectedSpec &&

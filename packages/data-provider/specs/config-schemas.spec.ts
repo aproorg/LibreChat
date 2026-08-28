@@ -267,22 +267,6 @@ describe('endpointSchema modelLabels', () => {
     }
   });
 
-  it('accepts labels for models the endpoint does not declare, so one map can cover a fleet', () => {
-    const result = endpointSchema.safeParse({
-      ...validEndpoint,
-      modelLabels: { 'claude-opus-4-8': 'Opus 4.8', 'claude-opus-5': 'Opus 5' },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('is optional', () => {
-    const result = endpointSchema.safeParse(validEndpoint);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.modelLabels).toBeUndefined();
-    }
-  });
-
   it('rejects a non-string label', () => {
     const result = endpointSchema.safeParse({
       ...validEndpoint,

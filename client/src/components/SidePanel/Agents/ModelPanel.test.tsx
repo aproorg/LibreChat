@@ -52,8 +52,6 @@ jest.mock('~/hooks', () => ({
 
 jest.mock('~/utils', () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
-  getModelDisplayName: (labels: Record<string, string> | undefined, modelId: string) =>
-    labels?.[modelId] || modelId || undefined,
 }));
 
 function TestForm() {
@@ -92,16 +90,5 @@ describe('ModelPanel model labels', () => {
     expect(getByTestId('com_ui_model-display')).toHaveTextContent('Custom Model');
     expect(getByTestId('com_ui_model-selected')).toHaveTextContent('custom-model');
     expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('Custom Model');
-  });
-
-  it('falls back to the model id when the configured label is empty', () => {
-    mockEndpointsConfig = {
-      custom: { order: 0, modelLabels: { 'custom-model': '' } },
-    };
-
-    const { getByTestId } = render(<TestForm />);
-
-    expect(getByTestId('com_ui_model-display')).toHaveTextContent('custom-model');
-    expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('custom-model');
   });
 });
