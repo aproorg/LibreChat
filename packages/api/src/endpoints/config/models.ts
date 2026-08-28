@@ -206,6 +206,9 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
             direct: endpoint.directEndpoint,
             userIdQuery: models.userIdQuery,
             tokenKey,
+            /** A rejection is how a dead gateway stays distinguishable from one
+             *  that answered with nothing; the loop below relies on it. */
+            throwOnError: true,
           });
         }
         uniqueKeyToEndpointsMap[uniqueKey] = uniqueKeyToEndpointsMap[uniqueKey] || [];
@@ -251,6 +254,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
                 skipCache: true,
                 /** Fetched with the user's key/URL — always user-scoped */
                 tokenKey: getTokenConfigKey(endpoint, name, req.user?.id ?? '', tenantId),
+                throwOnError: true,
               });
             })();
           uniqueKeyToEndpointsMap[userFetchKey] = uniqueKeyToEndpointsMap[userFetchKey] || [];
@@ -294,7 +298,19 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
         if (endpoint.models?.filter) {
           fetchedSet ??= new Set(fetchedModels);
           const fetched = fetchedSet;
-          modelsConfig[name] = declared.filter((model) => fetched.has(model));
+          const served: string[] = [];
+          const absent: string[] = [];
+          for (const model of declared) {
+            (fetched.has(model) ? served : absent).push(model);
+          }
+          /** Declaring a model the gateway lacks is inert by design, but a typo
+           *  and a retired model look identical from the picker. */
+          if (absent.length > 0) {
+            logger.debug(
+              `[loadConfigModels] "${name}": declared but not offered by the gateway: ${absent.join(', ')}`,
+            );
+          }
+          modelsConfig[name] = served;
           continue;
         }
 
