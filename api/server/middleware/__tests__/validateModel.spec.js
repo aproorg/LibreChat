@@ -1,6 +1,7 @@
 const { ViolationTypes } = require('librechat-data-provider');
 
 jest.mock('@librechat/api', () => ({
+  ...jest.requireActual('@librechat/api'),
   handleError: jest.fn(),
 }));
 
@@ -174,5 +175,37 @@ describe('validateModel', () => {
 
       expect(handleError).toHaveBeenCalledWith(res, { text: 'Models not loaded' });
     });
+  });
+
+  /* A filtered list goes empty when the gateway stops offering the declared
+     models; banning the conversation's owner for that is what this exemption
+     prevents. */
+  it('rejects without logging a violation when a filter-managed endpoint has no models', async () => {
+    req.body.endpoint = 'Claude';
+    req.config = {
+      endpoints: {
+        custom: [
+          { name: 'Claude', models: { default: ['claude-opus-5'], fetch: true, filter: true } },
+        ],
+      },
+    };
+    getEndpointsConfig.mockResolvedValue({ Claude: { userProvide: false } });
+    getModelsConfig.mockResolvedValue({ Claude: [] });
+
+    await validateModel(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(logViolation).not.toHaveBeenCalled();
+    expect(handleError).toHaveBeenCalledWith(res, { text: 'Endpoint unavailable' });
+  });
+
+  /* Endpoints that do not filter keep the violation they have always logged. */
+  it('still logs a violation for an empty endpoint that does not filter', async () => {
+    getModelsConfig.mockResolvedValue({ openAI: [] });
+
+    await validateModel(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(logViolation).toHaveBeenCalledTimes(1);
   });
 });

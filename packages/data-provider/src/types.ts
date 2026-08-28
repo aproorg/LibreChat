@@ -443,6 +443,7 @@ export type TConfig = {
   iconURL?: string;
   version?: string;
   modelDisplayLabel?: string;
+  modelLabels?: Record<string, string>;
   userProvide?: boolean | null;
   userProvideURL?: boolean | null;
   userProvideAccessKeyId?: boolean;

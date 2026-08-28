@@ -837,10 +837,22 @@ export const endpointSchema = baseEndpointSchema.merge(
     models: z.object({
       default: z.array(modelItemSchema).min(1),
       fetch: z.boolean().optional(),
+      /**
+       * Serves `default ∩ fetched` instead of replacing `default` with the
+       * fetched list, so endpoints sharing one gateway can each present their
+       * own slice of its catalog. Requires `fetch`.
+       */
+      filter: z.boolean().optional(),
       userIdQuery: z.boolean().optional(),
     }),
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
+    /**
+     * Display labels keyed by model id (`claude-opus-4-8: 'Opus 4.8'`). Purely
+     * presentational — the id stays what is declared, matched and sent upstream,
+     * and an unlabelled model renders its id.
+     */
+    modelLabels: z.record(z.string().transform((label) => label.trim())).optional(),
     /**
      * Forces the endpoint to use a provider's native client / request format
      * instead of the default OpenAI-compatible client. Currently supports

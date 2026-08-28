@@ -1102,3 +1102,37 @@ describe('fetchModels caching behavior', () => {
     expect(mockCacheSet).toHaveBeenCalled();
   });
 });
+
+describe('fetchModels transport failure', () => {
+  const params = {
+    apiKey: 'gateway-key',
+    baseURL: 'https://gateway.example.com/v1',
+    name: 'Claude',
+    createTokenConfig: false,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCacheGet.mockResolvedValue(undefined);
+  });
+
+  it('resolves an empty list by default, hiding the failure from the caller', async () => {
+    (axios.get as jest.Mock).mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await expect(fetchModels(params)).resolves.toEqual([]);
+  });
+
+  /* Without this, a caller that treats `[]` as authoritative cannot tell a
+     broken pipe from a gateway that answered with no models. */
+  it('rejects under `throwOnError`, keeping a dead gateway distinguishable', async () => {
+    (axios.get as jest.Mock).mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await expect(fetchModels({ ...params, throwOnError: true })).rejects.toThrow('ECONNREFUSED');
+  });
+
+  it('still resolves a genuinely empty catalog under `throwOnError`', async () => {
+    (axios.get as jest.Mock).mockResolvedValue({ data: { data: [] } });
+
+    await expect(fetchModels({ ...params, throwOnError: true })).resolves.toEqual([]);
+  });
+});

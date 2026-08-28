@@ -248,6 +248,45 @@ describe('endpointSchema deprecated fields', () => {
   });
 });
 
+describe('endpointSchema modelLabels', () => {
+  const validEndpoint = {
+    name: 'CustomEndpoint',
+    apiKey: 'test-key',
+    baseURL: 'https://api.example.com',
+    models: { default: ['claude-opus-4-8'] },
+  };
+
+  it('keeps a declared label map, which is otherwise stripped as an unknown key', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': 'Opus 4.8' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelLabels).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+    }
+  });
+
+  it('rejects a non-string label', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': 4.8 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims declared labels', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': ' Opus 4.8 ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelLabels).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+    }
+  });
+});
+
 describe('endpointSchema addParams validation', () => {
   const validEndpoint = {
     name: 'CustomEndpoint',
@@ -1176,5 +1215,29 @@ describe('specsConfigSchema', () => {
       ],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('custom endpoint models.filter', () => {
+  const parse = (models: Record<string, unknown>) =>
+    endpointSchema.partial().safeParse({
+      name: 'Claude',
+      apiKey: '${GATEWAY_KEY}',
+      baseURL: 'https://gateway.example.com/v1',
+      models,
+    });
+
+  it('accepts filter alongside fetch', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true, filter: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBe(true);
+  });
+
+  it('leaves filter undefined when not declared, so existing configs are unchanged', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBeUndefined();
   });
 });
