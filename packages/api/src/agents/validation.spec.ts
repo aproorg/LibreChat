@@ -1,5 +1,10 @@
-import { MAX_SUBAGENTS } from 'librechat-data-provider';
-import { agentCreateSchema, agentUpdateSchema, agentSubagentsSchema } from './validation';
+import { MAX_SUBAGENTS, EModelEndpoint, ErrorTypes } from 'librechat-data-provider';
+import {
+  agentCreateSchema,
+  agentUpdateSchema,
+  validateAgentModel,
+  agentSubagentsSchema,
+} from './validation';
 
 describe('agentSubagentsSchema', () => {
   it('accepts enabled:true with a list within the cap', () => {
@@ -79,5 +84,68 @@ describe('agentUpdateSchema with subagents', () => {
       subagents: { enabled: true, agent_ids: oversized },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('validateAgentModel', () => {
+  const res = {} as never;
+  const agent = { id: 'agent-1', model: 'claude-opus-5', provider: 'Claude' } as never;
+
+  const req = (filter: boolean) =>
+    ({
+      config: {
+        endpoints: {
+          [EModelEndpoint.custom]: [
+            { name: 'Claude', models: { default: ['claude-opus-5'], fetch: true, filter } },
+          ],
+        },
+      },
+    }) as never;
+
+  it('logs a violation when the endpoint serves models, but not the one asked for', async () => {
+    const logViolation = jest.fn().mockResolvedValue(undefined);
+
+    const result = await validateAgentModel({
+      req: req(true),
+      res,
+      agent,
+      modelsConfig: { Claude: ['claude-sonnet-5'] },
+      logViolation,
+    });
+
+    expect(logViolation).toHaveBeenCalledTimes(1);
+    expect(result.isValid).toBe(false);
+  });
+
+  /* A dead gateway empties a filtered list. Banning the agent's owner for that
+     is the failure this guard exists to prevent. */
+  it('does not log a violation when a filter-managed endpoint has nothing to serve', async () => {
+    const logViolation = jest.fn().mockResolvedValue(undefined);
+
+    const result = await validateAgentModel({
+      req: req(true),
+      res,
+      agent,
+      modelsConfig: { Claude: [] },
+      logViolation,
+    });
+
+    expect(logViolation).not.toHaveBeenCalled();
+    expect(result.isValid).toBe(false);
+    expect(result.error?.message).toContain(ErrorTypes.ENDPOINT_MODELS_NOT_LOADED);
+  });
+
+  it('still logs a violation for an empty endpoint that does not filter', async () => {
+    const logViolation = jest.fn().mockResolvedValue(undefined);
+
+    await validateAgentModel({
+      req: req(false),
+      res,
+      agent,
+      modelsConfig: { Claude: [] },
+      logViolation,
+    });
+
+    expect(logViolation).toHaveBeenCalledTimes(1);
   });
 });
