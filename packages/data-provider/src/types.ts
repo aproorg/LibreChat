@@ -690,6 +690,7 @@ export type TConfig = {
   providerId?: ProviderId;
   version?: string;
   modelDisplayLabel?: string;
+  modelLabels?: Record<string, string>;
   userProvide?: boolean | null;
   userProvideURL?: boolean | null;
   userProvideAccessKeyId?: boolean;

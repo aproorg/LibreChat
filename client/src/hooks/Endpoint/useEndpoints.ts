@@ -142,6 +142,7 @@ export const useEndpoints = ({
         query?.isLoading ??
         (ep === EModelEndpoint.agents ? agents == null : modelsQuery.data[ep] === undefined);
       const isUnavailable = query?.isError ?? false;
+      const modelLabels = getEndpointField(endpointsConfig, ep, 'modelLabels');
       const hasModels =
         isLoading ||
         isUnavailable ||
@@ -172,6 +173,7 @@ export const useEndpoints = ({
               void query.refetch();
             }
           : undefined,
+        modelLabels,
         icon: createEndpointIcon(ep, resolveProviderIcon({ endpoint: ep, endpointsConfig })),
       };
 

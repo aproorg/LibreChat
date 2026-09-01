@@ -29,6 +29,7 @@ export default function Settings({
   const { settings, multiViewSettings } = getSettings();
   const { endpoint: _endpoint } = conversation as TConversation;
   const models = modelsQuery.data?.[_endpoint ?? ''] ?? [];
+  const modelLabels = getEndpointField(endpointsConfig, _endpoint, 'modelLabels');
   const OptionComponent = settings[endpoint];
 
   if (OptionComponent) {
@@ -43,6 +44,7 @@ export default function Settings({
           conversation={conversation}
           setOption={setOption}
           models={models}
+          modelLabels={modelLabels}
           isPreset={isPreset}
         />
       </div>

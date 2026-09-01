@@ -59,6 +59,7 @@ function MentionContent({
       agentsList={agentsList}
       assistantListMap={assistantListMap}
       modelsConfig={modelsConfig}
+      endpointsConfig={endpointsConfig}
       onSelectMention={(option) => onSelectMention?.(option)}
       onClose={() => setShowPopover(false)}
     />

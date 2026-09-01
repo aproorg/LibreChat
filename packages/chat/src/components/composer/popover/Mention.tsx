@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useCombobox } from '@librechat/client';
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, getEndpointField } from 'librechat-data-provider';
+import type { TEndpointsConfig } from 'librechat-data-provider';
 import type { KeyboardEvent, MutableRefObject } from 'react';
 import type { CommandOption, CommandDismissReason } from './Command';
 import { removeCharIfLast } from '../../../core/textarea';
@@ -21,6 +22,8 @@ export interface MentionPopoverProps {
   assistantListMap: Partial<Record<string, CommandOption[] | undefined>>;
   /** Model names by endpoint, listed after picking any other endpoint. */
   modelsConfig?: Record<string, string[]> | null;
+  /** Endpoint configuration used to resolve model ids to display labels. */
+  endpointsConfig?: TEndpointsConfig;
   /** A final pick: a model, preset, spec, agent or assistant. */
   onSelectMention: (option: CommandOption) => void;
   /** Hides the popover. */
@@ -38,6 +41,7 @@ export default function MentionPopover({
   agentsList,
   assistantListMap,
   modelsConfig,
+  endpointsConfig,
   onSelectMention,
   onClose,
 }: MentionPopoverProps): React.JSX.Element {
@@ -85,9 +89,11 @@ export default function MentionPopover({
     ) {
       return assistantListMap[mention.value] ?? [];
     }
+    const modelLabels = getEndpointField(endpointsConfig, mention.value, 'modelLabels');
     return (modelsConfig?.[mention.value] ?? []).map((model) => ({
-      value: mention.value,
-      label: model,
+      value: model,
+      label: modelLabels?.[model]?.trim() || model,
+      endpoint: mention.value,
       type: 'model',
     }));
   };

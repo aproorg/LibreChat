@@ -1,3 +1,4 @@
+import { getEndpointField } from 'librechat-data-provider';
 import { Input, Label, TooltipAnchor } from '@librechat/client';
 import { Controller, useWatch, useFormContext } from 'react-hook-form';
 import type { ReactNode } from 'react';
@@ -6,11 +7,11 @@ import type { AgentForm } from '~/common';
 import { ResolvedProviderIcon } from '~/components/Endpoints/ResolvedProviderIcon';
 import AgentCategorySelector from './AgentCategorySelector';
 import { useLocalize, useAgentCapabilities } from '~/hooks';
+import { validateEmail, getModelLabel, cn } from '~/utils';
 import { useAgentFileEntries } from './Tools/hooks';
 import { useAgentPanelContext } from '~/Providers';
 import { useProviderIcon } from '~/hooks/Endpoint';
 import ToolsSection from './Tools/ToolsSection';
-import { validateEmail, cn } from '~/utils';
 import Instructions from './Instructions';
 import FileContext from './FileContext';
 import AgentAvatar from './AgentAvatar';
@@ -45,6 +46,8 @@ export default function AgentConfig({
   const { contextFiles } = useAgentFileEntries();
 
   const providerValue = typeof provider === 'string' ? provider : provider?.value;
+  const modelLabels = getEndpointField(endpointsConfig, providerValue as string, 'modelLabels');
+  const modelDisplayName = model ? (getModelLabel(modelLabels, model) ?? model) : undefined;
   const { provider: providerId, imageURL } = useProviderIcon({
     endpoint: providerValue as string,
     endpointsConfig,
@@ -71,9 +74,7 @@ export default function AgentConfig({
             />
           </div>
         )}
-        <span className="truncate">
-          {model != null && model ? model : localize('com_ui_select_model')}
-        </span>
+        <span className="truncate">{modelDisplayName || localize('com_ui_select_model')}</span>
       </div>
     </button>
   );
@@ -145,7 +146,11 @@ export default function AgentConfig({
           >
             {localize('com_ui_model')} <span className="text-text-destructive">*</span>
           </Label>
-          {model ? <TooltipAnchor description={model} render={modelButton} /> : modelButton}
+          {model ? (
+            <TooltipAnchor description={modelDisplayName ?? model} render={modelButton} />
+          ) : (
+            modelButton
+          )}
         </div>
         <div className="flex flex-col">
           <Label
