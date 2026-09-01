@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { OptionTypes } from 'librechat-data-provider';
 import { Label, Dropdown, HoverCard, HoverCardTrigger } from '@librechat/client';
 import type { DynamicSettingProps } from 'librechat-data-provider';
+import type { Option } from '~/common';
 import { TranslationKeys, useLocalize, useParameterEffects } from '~/hooks';
 import { useChatContext } from '~/Providers';
 import OptionHover from './OptionHover';
@@ -17,6 +18,7 @@ function DynamicDropdown({
   setOption,
   optionType,
   options,
+  items,
   // type: _type,
   readonly = false,
   showLabel = true,
@@ -41,7 +43,8 @@ function DynamicDropdown({
     return conversation?.[settingKey] ?? defaultValue;
   }, [conversation, defaultValue, optionType, settingKey, inputValue]);
 
-  const handleChange = (value: string) => {
+  const handleChange = (option: string | Option) => {
+    const value = typeof option === 'string' ? option : String(option.value ?? '');
     if (optionType === OptionTypes.Custom) {
       // TODO: custom logic, add to payload but not to conversation
       setInputValue(value);
@@ -60,7 +63,8 @@ function DynamicDropdown({
     preventDelayedUpdate: true,
   });
 
-  if (!options || options.length === 0) {
+  const availableValues = items ?? options ?? [];
+  if (availableValues.length === 0) {
     return null;
   }
 
@@ -95,8 +99,8 @@ function DynamicDropdown({
             disabled={readonly}
             value={selectedValue ?? ''}
             onChange={handleChange}
-            options={options}
-            searchable={options.length > 10}
+            options={availableValues}
+            searchable={availableValues.length > 10}
             searchPlaceholder={localize('com_ui_search')}
             searchEmptyText={localize('com_ui_no_results_found')}
             placeholder={
