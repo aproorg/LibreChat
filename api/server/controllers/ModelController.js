@@ -7,10 +7,15 @@ const {
   loadAsyncEndpoints,
 } = require('~/server/services/Config');
 
-module.exports = createModelsService({
+const modelService = createModelsService({
   getAppConfig,
   loadDefaultModels,
   loadConfigModels,
   loadAsyncEndpoints,
   defaultEndpointsConfig: config,
 });
+
+/* Keep the full catalog memo shared by endpoints and model validation. */
+const { getModelsConfig } = require('~/server/services/Config');
+
+module.exports = { ...modelService, getModelsConfig };
