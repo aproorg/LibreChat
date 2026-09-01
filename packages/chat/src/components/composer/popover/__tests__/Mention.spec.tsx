@@ -172,8 +172,30 @@ describe('MentionPopover through the plain list', () => {
     fireEvent.keyDown(input(), { key: 'Enter' });
     expect(onSelectMention).toHaveBeenCalledWith({
       type: 'model',
-      value: 'openAI',
+      value: 'gpt-a',
       label: 'gpt-a',
+      endpoint: 'openAI',
+    });
+  });
+
+  it('displays endpoint model labels while retaining model ids and endpoint values', () => {
+    const { onSelectMention } = renderMention({
+      options: [option({ type: 'endpoint', label: 'Gateway', value: 'Gateway' })],
+      modelsConfig: { Gateway: ['model-id'] },
+      endpointsConfig: {
+        Gateway: { order: 0, modelLabels: { 'model-id': ' Model label ' } },
+      },
+    });
+
+    fireEvent.keyDown(input(), { key: 'Tab' });
+
+    expect(screen.getByRole('option')).toHaveTextContent('Model label');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(onSelectMention).toHaveBeenCalledWith({
+      type: 'model',
+      value: 'model-id',
+      label: 'Model label',
+      endpoint: 'Gateway',
     });
   });
 

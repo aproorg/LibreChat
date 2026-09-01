@@ -242,6 +242,7 @@ export type TSettingsProps = TBaseSettingsProps & {
 
 export type TModels = {
   models: string[];
+  modelLabels?: Record<string, string>;
   showAbove?: boolean;
   popover?: boolean;
 };
@@ -388,6 +389,7 @@ export type DropdownValueSetter = (value: string | Option | OptionWithIcon) => v
 export type MentionOption = OptionWithIcon & {
   type: string;
   value: string;
+  endpoint?: string;
   description?: string;
 };
 export type PromptOption = MentionOption & {

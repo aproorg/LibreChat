@@ -15,8 +15,8 @@ import { useGetEndpointsQuery, useListAgentsQuery } from '~/data-provider';
 import { useModelSelectorChatContext } from './ModelSelectorChatContext';
 import useSelectMention from '~/hooks/Input/useSelectMention';
 import { useCatalogReady } from '~/hooks/useCatalogWarmup';
+import { filterItems, getModelName } from './utils';
 import useModelSpecs from '~/hooks/Agents/specs';
-import { filterItems } from './utils';
 
 type ModelSelectorContextType = {
   // State
@@ -101,12 +101,13 @@ export function ModelSelectorProvider({ children, startupConfig }: ModelSelector
 
   const getModelDisplayName = useCallback(
     (endpoint: Endpoint, model: string): string => {
-      if (isAgentsEndpoint(endpoint.value)) {
-        return endpoint.agentNames?.[model] ?? agentsMap?.[model]?.name ?? model;
+      const customName = getModelName(endpoint, model);
+      if (customName != null) {
+        return customName;
       }
 
-      if (isAssistantsEndpoint(endpoint.value)) {
-        return endpoint.assistantNames?.[model] ?? model;
+      if (isAgentsEndpoint(endpoint.value)) {
+        return agentsMap?.[model]?.name ?? model;
       }
 
       return model;
