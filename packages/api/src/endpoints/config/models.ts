@@ -287,6 +287,8 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
       const fetchedModels = settled.status === 'fulfilled' ? (settled.value ?? []) : null;
       /** Built once per fetch result, shared by every endpoint over that gateway. */
       let fetchedSet: Set<string> | null = null;
+      /** Every model curated by any endpoint over this fetch, built on first need. */
+      let groupDeclared: Set<string> | null = null;
       const associatedNames = uniqueKeyToEndpointsMap[currentKey];
 
       for (const name of associatedNames) {
@@ -317,6 +319,24 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
             logger.debug(
               `[loadConfigModels] "${name}": declared but not offered by the gateway: ${absent.join(', ')}`,
             );
+          }
+          /** `'complement'` additionally serves what the group curates nowhere,
+           *  so a model added to the gateway alone still has a home. Fetched
+           *  order, deduplicated by the set the intersection already built. */
+          if (endpoint.models.filter === 'complement') {
+            groupDeclared ??= new Set(
+              associatedNames.flatMap((sibling) =>
+                (endpointsMap[sibling].models?.default ?? []).map((m) =>
+                  typeof m === 'string' ? m : m.name,
+                ),
+              ),
+            );
+            const curated = groupDeclared;
+            for (const model of fetched) {
+              if (!curated.has(model)) {
+                served.push(model);
+              }
+            }
           }
           modelsConfig[name] = served;
           continue;

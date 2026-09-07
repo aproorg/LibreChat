@@ -579,6 +579,8 @@ endpoints:
         # each offer their own slice of its catalog, in the order declared above.
         # Declaring a model the gateway does not serve is inert, and an endpoint
         # left with no models is hidden. Requires `fetch: true` to do anything.
+        # Use `filter: complement` to serve that slice and then every fetched
+        # model no endpoint over the same gateway fetch declares.
         # filter: true # Defaults to false.
 
       # Optional configurations

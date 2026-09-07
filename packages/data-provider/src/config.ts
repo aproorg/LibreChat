@@ -841,8 +841,11 @@ export const endpointSchema = baseEndpointSchema.merge(
        * Serves `default ∩ fetched` instead of replacing `default` with the
        * fetched list, so endpoints sharing one gateway can each present their
        * own slice of its catalog. Requires `fetch`.
+       * `'complement'` serves that slice and then every fetched model that no
+       * endpoint over the same gateway fetch declares, so a model curated
+       * nowhere is still reachable somewhere.
        */
-      filter: z.boolean().optional(),
+      filter: z.union([z.boolean(), z.literal('complement')]).optional(),
       userIdQuery: z.boolean().optional(),
     }),
     iconURL: z.string().optional(),
