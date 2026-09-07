@@ -9,6 +9,7 @@ import {
   isAgentsEndpoint,
   getConfigDefaults,
   isAssistantsEndpoint,
+  getEndpointField,
 } from 'librechat-data-provider';
 import type { TAssistantsMap, TEndpointsConfig } from 'librechat-data-provider';
 import type { MentionOption } from '~/common';
@@ -20,7 +21,7 @@ import {
 } from '~/data-provider';
 import useAssistantListMap from '~/hooks/Assistants/useAssistantListMap';
 import { useAgentsMapContext } from '~/Providers/AgentsMapContext';
-import { mapEndpoints, getPresetTitle } from '~/utils';
+import { mapEndpoints, getModelLabel, getPresetTitle } from '~/utils';
 import { EndpointIcon } from '~/components/Endpoints';
 import useHasAccess from '~/hooks/Roles/useHasAccess';
 import { filterMentionEndpoints } from './mentions';
@@ -180,9 +181,11 @@ export default function useMentions({
         return [];
       }
 
+      const modelLabels = getEndpointField(endpointsConfig, endpoint, 'modelLabels');
       const models = (modelsConfig?.[endpoint] ?? []).map((model) => ({
-        value: endpoint,
-        label: model,
+        value: model,
+        label: getModelLabel(modelLabels, model) ?? model,
+        endpoint,
         type: 'model' as const,
         icon: EndpointIcon({
           conversation: { endpoint, model },

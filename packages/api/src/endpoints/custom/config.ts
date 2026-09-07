@@ -34,6 +34,7 @@ export function loadCustomEndpointsConfig(
         name: configName,
         iconURL,
         modelDisplayLabel,
+        modelLabels,
         customParams,
         provider,
       } = endpoint;
@@ -62,6 +63,7 @@ export function loadCustomEndpointsConfig(
         userProvideURL,
         customParams: resolvedCustomParams,
         modelDisplayLabel,
+        modelLabels,
         iconURL,
       };
     }

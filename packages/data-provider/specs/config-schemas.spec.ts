@@ -248,6 +248,45 @@ describe('endpointSchema deprecated fields', () => {
   });
 });
 
+describe('endpointSchema modelLabels', () => {
+  const validEndpoint = {
+    name: 'CustomEndpoint',
+    apiKey: 'test-key',
+    baseURL: 'https://api.example.com',
+    models: { default: ['claude-opus-4-8'] },
+  };
+
+  it('keeps a declared label map, which is otherwise stripped as an unknown key', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': 'Opus 4.8' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelLabels).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+    }
+  });
+
+  it('rejects a non-string label', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': 4.8 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims declared labels', () => {
+    const result = endpointSchema.safeParse({
+      ...validEndpoint,
+      modelLabels: { 'claude-opus-4-8': ' Opus 4.8 ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelLabels).toEqual({ 'claude-opus-4-8': 'Opus 4.8' });
+    }
+  });
+});
+
 describe('endpointSchema addParams validation', () => {
   const validEndpoint = {
     name: 'CustomEndpoint',
@@ -1176,5 +1215,60 @@ describe('specsConfigSchema', () => {
       ],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('custom endpoint models.default', () => {
+  const parse = (models: Record<string, unknown>) =>
+    endpointSchema.partial().safeParse({
+      name: 'Claude',
+      apiKey: '${GATEWAY_KEY}',
+      baseURL: 'https://gateway.example.com/v1',
+      models,
+    });
+
+  it('accepts filter alongside fetch', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true, filter: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBe(true);
+  });
+
+  it('leaves filter undefined when not declared, so existing configs are unchanged', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBeUndefined();
+  });
+
+  /* An endpoint that declares nothing and never filters can never produce a
+     model. Without this it validates, then vanishes from the picker unexplained. */
+  it('rejects an empty list when the endpoint does not filter', () => {
+    const result = parse({ default: [] });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['models', 'default']);
+  });
+
+  it('rejects an empty list even with fetch, when the endpoint does not filter', () => {
+    expect(parse({ default: [], fetch: true }).success).toBe(false);
+  });
+
+  it('rejects an empty list under an explicitly disabled filter', () => {
+    expect(parse({ default: [], fetch: true, filter: false }).success).toBe(false);
+  });
+
+  /* Under `filter` an empty list is a base configuration shipping an endpoint
+     template for a deployment to fill in. */
+  it('accepts an empty list under `filter`', () => {
+    expect(parse({ default: [], fetch: true, filter: true }).success).toBe(true);
+  });
+
+  it('accepts an empty list under `filter: complement`', () => {
+    expect(parse({ default: [], fetch: true, filter: 'complement' }).success).toBe(true);
+  });
+
+  it('rejects a filter that is neither boolean nor `complement`', () => {
+    expect(parse({ default: ['claude-opus-5'], fetch: true, filter: 'yes' }).success).toBe(false);
   });
 });

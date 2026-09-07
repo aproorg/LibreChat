@@ -834,13 +834,37 @@ export const endpointSchema = baseEndpointSchema.merge(
     }),
     apiKey: z.string(),
     baseURL: z.string(),
-    models: z.object({
-      default: z.array(modelItemSchema).min(1),
-      fetch: z.boolean().optional(),
-      userIdQuery: z.boolean().optional(),
-    }),
+    models: z
+      .object({
+        /** An allowlist under `filter`, a fallback otherwise; may be empty under `filter`. */
+        default: z.array(modelItemSchema),
+        fetch: z.boolean().optional(),
+        /**
+         * Serves `default ∩ fetched` instead of replacing `default` with the
+         * fetched list, so endpoints sharing one gateway can each present their
+         * own slice of its catalog. Requires `fetch`.
+         * `'complement'` serves that slice and then every fetched model that no
+         * endpoint over the same gateway fetch declares, so a model curated
+         * nowhere is still reachable somewhere.
+         */
+        filter: z.union([z.boolean(), z.literal('complement')]).optional(),
+        userIdQuery: z.boolean().optional(),
+      })
+      /* An empty list is only meaningful under `filter`, where it is an endpoint
+         template a deployment fills in. Everywhere else it can never produce a
+         model, and the endpoint would be dropped without a word. */
+      .refine((models) => Boolean(models.filter) || models.default.length > 0, {
+        message: 'At least one default model is required unless `filter` is set',
+        path: ['default'],
+      }),
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
+    /**
+     * Display labels keyed by model id (`claude-opus-4-8: 'Opus 4.8'`). Purely
+     * presentational — the id stays what is declared, matched and sent upstream,
+     * and an unlabelled model renders its id.
+     */
+    modelLabels: z.record(z.string().transform((label) => label.trim())).optional(),
     /**
      * Forces the endpoint to use a provider's native client / request format
      * instead of the default OpenAI-compatible client. Currently supports

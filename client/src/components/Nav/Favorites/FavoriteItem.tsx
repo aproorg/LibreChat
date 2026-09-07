@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import * as Menu from '@ariakit/react/menu';
 import { Ellipsis, PinOff } from 'lucide-react';
 import { DropdownPopup } from '@librechat/client';
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, getEndpointField } from 'librechat-data-provider';
 import type { Agent, TModelSpec, TEndpointsConfig } from 'librechat-data-provider';
 import type { FavoriteModel } from '~/store/favorites';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import MinimalIcon from '~/components/Endpoints/MinimalIcon';
 import { useFavorites, useLocalize } from '~/hooks';
-import { renderAgentAvatar, cn } from '~/utils';
+import { getModelLabel, renderAgentAvatar, cn } from '~/utils';
 
 type Kwargs = {
   model?: string;
@@ -19,6 +19,7 @@ type Kwargs = {
 
 type FavoriteItemBaseProps = {
   onRemoveFocus?: () => void;
+  endpointsConfig?: TEndpointsConfig;
 };
 
 type AgentFavoriteProps = FavoriteItemBaseProps & {
@@ -37,7 +38,6 @@ type SpecFavoriteProps = FavoriteItemBaseProps & {
   type: 'spec';
   item: TModelSpec;
   onSelectSpec?: (spec: TModelSpec) => void;
-  endpointsConfig?: TEndpointsConfig;
 };
 
 type FavoriteItemProps = AgentFavoriteProps | ModelFavoriteProps | SpecFavoriteProps;
@@ -114,7 +114,8 @@ export default function FavoriteItem(props: FavoriteItemProps) {
     name = props.item.label;
     typeLabel = localize('com_ui_model_spec');
   } else {
-    name = props.item.model;
+    const modelLabels = getEndpointField(props.endpointsConfig, props.item.endpoint, 'modelLabels');
+    name = getModelLabel(modelLabels, props.item.model) ?? props.item.model;
     typeLabel = localize('com_ui_model');
   }
   const ariaLabel = `${name} (${typeLabel})`;

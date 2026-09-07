@@ -55,6 +55,12 @@ export interface FetchModelsParams {
   userObject?: Partial<IUser>;
   /** Skip MODEL_QUERIES cache (e.g., for user-provided keys) */
   skipCache?: boolean;
+  /**
+   * Rethrow a failed fetch instead of resolving `[]`. A caller that treats an
+   * empty list as authoritative needs to tell a broken pipe from a gateway that
+   * answered with no models; every other caller keeps the swallowing default.
+   */
+  throwOnError?: boolean;
 }
 
 function applyUserProvidedBaseURLProtection(
@@ -165,6 +171,7 @@ export async function fetchModels({
   headers,
   userObject,
   skipCache = false,
+  throwOnError = false,
 }: FetchModelsParams): Promise<string[]> {
   let models: string[] = [];
   const baseURL = direct ? extractBaseURL(_baseURL ?? '') : _baseURL;
@@ -300,6 +307,9 @@ export async function fetchModels({
   } catch (error) {
     const logMessage = `Failed to fetch models from ${azure ? 'Azure ' : ''}${name} API`;
     logAxiosError({ message: logMessage, error: error as Error });
+    if (throwOnError) {
+      throw error;
+    }
   }
 
   if (modelsCache && cacheKey && models.length > 0) {
