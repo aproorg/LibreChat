@@ -1616,6 +1616,132 @@ describe('useStepHandler', () => {
     });
   });
 
+  describe('on_elicitation_resolved event', () => {
+    const createElicitationPart = (
+      overrides: Partial<Agents.ElicitationContent['elicitation']> = {},
+    ): Agents.ElicitationContent => ({
+      type: ContentTypes.ELICITATION,
+      elicitation: {
+        flowId: 'flow-1',
+        mode: 'url',
+        message: 'Please authorize access',
+        url: 'https://example.com/authorize',
+        ...overrides,
+      },
+    });
+
+    it('writes the resolved action/content onto the matching ELICITATION part by flowId', () => {
+      const responseMessage = createResponseMessage({ content: [createElicitationPart()] });
+      mockGetMessages.mockReturnValue([responseMessage]);
+
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+
+      const runStep = createRunStep();
+      const submission = createSubmission();
+
+      act(() => {
+        result.current.stepHandler({ event: StepEvents.ON_RUN_STEP, data: runStep }, submission);
+      });
+
+      mockSetMessages.mockClear();
+
+      const resolvedEvent: Agents.ElicitationResolvedEvent = {
+        id: runStep.id,
+        runId: 'response-msg-1',
+        flowId: 'flow-1',
+        action: 'complete',
+        content: { confirmed: true },
+      };
+
+      act(() => {
+        result.current.stepHandler(
+          { event: StepEvents.ON_ELICITATION_RESOLVED, data: resolvedEvent },
+          submission,
+        );
+      });
+
+      expect(mockSetMessages).toHaveBeenCalled();
+      const lastCall = mockSetMessages.mock.calls[mockSetMessages.mock.calls.length - 1][0];
+      const responseMsg = lastCall.find((m: TMessage) => !m.isCreatedByUser);
+      const elicitationPart = responseMsg?.content?.find(
+        (part: TMessageContentParts) => part?.type === ContentTypes.ELICITATION,
+      ) as Agents.ElicitationContent | undefined;
+      expect(elicitationPart?.elicitation.action).toBe('complete');
+      expect(elicitationPart?.elicitation.content).toEqual({ confirmed: true });
+      // The rest of the elicitation payload is preserved, not clobbered.
+      expect(elicitationPart?.elicitation.flowId).toBe('flow-1');
+      expect(elicitationPart?.elicitation.url).toBe('https://example.com/authorize');
+    });
+
+    it('warns and does not update messages when no response message is found', () => {
+      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+      const submission = createSubmission();
+
+      const resolvedEvent: Agents.ElicitationResolvedEvent = {
+        id: 'step-unknown',
+        runId: 'response-msg-nonexistent',
+        flowId: 'flow-1',
+        action: 'cancel',
+      };
+
+      act(() => {
+        result.current.stepHandler(
+          { event: StepEvents.ON_ELICITATION_RESOLVED, data: resolvedEvent },
+          submission,
+        );
+      });
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[on_elicitation_resolved] No response message found for',
+        'response-msg-nonexistent',
+      );
+      expect(mockSetMessages).not.toHaveBeenCalled();
+      consoleSpy.mockRestore();
+    });
+
+    it('warns and does not update messages when no ELICITATION part matches the flowId', () => {
+      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+      const responseMessage = createResponseMessage({
+        content: [createElicitationPart({ flowId: 'other-flow' })],
+      });
+      mockGetMessages.mockReturnValue([responseMessage]);
+
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+
+      const runStep = createRunStep();
+      const submission = createSubmission();
+
+      act(() => {
+        result.current.stepHandler({ event: StepEvents.ON_RUN_STEP, data: runStep }, submission);
+      });
+
+      mockSetMessages.mockClear();
+
+      const resolvedEvent: Agents.ElicitationResolvedEvent = {
+        id: runStep.id,
+        runId: 'response-msg-1',
+        flowId: 'flow-1',
+        action: 'decline',
+      };
+
+      act(() => {
+        result.current.stepHandler(
+          { event: StepEvents.ON_ELICITATION_RESOLVED, data: resolvedEvent },
+          submission,
+        );
+      });
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[on_elicitation_resolved] No matching elicitation content part for flowId',
+        'flow-1',
+      );
+      expect(mockSetMessages).not.toHaveBeenCalled();
+      consoleSpy.mockRestore();
+    });
+  });
+
   describe('clearStepMaps', () => {
     it('should clear all internal maps', () => {
       const responseMessage = createResponseMessage();
@@ -1848,6 +1974,58 @@ describe('useStepHandler', () => {
   });
 
   describe('content type mismatch handling', () => {
+    it('relocates an elicitation card to the tail when a text delta lands on its slot, keeping the text', () => {
+      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+
+      const elicitationPart = {
+        type: ContentTypes.ELICITATION,
+        elicitation: { flowId: 'flow-1', mode: 'url', message: 'Authorize access' },
+      } as unknown as TMessageContentParts;
+      /** Tool-call+elicitation+final-text sequence colliding on the same server
+       *  index: the elicitation card occupies index 1 when the final text delta
+       *  streams into that same slot. */
+      const responseMessage = createResponseMessage({
+        content: [{ type: ContentTypes.TEXT, text: 'Calling tool...' }, elicitationPart],
+      });
+      mockGetMessages.mockReturnValue([responseMessage]);
+
+      const { result } = renderHook(() => useStepHandler(createHookParams()));
+
+      act(() => {
+        result.current.syncStepMessage(responseMessage);
+      });
+
+      const runStep = createRunStep({ index: 1 });
+      const submission = createSubmission();
+
+      act(() => {
+        result.current.stepHandler({ event: StepEvents.ON_RUN_STEP, data: runStep }, submission);
+      });
+
+      const textDelta: Agents.MessageDeltaEvent = {
+        id: 'step-1',
+        delta: { content: [{ type: ContentTypes.TEXT, text: 'Final answer' }] },
+      };
+
+      act(() => {
+        result.current.stepHandler(
+          { event: StepEvents.ON_MESSAGE_DELTA, data: textDelta },
+          submission,
+        );
+      });
+
+      expect(consoleSpy).not.toHaveBeenCalledWith('Content type mismatch', expect.anything());
+
+      const lastCall = mockSetMessages.mock.calls[mockSetMessages.mock.calls.length - 1];
+      const updated = lastCall[0][lastCall[0].length - 1] as TMessage;
+      const content = updated.content as Array<{ type?: string; text?: string }>;
+      // Final text is written into the collided slot, not dropped.
+      expect(content[1]).toMatchObject({ type: ContentTypes.TEXT, text: 'Final answer' });
+      // The elicitation card survives, relocated to the tail.
+      expect(content[content.length - 1]).toMatchObject({ type: ContentTypes.ELICITATION });
+      consoleSpy.mockRestore();
+    });
+
     it('should warn on content type mismatch and not overwrite', () => {
       const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
 

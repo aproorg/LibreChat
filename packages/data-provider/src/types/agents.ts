@@ -56,6 +56,7 @@ export namespace Agents {
     | MessageContentInputAudio
     | SummaryContentPart
     | ToolCallContent
+    | ElicitationContent
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     | (Record<string, any> & { type?: ContentTypes | string })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,6 +99,113 @@ export namespace Agents {
   export type ToolCallContent = {
     type: ContentTypes.TOOL_CALL;
     tool_call?: ToolCall;
+  };
+
+  /**
+   * MCP elicitation. Covers both wire mechanisms:
+   * - "form": a server `elicitation/create` request (spec 2025-06-18) answered with
+   *   `{ action: 'accept' | 'decline' | 'cancel', content? }`.
+   * - "url": either a `mode: 'url'` `elicitation/create` request, OR the URL-exception
+   *   path where a `tools/call` response errors with JSON-RPC code -32042
+   *   (`ErrorCode.UrlElicitationRequired`) carrying `data.elicitations[]`. Both surface
+   *   the same authorization-link card; the client always resolves them via
+   *   `POST /api/mcp/elicitation/:flowId`.
+   */
+  export type ElicitationMode = 'form' | 'url';
+
+  /** A single labeled constant, as used by `oneOf` (titled enum) and
+   *  `items.anyOf` (titled multi-select option) restricted-schema forms. */
+  export type ElicitationConstOption = {
+    const: string | number | boolean;
+    title?: string;
+  };
+
+  export type ElicitationPropertySchema = {
+    type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+    title?: string;
+    description?: string;
+    enum?: string[];
+    /** Display labels for `enum`, positionally matched by index. */
+    enumNames?: string[];
+    /** Titled-enum alternative to `enum`: a `<select>` whose options carry a
+     *  `const` value and an optional display `title`. */
+    oneOf?: ElicitationConstOption[];
+    default?: string | number | boolean | string[] | number[];
+    minLength?: number;
+    maxLength?: number;
+    minimum?: number;
+    maximum?: number;
+    /** Regular expression a `string` value must match. */
+    pattern?: string;
+    /** Input semantics/validation for a `string` value. */
+    format?: 'email' | 'uri' | 'date' | 'date-time';
+    /** `type: 'array'` option source: either a plain value list or titled
+     *  `const`/`title` options, rendered as a multi-select checkbox group. */
+    items?: {
+      enum?: Array<string | number>;
+      anyOf?: ElicitationConstOption[];
+    };
+    minItems?: number;
+    maxItems?: number;
+  };
+
+  export type ElicitationSchema = {
+    type: 'object';
+    properties: Record<string, ElicitationPropertySchema>;
+    required?: string[];
+  };
+
+  /** A resolved field value: primitives for scalar properties, or a string/number
+   *  array for a `type: 'array'` (multi-select) property. */
+  export type ElicitationValue = string | number | boolean | string[] | number[];
+
+  /** Terminal resolution states a client can post back to `/api/mcp/elicitation/:flowId`.
+   *  `accept`/`decline`/`cancel` mirror the SDK's `ElicitResultSchema.action` (form mode);
+   *  `complete` is the URL-exception (-32042) "I've authorized, continue" signal — treated
+   *  as equivalent to `accept` when resuming the flow. */
+  export type ElicitationAction = 'accept' | 'decline' | 'cancel' | 'complete';
+
+  export type ElicitationContent = {
+    type: ContentTypes.ELICITATION;
+    elicitation: {
+      flowId: string;
+      mode: ElicitationMode;
+      message: string;
+      /** requesting MCP server name, for the card header identity line */
+      serverName?: string;
+      /** requesting MCP tool name, for the card header identity line */
+      toolName?: string;
+      /** form mode only */
+      requestedSchema?: ElicitationSchema;
+      /** url mode only: the authorization/consent page to open */
+      url?: string;
+      /** Set once the card has been resolved (locally, or replayed from persisted history) */
+      action?: ElicitationAction;
+      content?: Record<string, ElicitationValue>;
+    };
+  };
+
+  /** Wire payload of the `on_elicitation` SSE event. */
+  export type ElicitationEvent = {
+    id: string;
+    runId?: string;
+    elicitation: ElicitationContent['elicitation'];
+  };
+
+  /**
+   * Wire payload of the `on_elicitation_resolved` SSE event, emitted when a
+   * pending elicitation flow is resolved via `POST /api/mcp/elicitation/:flowId`.
+   * The client locates the matching {@link ElicitationContent} part by `flowId`
+   * (its dedupe key) and writes `action`/`content` onto its `elicitation`, so the
+   * resolved card survives SSE replay and re-render. `id`/`runId` mirror
+   * {@link ElicitationEvent} so the same step→message resolution applies.
+   */
+  export type ElicitationResolvedEvent = {
+    id: string;
+    runId?: string;
+    flowId: string;
+    action: ElicitationAction;
+    content?: Record<string, ElicitationValue>;
   };
 
   /**

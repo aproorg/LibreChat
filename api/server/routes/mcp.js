@@ -22,6 +22,7 @@ const {
   generateCheckAccess,
   validateOAuthSession,
   OAUTH_SESSION_COOKIE,
+  parseElicitationFlowId,
 } = require('@librechat/api');
 const {
   createMCPServerController,
@@ -42,6 +43,8 @@ const {
   resolveAllMcpConfigs,
   resolveConfigServers,
   getMCPSetupData,
+  getElicitationFlowContext,
+  resolveElicitationFlow,
 } = require('~/server/services/MCP');
 const { requireJwtAuth, canAccessMCPServerResource } = require('~/server/middleware');
 const { getUserPluginAuthValue } = require('~/server/services/PluginService');
@@ -66,6 +69,235 @@ const canAccessOAuthFlow = (flowId, userId) => {
     return false;
   }
   return parsed.userId === userId || parsed.userId === 'system';
+};
+
+/**
+ * Elicitation flow IDs embed the requesting userId directly (unlike OAuth flow
+ * IDs, which are one-per-server; elicitation flows are one-per-tool-invocation
+ * — see `generateElicitationFlowId` in `@librechat/api`). This enforces the
+ * same per-user ownership OAuth flow routes do, so one user can't complete or
+ * observe another user's pending elicitation via a guessed/observed flowId.
+ */
+const canAccessElicitationFlow = (flowId, userId) => {
+  const parsed = parseElicitationFlowId(flowId);
+  if (!parsed) {
+    return false;
+  }
+  if (parsed.tenantId && parsed.tenantId !== getTenantId()) {
+    return false;
+  }
+  return parsed.userId === userId;
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Validates the restricted `format` keyword on a string property (spec
+ * 2025-11-25: email, uri, date, date-time — the subset the client renders as a
+ * specialized input). Returns an error message on violation, or `null`.
+ * @param {string} key
+ * @param {string} value
+ * @param {string} format
+ * @returns {string | null}
+ */
+const validateElicitationFormat = (key, value, format) => {
+  if (format === 'email') {
+    return EMAIL_PATTERN.test(value) ? null : `Field '${key}' must be a valid email address`;
+  }
+  if (format === 'uri') {
+    try {
+      new URL(value);
+      return null;
+    } catch {
+      return `Field '${key}' must be a valid URI`;
+    }
+  }
+  if (format === 'date' || format === 'date-time') {
+    return Number.isNaN(Date.parse(value)) ? `Field '${key}' must be a valid ${format}` : null;
+  }
+  return null;
+};
+
+/**
+ * Resolves the permitted member values for an array-type (multi-select)
+ * property's `items` schema, supporting both shapes the client renders:
+ * `items.enum` (bare values) and `items.anyOf: [{ const }]` (labeled options).
+ * Returns `null` when `items` carries neither, i.e. any array is permitted.
+ * @param {unknown} items
+ * @returns {unknown[] | null}
+ */
+const getArrayItemMembers = (items) => {
+  if (!items || typeof items !== 'object') {
+    return null;
+  }
+  if (Array.isArray(items.enum)) {
+    return items.enum;
+  }
+  if (Array.isArray(items.anyOf)) {
+    return items.anyOf.map((option) => option?.const);
+  }
+  return null;
+};
+
+/**
+ * Validates a single submitted elicitation field value against its property
+ * schema (the MCP form-mode elicitation subset of JSON Schema). Returns an error
+ * message on the first violation, or `null` when the value conforms.
+ *
+ * Beyond the base `Agents.ElicitationPropertySchema` type, this also validates
+ * the extended subset the client renders: `pattern`, `format`, `oneOf`
+ * (single-select from a labeled const list), and `array`/`items`/`minItems`/
+ * `maxItems` (multi-select). `enumNames` is display-only labeling for `enum`
+ * and is intentionally never validated.
+ * @param {string} key
+ * @param {unknown} value
+ * @param {import('librechat-data-provider').Agents.ElicitationPropertySchema} property
+ * @returns {string | null}
+ */
+const validateElicitationField = (key, value, property) => {
+  const {
+    type,
+    enum: enumValues,
+    minimum,
+    maximum,
+    minLength,
+    maxLength,
+    pattern,
+    format,
+    oneOf,
+    items,
+    minItems,
+    maxItems,
+  } = property ?? {};
+
+  if (Array.isArray(oneOf) && oneOf.length > 0) {
+    const allowedConsts = oneOf.map((option) => option?.const);
+    if (!allowedConsts.includes(value)) {
+      return `Field '${key}' must be one of the allowed options`;
+    }
+    return null;
+  }
+
+  if (type === 'array') {
+    if (!Array.isArray(value)) {
+      return `Field '${key}' must be an array`;
+    }
+    if (typeof minItems === 'number' && value.length < minItems) {
+      return `Field '${key}' must have at least ${minItems} item(s)`;
+    }
+    if (typeof maxItems === 'number' && value.length > maxItems) {
+      return `Field '${key}' must have at most ${maxItems} item(s)`;
+    }
+    const allowedMembers = getArrayItemMembers(items);
+    if (allowedMembers && value.some((element) => !allowedMembers.includes(element))) {
+      return `Field '${key}' contains an invalid selection`;
+    }
+    return null;
+  }
+
+  if (type === 'string') {
+    if (typeof value !== 'string') {
+      return `Field '${key}' must be a string`;
+    }
+    if (typeof minLength === 'number' && value.length < minLength) {
+      return `Field '${key}' must be at least ${minLength} characters`;
+    }
+    if (typeof maxLength === 'number' && value.length > maxLength) {
+      return `Field '${key}' must be at most ${maxLength} characters`;
+    }
+    if (typeof pattern === 'string') {
+      let regex;
+      try {
+        regex = new RegExp(pattern);
+      } catch {
+        return `Field '${key}' has an invalid pattern`;
+      }
+      if (!regex.test(value)) {
+        return `Field '${key}' does not match the required pattern`;
+      }
+    }
+    if (typeof format === 'string') {
+      const formatError = validateElicitationFormat(key, value, format);
+      if (formatError) {
+        return formatError;
+      }
+    }
+  } else if (type === 'number' || type === 'integer') {
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      return `Field '${key}' must be a number`;
+    }
+    if (type === 'integer' && !Number.isInteger(value)) {
+      return `Field '${key}' must be an integer`;
+    }
+    if (typeof minimum === 'number' && value < minimum) {
+      return `Field '${key}' must be >= ${minimum}`;
+    }
+    if (typeof maximum === 'number' && value > maximum) {
+      return `Field '${key}' must be <= ${maximum}`;
+    }
+  } else if (type === 'boolean' && typeof value !== 'boolean') {
+    return `Field '${key}' must be a boolean`;
+  }
+
+  if (Array.isArray(enumValues) && enumValues.length > 0 && !enumValues.includes(value)) {
+    return `Field '${key}' must be one of: ${enumValues.join(', ')}`;
+  }
+
+  return null;
+};
+
+/**
+ * Server-side guard for the elicitation completion route. The client validates
+ * form submissions in the UI, but that check is trivially bypassed by calling
+ * the API directly, so `content` is re-validated here against the flow's stored
+ * `requestedSchema` before it is forwarded to the MCP server. Rejects unknown
+ * keys and enforces per-field type/enum/range constraints; required-field
+ * presence is only enforced for a submitting `accept` action (a `decline` /
+ * `cancel` legitimately omits values). When the flow carries no schema (URL-mode
+ * elicitation, or a schema not threaded into flow metadata) there is nothing to
+ * validate against, so the content passes through unchanged.
+ * @param {unknown} content
+ * @param {import('librechat-data-provider').Agents.ElicitationSchema | undefined} requestedSchema
+ * @param {{ enforceRequired: boolean }} options
+ * @returns {string | null} An error message on violation, or `null` when valid.
+ */
+const validateElicitationContent = (content, requestedSchema, { enforceRequired }) => {
+  if (!requestedSchema || typeof requestedSchema !== 'object') {
+    return null;
+  }
+
+  if (content != null && (typeof content !== 'object' || Array.isArray(content))) {
+    return 'content must be an object';
+  }
+
+  const properties = requestedSchema.properties ?? {};
+  const values = content ?? {};
+
+  for (const key of Object.keys(values)) {
+    if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+      return `Unknown field: '${key}'`;
+    }
+  }
+
+  if (enforceRequired && Array.isArray(requestedSchema.required)) {
+    for (const key of requestedSchema.required) {
+      if (values[key] === undefined || values[key] === null) {
+        return `Missing required field: '${key}'`;
+      }
+    }
+  }
+
+  for (const [key, property] of Object.entries(properties)) {
+    if (values[key] === undefined || values[key] === null) {
+      continue;
+    }
+    const error = validateElicitationField(key, values[key], property);
+    if (error) {
+      return error;
+    }
+  }
+
+  return null;
 };
 
 const clearGetTokensFlow = async ({ flowManager, flowId, tokens }) => {
@@ -655,6 +887,85 @@ router.post('/oauth/cancel/:serverName', requireJwtAuth, async (req, res) => {
   } catch (error) {
     logger.error('[MCP OAuth Cancel] Failed to cancel OAuth flow', error);
     res.status(500).json({ error: 'Failed to cancel OAuth flow' });
+  }
+});
+
+/**
+ * Submit a response to an MCP elicitation request. Completes a pending
+ * elicitation flow so `MCPManager.callTool` can resume:
+ * - `action: 'accept' | 'decline' | 'cancel'` — form-mode `elicitation/create`
+ *   response (spec 2025-06-18); `content` carries the submitted field values.
+ * - `action: 'complete' | 'cancel'` — URL-mode card (either a `mode: 'url'`
+ *   `elicitation/create` request, or a -32042 URL-exception retry): `complete`
+ *   means "I've authorized — continue", which resumes/retries the tool call.
+ */
+router.post('/elicitation/:flowId', requireJwtAuth, async (req, res) => {
+  try {
+    const { flowId } = req.params;
+    const { action, content } = req.body ?? {};
+    const user = req.user;
+
+    if (!user?.id) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    if (!action || !['accept', 'decline', 'cancel', 'complete'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    if (!canAccessElicitationFlow(flowId, user.id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const flowsCache = getLogStores(CacheKeys.FLOWS);
+    const flowManager = getFlowStateManager(flowsCache);
+
+    const flowState = await flowManager.getFlowState(flowId, 'mcp_elicit');
+    if (!flowState) {
+      return res.status(404).json({ error: 'Flow not found' });
+    }
+
+    /**
+     * Prefer the schema persisted in flow metadata (cross-process robust); fall
+     * back to the in-process stream-context registry captured when the card was
+     * emitted, so validation still works before that metadata is threaded.
+     */
+    const requestedSchema =
+      flowState.metadata?.requestedSchema ?? getElicitationFlowContext(flowId)?.requestedSchema;
+    const validationError = validateElicitationContent(content, requestedSchema, {
+      enforceRequired: action === 'accept',
+    });
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
+
+    // Atomic PENDING->COMPLETED: exactly one concurrent submit wins even if both
+    // requests read PENDING first.
+    const won = await flowManager.completeFlowIfPending(flowId, 'mcp_elicit', { action, content });
+    if (!won) {
+      // Lost the race, already resolved, or gone entirely — tell the two apart so
+      // a genuinely missing flow still reports 404 instead of 409.
+      const settledState = await flowManager.getFlowState(flowId, 'mcp_elicit');
+      if (!settledState) {
+        return res.status(404).json({ error: 'Flow not found' });
+      }
+      return res.status(409).json({ error: 'Elicitation already resolved' });
+    }
+
+    /** Notify the originating stream so a resumed/replayed session renders the
+     *  resolved card instead of a stale pending one. */
+    await resolveElicitationFlow({
+      flowId,
+      action,
+      content,
+      fallbackStreamId: flowState.metadata?.streamId ?? null,
+      fallbackStepId: flowState.metadata?.stepId,
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    logger.error('[MCP Elicitation] Failed to complete elicitation flow', error);
+    return res.status(500).json({ error: 'Failed to complete elicitation flow' });
   }
 });
 

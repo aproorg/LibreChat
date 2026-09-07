@@ -7,6 +7,7 @@ const {
   PermissionBits,
   hasPermissions,
   AgentCapabilities,
+  stripUiOnlyContentParts,
 } = require('librechat-data-provider');
 const {
   writeSSE,
@@ -515,7 +516,8 @@ const OpenAIChatCompletionController = async (req, res) => {
     const openaiMessages = convertMessages(request.messages);
 
     const toolSet = buildToolSet(primaryConfig);
-    const formatted = formatAgentMessages(openaiMessages, {}, toolSet);
+    // Elicitation cards are UI-only; strip them so a persisted card never leaks to the model.
+    const formatted = formatAgentMessages(stripUiOnlyContentParts(openaiMessages), {}, toolSet);
     const formattedMessages = formatted.messages;
     const initialSummary = formatted.summary;
     let indexTokenCountMap = formatted.indexTokenCountMap;
