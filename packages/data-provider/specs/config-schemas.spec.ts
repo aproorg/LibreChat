@@ -1218,7 +1218,7 @@ describe('specsConfigSchema', () => {
   });
 });
 
-describe('custom endpoint models.filter', () => {
+describe('custom endpoint models.default', () => {
   const parse = (models: Record<string, unknown>) =>
     endpointSchema.partial().safeParse({
       name: 'Claude',
@@ -1239,5 +1239,36 @@ describe('custom endpoint models.filter', () => {
 
     expect(result.success).toBe(true);
     expect(result.success && result.data.models?.filter).toBeUndefined();
+  });
+
+  /* An endpoint that declares nothing and never filters can never produce a
+     model. Without this it validates, then vanishes from the picker unexplained. */
+  it('rejects an empty list when the endpoint does not filter', () => {
+    const result = parse({ default: [] });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['models', 'default']);
+  });
+
+  it('rejects an empty list even with fetch, when the endpoint does not filter', () => {
+    expect(parse({ default: [], fetch: true }).success).toBe(false);
+  });
+
+  it('rejects an empty list under an explicitly disabled filter', () => {
+    expect(parse({ default: [], fetch: true, filter: false }).success).toBe(false);
+  });
+
+  /* Under `filter` an empty list is a base configuration shipping an endpoint
+     template for a deployment to fill in. */
+  it('accepts an empty list under `filter`', () => {
+    expect(parse({ default: [], fetch: true, filter: true }).success).toBe(true);
+  });
+
+  it('accepts an empty list under `filter: complement`', () => {
+    expect(parse({ default: [], fetch: true, filter: 'complement' }).success).toBe(true);
+  });
+
+  it('rejects a filter that is neither boolean nor `complement`', () => {
+    expect(parse({ default: ['claude-opus-5'], fetch: true, filter: 'yes' }).success).toBe(false);
   });
 });
