@@ -2220,7 +2220,6 @@ export interface ActiveJobsResponse {
 export const getActiveJobs = (): Promise<ActiveJobsResponse> => {
   return request.get(endpoints.activeJobs());
 };
-
 export function getScheduleMCPConsent(id: string): Promise<ScheduleMCPConsentView> {
   return request.get(endpoints.scheduleMCPConsent(id));
 }
@@ -2236,11 +2235,9 @@ export function revokeScheduleMCPConsent(id: string, expectedRevision: string): 
   });
 }
 /**
- * Resolves a pending MCP URL-mode elicitation flow (a `mode: 'url'`
- * `elicitation/create` acknowledgement, or a -32042 URL-exception authorization
- * continuation). `action: 'complete'` is the URL-exception "I've authorized —
- * continue" signal; both resume the same waiting `MCPManager.callTool`. URL mode
- * carries no `content`.
+ * Resolves a pending MCP form- or URL-mode elicitation flow. Form submissions use
+ * `accept` with validated field content; URL authorization can use `complete` to
+ * resume the suspended tool call.
  */
 export const respondToElicitation = (
   flowId: string,
