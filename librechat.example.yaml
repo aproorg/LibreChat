@@ -464,6 +464,8 @@ actions:
 #     #                     # `tool_search` tool plus a name-only listing instead of each tool's full
 #     #                     # schema. Saves context on large tool sets. A per-agent tool toggle overrides
 #     #                     # this. Requires the `deferred_tools` agent capability to be enabled.
+#     # elicitation: false  # Opt this server out of interactive MCP URL-authorization elicitation cards.
+#     #                     # Enabled by default; set to false to skip elicitation handling for this server.
 #   private-openid:
 #     type: streamable-http
 #     url: https://mcp.example.com/mcp
