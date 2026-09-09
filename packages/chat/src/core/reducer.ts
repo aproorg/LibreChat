@@ -12,6 +12,8 @@ import {
   applySummarizeDelta,
   applyToolCallCompleted,
   isSkillAuthoringToolCall,
+  upsertElicitationContent,
+  resolveElicitationContent,
 } from './steps';
 import {
   ensureUserMessagePresent,
@@ -173,6 +175,34 @@ export function reduceStep(state: StreamState, event: StepEvent, ctx: StepContex
     const response = state.messages.get(responseMessageId);
     if (response) {
       const updatedResponse = applyAgentUpdate(response, event.data, editPrefixOffset);
+      state.messages.set(responseMessageId, updatedResponse);
+      merge(updatedResponse, responseMessageId);
+    }
+    return effects;
+  }
+
+  if (
+    event.event === StepEvents.ON_ELICITATION ||
+    event.event === StepEvents.ON_ELICITATION_RESOLVED
+  ) {
+    const eventData = event.data;
+    const responseMessageId = resolveResponseId(submission, eventData.runId);
+    if (!responseMessageId) {
+      bufferDelta(state, eventData.id, event);
+      return effects;
+    }
+    const response =
+      state.messages.get(responseMessageId) ??
+      messages.find((message) => message.messageId === responseMessageId);
+    if (!response) {
+      bufferDelta(state, eventData.id, event);
+      return effects;
+    }
+    const updatedResponse =
+      event.event === StepEvents.ON_ELICITATION
+        ? upsertElicitationContent(response, event.data.elicitation)
+        : resolveElicitationContent(response, event.data);
+    if (updatedResponse !== response) {
       state.messages.set(responseMessageId, updatedResponse);
       merge(updatedResponse, responseMessageId);
     }

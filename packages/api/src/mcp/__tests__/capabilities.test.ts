@@ -89,12 +89,15 @@ describe('MCP client capability profiles', () => {
   it.each([
     ['omitted', undefined],
     ['standard', STANDARD_MCP_CAPABILITY_PROFILE],
-  ] as const)('advertises no extensions for the %s profile', async (_label, profile) => {
-    await expect(negotiateCapabilities(profile)).resolves.toEqual({});
+  ] as const)('advertises elicitation support for the %s profile', async (_label, profile) => {
+    await expect(negotiateCapabilities(profile)).resolves.toEqual({
+      elicitation: { form: {}, url: {} },
+    });
   });
 
   it('advertises the MCP Apps HTML extension for the apps profile', async () => {
     await expect(negotiateCapabilities(MCP_APPS_CAPABILITY_PROFILE)).resolves.toEqual({
+      elicitation: { form: {}, url: {} },
       extensions: {
         'io.modelcontextprotocol/ui': {
           mimeTypes: ['text/html;profile=mcp-app'],

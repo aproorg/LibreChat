@@ -12,6 +12,7 @@ import {
   getDefaultEnvironment,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
+  ElicitRequestSchema,
   ResourceListChangedNotificationSchema,
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -22,7 +23,7 @@ import type {
   Dispatcher,
 } from 'undici';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { ClientCapabilities } from '@modelcontextprotocol/sdk/types.js';
+import type { ClientCapabilities, ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import type { TMCPAppOperationLimits } from 'librechat-data-provider';
 import type { MCPClientCapabilityProfile } from './capabilities';
 import type { MCPRequestScopeRunner } from './signal';
@@ -53,6 +54,7 @@ import { createSSRFSafeUndiciConnect, isSSRFTarget, resolveHostnameSSRF } from '
 import { projectMCPAppRuntimeTarget, type MCPAppRuntimeTarget } from './apps/binding';
 import { assertToolApprovalTransportEpoch } from '~/tools/approval';
 import { reserveMCPToolsChangedRevision } from './toolsChanged';
+import { extractUrlElicitation } from './elicitation';
 import { runOutsideTracing } from '~/utils/tracing';
 import { MCPRequestQuiescedError } from './request';
 import { isOwnedAbortError } from '~/utils/errors';
@@ -1259,6 +1261,16 @@ export class MCPConnection extends EventEmitter {
     }
   }
 
+  /** Installs the active server-initiated MCP elicitation handler for this call. */
+  setElicitationHandler(
+    handler: (params: ElicitRequest['params'], signal: AbortSignal) => Promise<ElicitResult>,
+  ): () => void {
+    this.client.setRequestHandler(ElicitRequestSchema, async (request, extra) =>
+      handler(request.params, extra.signal),
+    );
+    return () => this.client.removeRequestHandler(ElicitRequestSchema.method);
+  }
+
   setRequestHeaders(headers: Record<string, string> | null): void {
     if (!headers) {
       return;
@@ -1333,7 +1345,12 @@ export class MCPConnection extends EventEmitter {
         name: '@librechat/api-client',
         version: '1.2.3',
       },
-      { capabilities },
+      {
+        capabilities: {
+          ...capabilities,
+          ...(params.serverConfig.elicitation === false ? {} : { elicitation: { url: {} } }),
+        },
+      },
     );
 
     this.setupEventListeners();
@@ -2634,6 +2651,26 @@ export class MCPConnection extends EventEmitter {
       if (this.reportedStandaloneSseConflict && rawMessage.startsWith(SDK_SSE_RETRIES_EXHAUSTED)) {
         logger.debug(
           `${this.getLogPrefix()} SDK reconnection budget exhausted; session rebuild already underway`,
+        );
+        return;
+      }
+
+      /**
+       * A -32042 `UrlElicitationRequired` (the gateway's per-tool authorization
+       * signal, delivered HTTP-wrapped so `.code` is the 401 status) is NOT a
+       * transport/session failure: the gateway responded and the session is
+       * alive. `MCPManager.callTool` handles it in-band — surface the link, await
+       * consent, then retry the SAME session. Classifying it as an OAuth error
+       * here (`isOAuthError` matches the 401) would emit `oauthError` and
+       * `connectionChange: 'error'`, triggering a spurious background
+       * reconnection that races with — and can invalidate — that retry. In
+       * production that reconnection abandons on `-32002 insufficient_scope`,
+       * leaving a stale session whose retry then fails with `-32600 Session not
+       * initialized`. Leave the live session untouched.
+       */
+      if (extractUrlElicitation(error)) {
+        logger.debug(
+          `${this.getLogPrefix()} tools/call URL elicitation (-32042); handled in-band by callTool, not reconnecting`,
         );
         return;
       }

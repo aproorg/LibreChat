@@ -55,6 +55,30 @@ export const isOAuthStepEvent = (data: unknown): boolean => {
   return false;
 };
 
+/** Elicitation cards are transient UI events, so surface them before stream creation and replay them after reconnect. */
+export const isElicitationStepEvent = (data: unknown): boolean => {
+  if (data == null || typeof data !== 'object' || !('event' in data) || !('data' in data)) {
+    return false;
+  }
+  const payload = data.data;
+  if (payload == null || typeof payload !== 'object') return false;
+  if ('id' in payload && typeof payload.id !== 'string') return false;
+  if (data.event === StepEvents.ON_ELICITATION) {
+    const elicitation = 'elicitation' in payload ? payload.elicitation : undefined;
+    return (
+      elicitation != null &&
+      typeof elicitation === 'object' &&
+      'flowId' in elicitation &&
+      typeof elicitation.flowId === 'string'
+    );
+  }
+  return (
+    data.event === StepEvents.ON_ELICITATION_RESOLVED &&
+    'flowId' in payload &&
+    typeof payload.flowId === 'string'
+  );
+};
+
 export const getStepEventId = (event: unknown): string | undefined => {
   if (event == null || typeof event !== 'object' || !('data' in event)) {
     return undefined;

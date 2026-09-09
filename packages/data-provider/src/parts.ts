@@ -199,6 +199,7 @@ export type AskUserQuestionContentPart = ContentMetadata & {
 type ContentDataPart =
   | { type: 'data-agent-update'; data: DataOf<ContentTypes.AGENT_UPDATE> }
   | { type: 'data-summary'; data: DataOf<ContentTypes.SUMMARY> }
+  | { type: 'data-elicitation'; data: DataOf<ContentTypes.ELICITATION> }
   | { type: 'data-activity-label'; data: DataOf<ContentTypes.ACTIVITY_LABEL> }
   | { type: 'data-steer'; data: DataOf<ContentTypes.STEER> }
   | { type: 'data-error'; data: DataOf<ContentTypes.ERROR> };
@@ -270,6 +271,7 @@ type DataPartType = ContentDataPart['type'];
 const dataPartTypes = {
   [ContentTypes.AGENT_UPDATE]: 'data-agent-update',
   [ContentTypes.SUMMARY]: 'data-summary',
+  [ContentTypes.ELICITATION]: 'data-elicitation',
   [ContentTypes.ACTIVITY_LABEL]: 'data-activity-label',
   [ContentTypes.STEER]: 'data-steer',
   [ContentTypes.ERROR]: 'data-error',
@@ -278,6 +280,7 @@ const dataPartTypes = {
 const contentTypesByDataPart: Record<DataPartType, keyof typeof dataPartTypes> = {
   'data-agent-update': ContentTypes.AGENT_UPDATE,
   'data-summary': ContentTypes.SUMMARY,
+  'data-elicitation': ContentTypes.ELICITATION,
   'data-activity-label': ContentTypes.ACTIVITY_LABEL,
   'data-steer': ContentTypes.STEER,
   'data-error': ContentTypes.ERROR,
@@ -634,6 +637,7 @@ export function toUIPart(
     }
     case ContentTypes.AGENT_UPDATE:
     case ContentTypes.SUMMARY:
+    case ContentTypes.ELICITATION:
     case ContentTypes.ACTIVITY_LABEL:
     case ContentTypes.STEER:
     case ContentTypes.ERROR:
