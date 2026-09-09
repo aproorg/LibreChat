@@ -21,6 +21,7 @@ const { hasCapability, hasConfigCapability } = require('~/server/middleware/role
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
+const { getModelsConfig } = require('~/server/controllers/ModelController');
 
 const router = express.Router();
 const emailLoginEnabled =
@@ -209,6 +210,43 @@ function buildCloudFrontStartupConfig() {
   };
 }
 
+/**
+ * Filters model specs to only include presets where the model is available for the user.
+ * @param {object} modelSpecs - The model specs from app config
+ * @param {Record<string, string[]>} modelsConfig - The user's available models per endpoint
+ * @returns {object} Filtered model specs
+ */
+function filterModelSpecsByAvailability(modelSpecs, modelsConfig) {
+  if (!modelSpecs?.list || !modelsConfig) {
+    return modelSpecs;
+  }
+
+  const filteredList = modelSpecs.list.filter((spec) => {
+    const endpoint = spec.preset?.endpoint;
+    const model = spec.preset?.model;
+
+    if (!endpoint || !model) {
+      return true;
+    }
+
+    if (endpoint === EModelEndpoint.agents) {
+      return true;
+    }
+
+    const availableModels = modelsConfig[endpoint];
+    if (!availableModels || !Array.isArray(availableModels)) {
+      return true;
+    }
+
+    return availableModels.includes(model);
+  });
+
+  return {
+    ...modelSpecs,
+    list: filteredList,
+  };
+}
+
 router.get('/', async function (req, res) {
   try {
     const preLoginPayload = buildPreLoginPayload();
@@ -258,6 +296,10 @@ router.get('/', async function (req, res) {
 
     const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
 
+    const modelsConfig = await getModelsConfig(req);
+    const visibleModelSpecs = excludeHiddenModelSpecs(appConfig?.modelSpecs);
+    const filteredModelSpecs = filterModelSpecsByAvailability(visibleModelSpecs, modelsConfig);
+
     const balanceConfig = getBalanceConfig(appConfig);
     const cloudFront = buildCloudFrontStartupConfig();
     const langfuseFanoutEnabled = isLangfuseFanoutEnabled();
@@ -300,7 +342,7 @@ router.get('/', async function (req, res) {
         endpoint: EModelEndpoint.agents,
       }),
       turnstile: appConfig?.turnstileConfig,
-      modelSpecs: sanitizeModelSpecs(excludeHiddenModelSpecs(appConfig?.modelSpecs)),
+      modelSpecs: sanitizeModelSpecs(filteredModelSpecs),
       balance: balanceConfig,
       bundlerURL: process.env.SANDPACK_BUNDLER_URL,
       staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
