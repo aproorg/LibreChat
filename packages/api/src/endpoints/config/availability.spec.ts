@@ -66,8 +66,8 @@ describe('loadConfigModels – declared ∩ fetched', () => {
     expect(fetchModels).toHaveBeenCalledTimes(1);
   });
 
-  it('serves nothing when the gateway offers none of the declared models', async () => {
-    fetchModels.mockResolvedValue(['gpt-5.6']);
+  it('resolves to nothing when the gateway answers with an empty catalog', async () => {
+    fetchModels.mockResolvedValue([]);
 
     const result = await load(
       [{ name: 'Claude', models: { default: ['claude-sonnet-5'], fetch: true, filter: true } }],
@@ -77,15 +77,64 @@ describe('loadConfigModels – declared ∩ fetched', () => {
     expect(result.Claude).toEqual([]);
   });
 
-  it('falls back to the declared list when the fetch fails or answers empty', async () => {
-    fetchModels.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('gateway unreachable'));
+  it('does not need an authorization header to fail closed on an empty answer', async () => {
+    fetchModels.mockResolvedValue([]);
 
-    const declared = { default: ['claude-opus-5', 'claude-sonnet-5'], fetch: true, filter: true };
-    const emptyAnswer = await load([{ name: 'Claude', models: declared }], fetchModels);
-    const failed = await load([{ name: 'Claude', models: declared }], fetchModels);
+    const result = await load(
+      [
+        {
+          name: 'Claude',
+          headers: { 'x-user-email': '{{LIBRECHAT_USER_EMAIL}}' },
+          models: { default: ['claude-sonnet-5'], fetch: true, filter: true },
+        },
+      ],
+      fetchModels,
+    );
 
-    expect(emptyAnswer.Claude).toEqual(['claude-opus-5', 'claude-sonnet-5']);
-    expect(failed.Claude).toEqual(['claude-opus-5', 'claude-sonnet-5']);
+    expect(result.Claude).toEqual([]);
+  });
+
+  it('falls back to the declared list when the fetch fails outright', async () => {
+    fetchModels.mockRejectedValue(new Error('gateway unreachable'));
+
+    const result = await load(
+      [
+        {
+          name: 'Claude',
+          models: { default: ['claude-opus-5', 'claude-sonnet-5'], fetch: true, filter: true },
+        },
+      ],
+      fetchModels,
+    );
+
+    expect(result.Claude).toEqual(['claude-opus-5', 'claude-sonnet-5']);
+  });
+
+  it('fails open on a failed fetch even when the endpoint sends an authorization header', async () => {
+    fetchModels.mockRejectedValue(new Error('gateway unreachable'));
+
+    const result = await load(
+      [
+        {
+          name: 'Claude',
+          headers: { authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+          models: { default: ['claude-sonnet-5'], fetch: true, filter: true },
+        },
+      ],
+      fetchModels,
+    );
+
+    expect(result.Claude).toEqual(['claude-sonnet-5']);
+  });
+
+  it('leaves the declared list alone when there is no fetch to intersect', async () => {
+    const result = await load(
+      [{ name: 'Claude', models: { default: ['claude-sonnet-5'], filter: true } }],
+      fetchModels,
+    );
+
+    expect(result.Claude).toEqual(['claude-sonnet-5']);
+    expect(fetchModels).not.toHaveBeenCalled();
   });
 });
 
@@ -107,7 +156,24 @@ describe('loadConfigModels – endpoints without `filter` are unchanged', () => 
     expect(result.LiteLLM).toEqual(['gpt-5.6', 'cohere-rerank']);
   });
 
-  it('keeps the fallback to declared models on an empty answer', async () => {
+  it('keeps the OIDC empty-answer behaviour: authorization header yields nothing', async () => {
+    fetchModels.mockResolvedValue([]);
+
+    const result = await load(
+      [
+        {
+          name: 'LiteLLM',
+          headers: { Authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}' },
+          models: { default: ['claude-sonnet-5'], fetch: true },
+        },
+      ],
+      fetchModels,
+    );
+
+    expect(result.LiteLLM).toEqual([]);
+  });
+
+  it('keeps the fallback to declared models on an empty answer without that header', async () => {
     fetchModels.mockResolvedValue([]);
 
     const result = await load(
@@ -129,14 +195,18 @@ describe('filterManagedEndpoints', () => {
         { name: 'Claude', models: { default: ['a'], fetch: true, filter: true } },
         { name: 'Gemini', models: { default: ['b'], fetch: true, filter: true } },
         { name: 'Plain', models: { default: ['c'], fetch: true } },
-        /* `filter` without `fetch` has no catalog to intersect against. */
-        { name: 'NoFetch', models: { default: ['d'], filter: true } },
       ]),
     );
 
     expect([...managed].sort()).toEqual(['Claude', 'Gemini']);
-    expect(filterManagedEndpoints(undefined).size).toBe(0);
-    expect(filterManagedEndpoints({ endpoints: {} } as never).size).toBe(0);
+  });
+
+  it('excludes `filter` without `fetch` — there is no catalog to intersect', () => {
+    const managed = filterManagedEndpoints(
+      appConfig([{ name: 'Claude', models: { default: ['a'], filter: true } }]),
+    );
+
+    expect(managed.size).toBe(0);
   });
 
   it('keys by the normalized endpoint name, as the models config is', () => {
@@ -146,12 +216,29 @@ describe('filterManagedEndpoints', () => {
 
     expect(managed.has(normalizeEndpointName(' Claude '))).toBe(true);
   });
+
+  it('is empty for a config with no custom endpoints at all', () => {
+    expect(filterManagedEndpoints(undefined).size).toBe(0);
+    expect(filterManagedEndpoints(null).size).toBe(0);
+    expect(filterManagedEndpoints({ endpoints: {} } as never).size).toBe(0);
+  });
 });
 
 describe('withholdEmptyEndpoints', () => {
   const custom = (extra: Partial<TConfig> = {}): TConfig =>
     ({ order: 0, type: EModelEndpoint.custom, userProvide: false, ...extra }) as TConfig;
   const managed = (...names: string[]) => new Set(names);
+
+  it('withholds nothing when no endpoint is filter-managed', () => {
+    const endpointsConfig = { Anthropic: custom(), Google: custom() };
+    const result = withholdEmptyEndpoints(
+      endpointsConfig,
+      { Anthropic: ['claude-sonnet-5'], Google: [] },
+      managed(),
+    );
+
+    expect(result).toBe(endpointsConfig);
+  });
 
   it('leaves an empty endpoint alone when it is not the one filtering', () => {
     const result = withholdEmptyEndpoints(
@@ -172,6 +259,16 @@ describe('withholdEmptyEndpoints', () => {
 
     expect(result?.Anthropic).toBeDefined();
     expect(result).not.toHaveProperty('Google');
+  });
+
+  it('keeps every endpoint that has at least one model', () => {
+    const result = withholdEmptyEndpoints(
+      { Anthropic: custom(), Google: custom() },
+      { Anthropic: ['claude-sonnet-5'], Google: ['gemini-3-pro'] },
+      managed('Anthropic', 'Google'),
+    );
+
+    expect(Object.keys(result ?? {})).toEqual(['Anthropic', 'Google']);
   });
 
   it('never withholds a user-provided endpoint — its empty list reflects a fixable key', () => {
