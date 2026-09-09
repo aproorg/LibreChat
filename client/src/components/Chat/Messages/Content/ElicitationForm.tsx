@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Button, Spinner } from '@librechat/client';
+import { useMemo, useState } from 'react';
+import { Button, Input, Label, Spinner } from '@librechat/client';
 import { ContentTypes, dataService } from 'librechat-data-provider';
 import {
   ShieldCheck,
+  ClipboardList,
   ExternalLink,
   RotateCw,
   CheckCircle2,
@@ -17,6 +18,55 @@ import { useLocalize } from '~/hooks';
 import cn from '~/utils/cn';
 
 type ElicitationAction = Agents.ElicitationAction;
+
+type ElicitationField = {
+  key: string;
+  schema: Agents.ElicitationPropertySchema;
+};
+
+type FieldValue = string | number | boolean | string[] | number[];
+
+/** Normalizes a `type: 'array'` property's option source — either a plain
+ *  `items.enum` value list or titled `items.anyOf` const/title pairs — into a
+ *  single shape the multi-select checkbox group renders from. */
+type ArrayOption = { value: string | number; label: string };
+
+function getArrayOptions(schema: Agents.ElicitationPropertySchema): ArrayOption[] {
+  if (schema.items?.anyOf) {
+    return schema.items.anyOf.map((option) => ({
+      value: option.const as string | number,
+      label: option.title ?? String(option.const),
+    }));
+  }
+  if (schema.items?.enum) {
+    return schema.items.enum.map((value) => ({ value, label: String(value) }));
+  }
+  return [];
+}
+
+function getDefaultValues(
+  properties: Record<string, Agents.ElicitationPropertySchema>,
+): Record<string, FieldValue> {
+  const defaults: Record<string, FieldValue> = {};
+  for (const [key, schema] of Object.entries(properties)) {
+    if (schema.default != null) {
+      defaults[key] = schema.default;
+    } else if (schema.type === 'boolean') {
+      defaults[key] = false;
+    } else if (schema.type === 'array') {
+      defaults[key] = [];
+    } else {
+      defaults[key] = '';
+    }
+  }
+  return defaults;
+}
+
+/** Lightweight `format: 'email'` check — not RFC-5322-exhaustive, just enough
+ *  to catch obviously malformed input before it's sent to the server. */
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
 
 function getStatusText(
   resolvedAction: ElicitationAction,
@@ -68,7 +118,7 @@ function hasPunycodeLabel(hostname: string): boolean {
   return hostname.split('.').some((label) => label.toLowerCase().startsWith('xn--'));
 }
 
-/** Header chrome for the card: a tinted circular icon, a title, and the
+/** Header chrome shared by both modes: a tinted circular icon, a title, and the
  *  requesting server/tool identity. Keeps the card visually native to LibreChat's
  *  other in-chat system cards (see `ToolCall` OAuth sign-in). */
 function CardHeader({
@@ -120,43 +170,45 @@ function ActionLabel({
 }
 
 /**
- * Renders an in-chat card for MCP URL-mode elicitation (spec 2025-11-25):
- * either a `mode: 'url'` `elicitation/create` request, or the -32042
- * URL-exception path on `tools/call`. It shows a message, a prominent
- * authorization link (full URL visible, domain highlighted, homograph-warned),
- * and Continue/Cancel. Continue posts `action: 'complete'`, which resumes/retries
- * the suspended tool call server-side via `POST /api/mcp/elicitation/:flowId`
+ * Renders an in-chat card for MCP elicitation. Covers both wire mechanisms:
+ * - `mode: 'form'` — a 2025-06-18 `elicitation/create` request; renders the
+ *   requested JSON-schema fields and posts `accept`/`decline`.
+ * - `mode: 'url'` — either a `mode: 'url'` `elicitation/create` request, or the
+ *   -32042 URL-exception path on `tools/call`; renders a message, a prominent
+ *   authorization link, and Continue/Cancel. Continue posts `action:
+ *   'complete'`, which resumes/retries the suspended tool call server-side.
+ *
+ * Both modes resolve via the same `POST /api/mcp/elicitation/:flowId` route
  * (`dataService.respondToElicitation`), mirroring the OAuth "visit a URL, then
  * get resumed" flow already used elsewhere in MCP tool calls.
  */
 export default function ElicitationForm({
   flowId,
+  mode,
   message,
   serverName,
   toolName,
   url,
+  requestedSchema,
   action: initialAction,
 }: Agents.ElicitationContent['elicitation']) {
   const localize = useLocalize();
   const { messageId } = useMessageContext();
   const { getMessages, setMessages } = useOptionalMessagesOperations();
+  const isUrlMode = mode === 'url';
+  const properties = requestedSchema?.properties ?? {};
+  const [values, setValues] = useState<Record<string, FieldValue>>(() =>
+    getDefaultValues(properties),
+  );
   const [pendingAction, setPendingAction] = useState<ElicitationAction | undefined>();
   const [sendFailed, setSendFailed] = useState(false);
   // Track whether the user has opened this flow's authorization link. When there
   // is no link to open, there is nothing to gate on, so treat it as already opened.
   const [urlOpened, setUrlOpened] = useState(!url);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [resolvedAction, setResolvedAction] = useState<ElicitationAction | undefined>(
     initialAction,
   );
-  // `initialAction` can arrive/change after mount when resolution comes in via
-  // the `on_elicitation_resolved` SSE event (or a history replay) — which patches
-  // the message's content part — rather than this component's own `submitAction`.
-  // Sync it so the card reflects the resolved state instead of staying interactive.
-  useEffect(() => {
-    if (initialAction != null) {
-      setResolvedAction(initialAction);
-    }
-  }, [initialAction]);
 
   const submitting = pendingAction != null;
   const identity = [serverName, toolName].filter(Boolean).join(' · ') || undefined;
@@ -169,12 +221,101 @@ export default function ElicitationForm({
   const hostname = useMemo(() => (safeUrl ? getHostname(safeUrl) : ''), [safeUrl]);
   const suspiciousHostname = useMemo(() => hasPunycodeLabel(hostname), [hostname]);
 
-  /** Writes the resolved `action` onto this flow's `ELICITATION` content part in
-   *  the owning message, so the resolved state isn't held only in this
+  const fields: ElicitationField[] = Object.entries(properties).map(([key, schema]) => ({
+    key,
+    schema,
+  }));
+
+  // Form mode: show the server's message, or a fallback so a schema-less request
+  // never renders bare buttons over blank space.
+  const formIntro =
+    message || (fields.length === 0 ? localize('com_ui_elicitation_form_empty') : undefined);
+
+  const validate = (): boolean => {
+    const newErrors: Record<string, string> = {};
+    for (const { key, schema } of fields) {
+      const required = requestedSchema?.required?.includes(key) ?? false;
+      const val = values[key];
+      const label = schema.title ?? key;
+      const isEmpty =
+        schema.type === 'array'
+          ? !Array.isArray(val) || val.length === 0
+          : val === '' || val == null;
+      if (required && isEmpty) {
+        newErrors[key] = localize('com_ui_elicitation_field_required', { field: label });
+      }
+      if (schema.type === 'string' && typeof val === 'string') {
+        if (schema.minLength != null && val.length < schema.minLength) {
+          newErrors[key] = localize('com_ui_elicitation_min_length', { min: schema.minLength });
+        }
+        if (schema.maxLength != null && val.length > schema.maxLength) {
+          newErrors[key] = localize('com_ui_elicitation_max_length', { max: schema.maxLength });
+        }
+        if (val !== '' && schema.pattern != null) {
+          let matchesPattern = true;
+          try {
+            matchesPattern = new RegExp(schema.pattern).test(val);
+          } catch {
+            // A malformed server-supplied pattern shouldn't block the user.
+            matchesPattern = true;
+          }
+          if (!matchesPattern) {
+            newErrors[key] = localize('com_ui_elicitation_pattern_mismatch', { field: label });
+          }
+        }
+        if (val !== '' && schema.format === 'email' && !isValidEmail(val)) {
+          newErrors[key] = localize('com_ui_elicitation_not_an_email', { field: label });
+        }
+        if (val !== '' && schema.format === 'uri' && getSafeUrl(val) == null) {
+          newErrors[key] = localize('com_ui_elicitation_not_a_url', { field: label });
+        }
+        if (
+          val !== '' &&
+          (schema.format === 'date' || schema.format === 'date-time') &&
+          Number.isNaN(Date.parse(val))
+        ) {
+          newErrors[key] = localize('com_ui_elicitation_not_a_date', { field: label });
+        }
+      }
+      if ((schema.type === 'number' || schema.type === 'integer') && val !== '' && val != null) {
+        const num = Number(val);
+        if (Number.isNaN(num)) {
+          newErrors[key] = localize('com_ui_elicitation_not_a_number', { field: label });
+        } else if (schema.minimum != null && num < schema.minimum) {
+          newErrors[key] = localize('com_ui_elicitation_min_value', { min: schema.minimum });
+        } else if (schema.maximum != null && num > schema.maximum) {
+          newErrors[key] = localize('com_ui_elicitation_max_value', { max: schema.maximum });
+        }
+      }
+      if (schema.oneOf && val !== '' && val != null) {
+        const isAllowed = schema.oneOf.some((option) => String(option.const) === String(val));
+        if (!isAllowed) {
+          newErrors[key] = localize('com_ui_elicitation_invalid_selection', { field: label });
+        }
+      }
+      if (schema.type === 'array') {
+        const arr = Array.isArray(val) ? val : [];
+        if (schema.minItems != null && arr.length < schema.minItems) {
+          newErrors[key] = localize('com_ui_elicitation_min_items', { min: schema.minItems });
+        }
+        if (schema.maxItems != null && arr.length > schema.maxItems) {
+          newErrors[key] = localize('com_ui_elicitation_max_items', { max: schema.maxItems });
+        }
+      }
+    }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  /** Writes the resolved `action`/`content` onto this flow's `ELICITATION` content
+   *  part in the owning message, so the resolved state isn't held only in this
    *  component's local `resolvedAction` state. Mirrors the write-back
    *  `useStepHandler` applies for the `on_elicitation_resolved` SSE event. A no-op
    *  when rendered outside a `MessagesViewProvider`. */
-  const patchResolvedElicitation = (action: ElicitationAction) => {
+  const patchResolvedElicitation = (
+    action: ElicitationAction,
+    resolvedContent?: Record<string, FieldValue>,
+  ) => {
     const messages = getMessages();
     if (!messages) {
       return;
@@ -191,7 +332,7 @@ export default function ElicitationForm({
         didPatch = true;
         return {
           ...part,
-          elicitation: { ...part.elicitation, action },
+          elicitation: { ...part.elicitation, action, content: resolvedContent },
         };
       });
       return { ...msg, content: updatedContent };
@@ -202,28 +343,56 @@ export default function ElicitationForm({
   };
 
   const submitAction = async (action: ElicitationAction) => {
+    if (action === 'accept' && !isUrlMode && !validate()) {
+      return;
+    }
     setSendFailed(false);
     setPendingAction(action);
     try {
-      await dataService.respondToElicitation(flowId, { action });
+      const content =
+        action === 'accept' && !isUrlMode
+          ? Object.fromEntries(
+              fields
+                // Omit empty optional fields instead of defaulting them to 0/null —
+                // required fields are already guaranteed non-empty by `validate`.
+                .filter(({ key, schema }) => {
+                  const val = values[key];
+                  if (schema.type === 'array') {
+                    return Array.isArray(val) && val.length > 0;
+                  }
+                  return val !== '' && val != null;
+                })
+                .map(({ key, schema }) => {
+                  const val = values[key];
+                  if (schema.type === 'number' || schema.type === 'integer') {
+                    return [key, Number(val)];
+                  }
+                  if (schema.oneOf) {
+                    // The `<select>` always yields a string; recover the schema's
+                    // typed `const` (string | number | boolean) for the payload.
+                    const match = schema.oneOf.find(
+                      (option) => String(option.const) === String(val),
+                    );
+                    return [key, match ? match.const : val];
+                  }
+                  return [key, val];
+                }),
+            )
+          : undefined;
+      await dataService.respondToElicitation(flowId, { action, content });
       setResolvedAction(action);
-      patchResolvedElicitation(action);
+      patchResolvedElicitation(action, content);
     } catch (error) {
       // A 409 means the completion route atomically lost the race (e.g. the
       // same card acted on in another tab, or a double-submit) — the flow IS
       // resolved, just not by this request. Treat it like the success path
       // instead of a misleading "try again".
-      const response = (
-        error as { response?: { status?: number; data?: { action?: ElicitationAction } } }
-      )?.response;
-      const status = response?.status;
+      const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 409) {
-        /** Render what actually won, not what this request tried: another tab may
-         *  have declined while this one submitted an accept. The route returns the
-         *  settled action; fall back to ours only if it is somehow absent. */
-        const settledAction = response?.data?.action ?? action;
-        setResolvedAction(settledAction);
-        patchResolvedElicitation(settledAction);
+        // No content: this request lost the race, so whatever the winner sent is
+        // what the server actually stored — not our payload.
+        setResolvedAction(action);
+        patchResolvedElicitation(action);
       } else {
         // Surface an inline retry affordance; the server-side flow keeps waiting
         // (or times out on its own), so the card stays interactive for a retry.
@@ -235,6 +404,247 @@ export default function ElicitationForm({
   };
 
   const markUrlOpened = () => setUrlOpened(true);
+
+  /** Toggles one option of a `type: 'array'` (multi-select) field's checkbox
+   *  group, keeping the stored value a real array rather than a delimited
+   *  string — the payload builder below sends it as JSON array as-is. */
+  const toggleArrayValue = (key: string, optionValue: string | number, checked: boolean) => {
+    setValues((prev) => {
+      const current = Array.isArray(prev[key]) ? (prev[key] as Array<string | number>) : [];
+      const next = checked
+        ? [...current, optionValue]
+        : current.filter((value) => value !== optionValue);
+      return { ...prev, [key]: next as string[] | number[] };
+    });
+  };
+
+  const requiredMark = (required: boolean) =>
+    required ? (
+      <span aria-hidden="true" className="ml-1 text-text-destructive">
+        *
+      </span>
+    ) : null;
+
+  const renderField = ({ key, schema }: ElicitationField) => {
+    const label = schema.title ?? key;
+    const fieldId = `elicitation-${flowId}-${key}`;
+    const error = errors[key];
+    const required = requestedSchema?.required?.includes(key) ?? false;
+    const descId = schema.description ? `${fieldId}-description` : undefined;
+    const errId = error ? `${fieldId}-error` : undefined;
+    const describedBy = [descId, errId].filter(Boolean).join(' ') || undefined;
+
+    if (schema.type === 'array') {
+      const options = getArrayOptions(schema);
+      const selected = Array.isArray(values[key]) ? (values[key] as Array<string | number>) : [];
+      return (
+        <fieldset key={key} className="flex flex-col gap-1">
+          <legend className="text-sm font-medium text-text-primary">
+            {label}
+            {requiredMark(required)}
+          </legend>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          <div className="flex flex-col gap-1.5" aria-describedby={describedBy}>
+            {options.map((option) => {
+              const optionId = `${fieldId}-${option.value}`;
+              return (
+                // Nested label grows the click target past the 16px box toward ~28px.
+                <label
+                  key={optionId}
+                  htmlFor={optionId}
+                  className="flex cursor-pointer items-center gap-2 py-1"
+                >
+                  <input
+                    id={optionId}
+                    type="checkbox"
+                    checked={selected.includes(option.value)}
+                    onChange={(e) => toggleArrayValue(key, option.value, e.target.checked)}
+                    disabled={submitting}
+                    className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <span className="text-sm text-text-primary">{option.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </fieldset>
+      );
+    }
+
+    if (schema.oneOf) {
+      return (
+        <div key={key} className="flex flex-col gap-1">
+          <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+            {label}
+            {requiredMark(required)}
+          </Label>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          <select
+            id={fieldId}
+            value={String(values[key] ?? '')}
+            onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+            disabled={submitting}
+            required={required}
+            aria-required={required || undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <option value="">{localize('com_ui_select')}</option>
+            {schema.oneOf.map((option) => (
+              <option key={String(option.const)} value={String(option.const)}>
+                {option.title ?? String(option.const)}
+              </option>
+            ))}
+          </select>
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (schema.enum) {
+      return (
+        <div key={key} className="flex flex-col gap-1">
+          <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+            {label}
+            {requiredMark(required)}
+          </Label>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          <select
+            id={fieldId}
+            value={String(values[key] ?? '')}
+            onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+            disabled={submitting}
+            required={required}
+            aria-required={required || undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <option value="">{localize('com_ui_select')}</option>
+            {schema.enum.map((opt, i) => (
+              <option key={opt} value={opt}>
+                {schema.enumNames?.[i] ?? opt}
+              </option>
+            ))}
+          </select>
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (schema.type === 'boolean') {
+      return (
+        <div key={key} className="flex flex-col gap-1">
+          {/* Nested label grows the click target past the 16px box toward ~28px. */}
+          <label htmlFor={fieldId} className="flex cursor-pointer items-center gap-2 py-1.5">
+            <input
+              id={fieldId}
+              type="checkbox"
+              checked={Boolean(values[key])}
+              onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.checked }))}
+              disabled={submitting}
+              aria-required={required || undefined}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={describedBy}
+              className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            />
+            <span className="text-sm text-text-primary">
+              {label}
+              {requiredMark(required)}
+            </span>
+          </label>
+          {schema.description && (
+            <p id={descId} className="text-xs text-text-secondary">
+              {schema.description}
+            </p>
+          )}
+          {error && (
+            <p id={errId} className="text-xs text-text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // Maps `format` to the closest native input type/keyboard for each — the
+    // format-specific `validate()` checks below still run since native
+    // constraint validation alone isn't localized or wired to `errors`.
+    let inputType: 'number' | 'email' | 'url' | 'date' | 'datetime-local' | 'text' = 'text';
+    if (schema.type === 'number' || schema.type === 'integer') {
+      inputType = 'number';
+    } else if (schema.format === 'email') {
+      inputType = 'email';
+    } else if (schema.format === 'uri') {
+      inputType = 'url';
+    } else if (schema.format === 'date') {
+      inputType = 'date';
+    } else if (schema.format === 'date-time') {
+      inputType = 'datetime-local';
+    }
+
+    return (
+      <div key={key} className="flex flex-col gap-1">
+        <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+          {label}
+          {requiredMark(required)}
+        </Label>
+        {schema.description && (
+          <p id={descId} className="text-xs text-text-secondary">
+            {schema.description}
+          </p>
+        )}
+        <Input
+          id={fieldId}
+          type={inputType}
+          pattern={schema.pattern}
+          value={String(values[key] ?? '')}
+          onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+          disabled={submitting}
+          required={required}
+          aria-required={required || undefined}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          min={schema.minimum}
+          max={schema.maximum}
+          minLength={schema.minLength}
+          maxLength={schema.maxLength}
+          className={cn(error && 'border-border-destructive focus-visible:ring-border-destructive')}
+        />
+        {error && (
+          <p id={errId} className="text-xs text-text-destructive">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  };
 
   const errorLine = sendFailed ? (
     <p role="alert" className="text-xs text-text-destructive">
@@ -256,14 +666,14 @@ export default function ElicitationForm({
     card = (
       <div className="my-1.5 flex h-5 items-center gap-2 text-text-secondary">
         {succeeded ? (
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" aria-hidden="true" />
         ) : (
           <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         )}
         <span className="text-xs">{statusText}</span>
       </div>
     );
-  } else {
+  } else if (isUrlMode) {
     card = (
       <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
         <div className="flex flex-col gap-3">
@@ -381,6 +791,47 @@ export default function ElicitationForm({
               <ActionLabel
                 label={localize('com_ui_elicitation_cancel')}
                 acting={pendingAction === 'cancel'}
+              />
+            </Button>
+          </div>
+          {errorLine}
+        </div>
+      </div>
+    );
+  } else {
+    card = (
+      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
+        <div className="flex flex-col gap-3">
+          <CardHeader
+            icon={<ClipboardList className="h-4 w-4" aria-hidden="true" />}
+            title={localize('com_ui_elicitation_form_title')}
+            identity={identity}
+          />
+          {formIntro && <p className="text-sm text-text-secondary">{formIntro}</p>}
+          {fields.length > 0 && (
+            <div className="flex flex-col gap-3">{fields.map((field) => renderField(field))}</div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="submit"
+              size="sm"
+              disabled={submitting}
+              onClick={() => submitAction('accept')}
+            >
+              <ActionLabel
+                label={localize('com_ui_elicitation_submit')}
+                acting={pendingAction === 'accept'}
+              />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={submitting}
+              onClick={() => submitAction('decline')}
+            >
+              <ActionLabel
+                label={localize('com_ui_elicitation_decline')}
+                acting={pendingAction === 'decline'}
               />
             </Button>
           </div>

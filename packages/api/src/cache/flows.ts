@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 import { Time, CacheKeys } from 'librechat-data-provider';
 import type { Keyv } from 'keyv';
 import { keyvRedisClient, ioredisClient } from './redisClients';
-import { instrumentIORedisClient } from './redisTelemetry';
 import { standardCache } from './cacheFactory';
 import { cacheConfig } from './cacheConfig';
 
@@ -34,9 +33,7 @@ export function flowsCache(): FlowsCache {
   }
 
   const cache: FlowsCache = standardCache(CacheKeys.FLOWS, Time.ONE_MINUTE * 10);
-  const redisClient = ioredisClient
-    ? instrumentIORedisClient(ioredisClient, CacheKeys.FLOWS)
-    : ioredisClient;
+  const redisClient = ioredisClient;
   const isRedisBacked =
     keyvRedisClient != null &&
     !cacheConfig.FORCED_IN_MEMORY_CACHE_NAMESPACES?.includes(CacheKeys.FLOWS);

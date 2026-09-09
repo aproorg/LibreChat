@@ -9,9 +9,7 @@ export interface UrlElicitation {
   mode?: string;
   message: string;
   url: string;
-  /** Optional on the wire: servers may omit it, and it is only used for
-   *  `notifications/elicitation/complete` correlation. */
-  elicitationId?: string;
+  elicitationId: string;
 }
 
 /**
@@ -32,31 +30,14 @@ export function isHttpUrl(url: string): boolean {
   return parsed.protocol === 'http:' || parsed.protocol === 'https:';
 }
 
-/** Returns the first elicitation only when it is well formed: a safe http(s)
- *  URL and a non-empty string message. The payload is server-supplied, so the
- *  declared types are not a runtime guarantee, and both fields are interpolated
- *  straight into user-facing strings (the card body and the McpError messages in
- *  `MCPManager.callTool`) — a missing or non-string `message` would render
- *  "undefined" to the user. A malformed entry is treated as no elicitation at
- *  all rather than being half-surfaced. */
+/** Returns the first elicitation only when its URL is a safe http(s) link;
+ *  otherwise `null`, so a hostile-scheme URL is never surfaced as a URL elicitation. */
 function firstSafeUrlElicitation(elicitations?: UrlElicitation[]): UrlElicitation | null {
   const elicitation = elicitations?.[0];
-  if (!elicitation || typeof elicitation !== 'object') {
+  if (!elicitation || !isHttpUrl(elicitation.url)) {
     return null;
   }
-  const { message, url, mode, elicitationId } = elicitation;
-  if (typeof message !== 'string' || message.trim().length === 0) {
-    return null;
-  }
-  if (typeof url !== 'string' || !isHttpUrl(url)) {
-    return null;
-  }
-  return {
-    message,
-    url,
-    ...(typeof mode === 'string' ? { mode } : {}),
-    ...(typeof elicitationId === 'string' ? { elicitationId } : {}),
-  };
+  return elicitation;
 }
 
 /**
@@ -146,7 +127,22 @@ export function isElicitationSuccess(action: ElicitationFlowAction | undefined):
 }
 
 /**
- * Generates a flow ID for an MCP URL-mode elicitation flow (a `mode: 'url'`
+ * Maps a flow result's action onto the MCP SDK's `ElicitResultSchema.action`
+ * enum (`accept` | `decline` | `cancel`), which has no `complete` member — the
+ * URL-exception-only "I've authorized, continue" signal is treated as `accept`
+ * for protocol responses.
+ */
+export function toElicitResultAction(
+  action: ElicitationFlowAction,
+): 'accept' | 'decline' | 'cancel' {
+  if (action === 'complete') {
+    return 'accept';
+  }
+  return action;
+}
+
+/**
+ * Generates a flow ID for an MCP elicitation flow (a `mode: 'form'|'url'`
  * `elicitation/create` request, or a -32042 URL-exception retry).
  *
  * Unlike OAuth flow IDs (`MCPOAuthHandler.generateFlowId`, one per user+server),

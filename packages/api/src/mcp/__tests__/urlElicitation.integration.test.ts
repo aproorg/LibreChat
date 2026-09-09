@@ -146,8 +146,7 @@ describe('URL elicitation (-32042) integration', () => {
       | undefined;
     expect(elicitation).toBeDefined();
     expect(elicitation?.url).toBeDefined();
-    // This build declares only URL-mode elicitation; form mode must NOT be advertised.
-    expect(elicitation?.form).toBeUndefined();
+    expect(elicitation?.form).toBeDefined();
   });
 
   it('sanity: a non-gated tool (whoami) succeeds without any elicitation', async () => {
