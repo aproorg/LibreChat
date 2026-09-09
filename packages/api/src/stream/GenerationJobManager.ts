@@ -457,8 +457,6 @@ function getReplayStepId(event: t.ServerSentEvent): unknown {
       : undefined;
   }
 
-  /** Elicitation cards dedupe by flow, not step: a re-emitted card for the same
-   *  flowId replaces the pending one in place rather than stacking. */
   if (event.event === 'on_elicitation') {
     const elicitation = 'elicitation' in event.data ? event.data.elicitation : undefined;
     return elicitation != null && typeof elicitation === 'object' && 'flowId' in elicitation
@@ -502,6 +500,9 @@ function isReplayEvent(event: t.ServerSentEvent): boolean {
   if (!('event' in event) || !event.data || typeof event.data !== 'object') {
     return false;
   }
+
+  // Replay URL-mode elicitation cards on resume (UI-only, like OAuth cards) so a
+  // refresh during a pending authorization doesn't lose the card until timeout.
   if (event.event === 'on_elicitation' || event.event === 'on_elicitation_resolved') {
     return true;
   }

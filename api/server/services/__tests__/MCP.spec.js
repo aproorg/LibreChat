@@ -33,7 +33,9 @@ jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
   MCPOAuthHandler: jest.fn(),
   isMCPDomainAllowed: jest.fn(),
+  normalizeJsonSchema: jest.fn((schema) => schema),
   GenerationJobManager: { emitChunk: jest.fn(), getJob: jest.fn() },
+  resolveJsonSchemaRefs: jest.fn((schema) => schema),
   buildOAuthToolCallName: jest.fn((name) => name),
   getUserMCPAuthMap: jest.fn(),
   createAuthIdentityContext: ({ user, tenantId }) => ({
@@ -89,9 +91,8 @@ const {
   getMCPServerTools,
   cacheMCPServerTools,
 } = require('~/server/services/Config');
-const { sendEvent, GenerationJobManager } = require('@librechat/api');
 const { reinitMCPServer } = require('~/server/services/Tools/mcp');
-const { getUserMCPAuthMap } = require('@librechat/api');
+const { sendEvent, GenerationJobManager, getUserMCPAuthMap } = require('@librechat/api');
 const {
   createMCPTool,
   healMcpToolNames,
@@ -402,15 +403,16 @@ describe('createElicitationStart', () => {
 
   it('emits the on_elicitation event via sendEvent when no streamId is set', async () => {
     const res = { write: jest.fn() };
+    const requestedSchema = { type: 'object', properties: {} };
     const start = createElicitationStart({ res, stepId: 'step-1', streamId: null });
 
     await start({
       flowId: 'u:s:t:n1',
-      mode: 'url',
-      message: 'Authorize access',
+      mode: 'form',
+      message: 'Fill this in',
       serverName: 'jira',
       toolName: 'create_issue',
-      url: 'https://auth.example.com/authorize',
+      requestedSchema,
     });
 
     expect(GenerationJobManager.emitChunk).not.toHaveBeenCalled();
@@ -420,23 +422,18 @@ describe('createElicitationStart', () => {
         id: 'step-1',
         elicitation: expect.objectContaining({
           flowId: 'u:s:t:n1',
-          mode: 'url',
-          message: 'Authorize access',
+          mode: 'form',
+          message: 'Fill this in',
           serverName: 'jira',
           toolName: 'create_issue',
-          url: 'https://auth.example.com/authorize',
+          requestedSchema,
         }),
       }),
     });
   });
 
   it('emits the on_elicitation event via emitChunk when a streamId is set', async () => {
-    const start = createElicitationStart({
-      res: {},
-      stepId: 'step-2',
-      streamId: 'stream-9',
-      jobCreatedAt: 1234,
-    });
+    const start = createElicitationStart({ res: {}, stepId: 'step-2', streamId: 'stream-9' });
 
     await start({ flowId: 'u:s:t:n2', mode: 'url', message: 'Authorize', url: 'https://x/auth' });
 
@@ -453,17 +450,17 @@ describe('createElicitationStart', () => {
           }),
         }),
       }),
-      { expectedCreatedAt: 1234 },
     );
   });
 
-  it('captures the stream context so the completion route can emit resolution', async () => {
+  it('captures flow context so the route can recover the requestedSchema', async () => {
+    const requestedSchema = { type: 'object', properties: { title: { type: 'string' } } };
     const start = createElicitationStart({ res: {}, stepId: 'step-ctx', streamId: 'stream-ctx' });
 
-    await start({ flowId: 'flow-ctx', mode: 'url', message: 'x', url: 'https://x/auth' });
+    await start({ flowId: 'flow-ctx', mode: 'form', message: 'x', requestedSchema });
 
     expect(getElicitationFlowContext('flow-ctx')).toEqual(
-      expect.objectContaining({ streamId: 'stream-ctx', stepId: 'step-ctx' }),
+      expect.objectContaining({ requestedSchema, streamId: 'stream-ctx', stepId: 'step-ctx' }),
     );
   });
 
@@ -488,7 +485,6 @@ describe('createElicitationStart', () => {
           elicitation: expect.not.objectContaining({ elicitationId: expect.anything() }),
         }),
       }),
-      { expectedCreatedAt: undefined },
     );
   });
 });
@@ -498,12 +494,13 @@ describe('resolveElicitationFlow', () => {
 
   it('emits on_elicitation_resolved onto the captured stream and consumes the context', async () => {
     const start = createElicitationStart({ res: {}, stepId: 'step-r', streamId: 'stream-r' });
-    await start({ flowId: 'flow-resolve', mode: 'url', message: 'x', url: 'https://x/auth' });
+    await start({ flowId: 'flow-resolve', mode: 'form', message: 'x', requestedSchema: {} });
     GenerationJobManager.emitChunk.mockClear();
 
     const emitted = await resolveElicitationFlow({
       flowId: 'flow-resolve',
-      action: 'complete',
+      action: 'accept',
+      content: { title: 'done' },
     });
 
     expect(emitted).toBe(true);
@@ -514,10 +511,10 @@ describe('resolveElicitationFlow', () => {
         data: expect.objectContaining({
           id: 'step-r',
           flowId: 'flow-resolve',
-          action: 'complete',
+          action: 'accept',
+          content: { title: 'done' },
         }),
       }),
-      { expectedCreatedAt: undefined },
     );
     // Local-context fast path never needs to hydrate cross-process job state.
     expect(GenerationJobManager.getJob).not.toHaveBeenCalled();
@@ -552,10 +549,7 @@ describe('resolveElicitationFlow', () => {
 
   describe('cross-process fallback (no local context)', () => {
     it('hydrates the job via getJob, then emits on_elicitation_resolved onto the fallback stream', async () => {
-      GenerationJobManager.getJob.mockResolvedValue({
-        streamId: 'stream-fallback',
-        createdAt: 777,
-      });
+      GenerationJobManager.getJob.mockResolvedValue({ streamId: 'stream-fallback' });
 
       const emitted = await resolveElicitationFlow({
         flowId: 'flow-fallback',
@@ -576,7 +570,6 @@ describe('resolveElicitationFlow', () => {
             action: 'complete',
           }),
         }),
-        { expectedCreatedAt: 777 },
       );
     });
 

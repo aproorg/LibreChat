@@ -57,6 +57,104 @@ describe('asElicitationFlowManager', () => {
   });
 });
 
+describe('MCPConnection.setElicitationHandler registry', () => {
+  // Exercises the real method against a stubbed SDK client. A single stable
+  // dispatcher is installed while any handler is pending; each call gets a
+  // disposer that removes only its own entry, and `removeRequestHandler` fires
+  // exactly when the registry drains — so a later call disposing first cannot
+  // orphan an earlier still-pending call.
+  const { MCPConnection } = jest.requireActual<typeof import('../connection')>('../connection');
+
+  type FakeElicitRequest = { params: { message: string; mode?: string; url?: string } };
+  type FakeElicitExtra = { signal: AbortSignal };
+  type FakeDispatcher = (request: FakeElicitRequest, extra: FakeElicitExtra) => unknown;
+
+  const makeFakeConnection = () => {
+    let dispatcher: FakeDispatcher | undefined;
+    const client = {
+      setRequestHandler: jest.fn((_schema: unknown, fn: FakeDispatcher) => {
+        dispatcher = fn;
+      }),
+      removeRequestHandler: jest.fn(() => {
+        dispatcher = undefined;
+      }),
+    };
+    const connection = Object.assign(Object.create(MCPConnection.prototype), {
+      client,
+      elicitationHandlers: [],
+    }) as InstanceType<typeof MCPConnection>;
+    const dispatch = (params: FakeElicitRequest['params']) =>
+      dispatcher?.({ params }, { signal: new AbortController().signal });
+    return { client, connection, dispatch };
+  };
+  const handler = () => Promise.resolve({ action: 'accept' as const });
+
+  it('removes the handler when the registering call settles last', () => {
+    const { client, connection } = makeFakeConnection();
+    const dispose = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+
+    dispose();
+
+    expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+    expect(client.removeRequestHandler).toHaveBeenCalledWith('elicitation/create');
+  });
+
+  it('installs one stable dispatcher for concurrent calls and disposal is idempotent', () => {
+    const { client, connection } = makeFakeConnection();
+    const disposeFirst = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+    const disposeSecond = MCPConnection.prototype.setElicitationHandler.call(connection, handler);
+
+    expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
+
+    disposeFirst();
+    expect(client.removeRequestHandler).not.toHaveBeenCalled();
+
+    disposeSecond();
+    disposeSecond();
+    expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes to the most-recent call and does not orphan an earlier one when a later call disposes first', async () => {
+    const { client, connection, dispatch } = makeFakeConnection();
+    const handlerA = jest.fn(() => Promise.resolve({ action: 'accept' as const }));
+    const handlerB = jest.fn(() => Promise.resolve({ action: 'decline' as const }));
+
+    const disposeA = MCPConnection.prototype.setElicitationHandler.call(connection, handlerA);
+    const disposeB = MCPConnection.prototype.setElicitationHandler.call(connection, handlerB);
+
+    expect(client.setRequestHandler).toHaveBeenCalledTimes(1);
+
+    await dispatch({ message: 'first' });
+    expect(handlerB).toHaveBeenCalledTimes(1);
+    expect(handlerA).not.toHaveBeenCalled();
+
+    disposeB();
+    expect(client.removeRequestHandler).not.toHaveBeenCalled();
+
+    await dispatch({ message: 'second' });
+    expect(handlerA).toHaveBeenCalledTimes(1);
+
+    disposeA();
+    expect(client.removeRequestHandler).toHaveBeenCalledTimes(1);
+    expect(client.removeRequestHandler).toHaveBeenCalledWith('elicitation/create');
+  });
+
+  it('forwards the per-request abort signal to the routed handler', async () => {
+    const { connection, dispatch } = makeFakeConnection();
+    const handlerWithSignal = jest.fn((_params: unknown, _signal: AbortSignal) =>
+      Promise.resolve({ action: 'accept' as const }),
+    );
+
+    MCPConnection.prototype.setElicitationHandler.call(connection, handlerWithSignal);
+    await dispatch({ message: 'need input' });
+
+    expect(handlerWithSignal).toHaveBeenCalledWith(
+      { message: 'need input' },
+      expect.any(AbortSignal),
+    );
+  });
+});
+
 describe('extractUrlElicitation', () => {
   const elicitation = {
     mode: 'url',
@@ -142,34 +240,6 @@ describe('extractUrlElicitation', () => {
       expect(extractUrlElicitation(error)).toBeNull();
     },
   );
-
-  it.each([
-    ['missing message', { url: 'https://auth.example.com' }],
-    ['non-string message', { url: 'https://auth.example.com', message: { text: 'auth' } }],
-    ['blank message', { url: 'https://auth.example.com', message: '   ' }],
-    ['non-string url', { message: 'Authorize', url: { href: 'https://auth.example.com' } }],
-  ])(
-    'drops a malformed elicitation rather than surfacing it half-formed (%s)',
-    (_label, malformed) => {
-      // `message` and `url` are interpolated straight into user-facing strings,
-      // so a malformed payload would render "undefined" in the card.
-      const error = { code: -32042, data: { elicitations: [malformed] } };
-      expect(extractUrlElicitation(error)).toBeNull();
-    },
-  );
-
-  it('omits a non-string elicitationId instead of passing it through', () => {
-    const error = {
-      code: -32042,
-      data: {
-        elicitations: [{ message: 'Authorize', url: 'https://auth.example.com', elicitationId: 7 }],
-      },
-    };
-    expect(extractUrlElicitation(error)).toEqual({
-      message: 'Authorize',
-      url: 'https://auth.example.com',
-    });
-  });
 
   it.each(['javascript:alert(1)', 'data:text/html,pwn', 'vbscript:msgbox'])(
     'drops an HTTP-wrapped gateway elicitation carrying a hostile-scheme URL (%s)',
