@@ -1,5 +1,4 @@
 import {
-  ErrorTypes,
   EModelEndpoint,
   MAX_SUBAGENTS,
   setMaxSubagents,
@@ -7,6 +6,7 @@ import {
   MAX_GRAPH_SUBAGENT_MEMBERS,
   Providers,
   ViolationTypes,
+  ErrorTypes,
 } from 'librechat-data-provider';
 import type { Agent, TModelsConfig } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
