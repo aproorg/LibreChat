@@ -540,6 +540,8 @@ actions:
 #     oauthRefreshWaitTimeout: 15000
 #     # Callback/adoption persistence wait; raise for longer publication budgets (max 840000 ms).
 #     oauthPersistenceWaitTimeout: 15000
+#     # elicitation: false  # Opt this server out of interactive MCP URL-authorization elicitation cards.
+#     #                     # Enabled by default; set to false to skip elicitation handling for this server.
 #   private-openid:
 #     type: streamable-http
 #     url: https://mcp.example.com/mcp
