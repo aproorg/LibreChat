@@ -19,6 +19,7 @@ const {
   isAccessTokenJwt,
   math,
 } = require('@librechat/api');
+const { refreshOpenIDTokensFromCookie } = require('~/server/services/AuthService');
 const { updateUser, findUser, isAgentTriggerPrincipalActive } = require('~/models');
 const getLogStores = require('~/cache/getLogStores');
 
@@ -235,7 +236,41 @@ const openIdJwtLogin = (openIdConfig) => {
           }
 
           /** Read tokens from session (server-side) to avoid large cookie issues */
-          const sessionTokens = req.session?.openidTokens;
+          let sessionTokens = req.session?.openidTokens;
+
+          const cookieHeader = req.headers.cookie;
+          const parsedCookies = cookieHeader ? cookies.parse(cookieHeader) : {};
+
+          const haveUsableIdToken = !!sessionTokens?.idToken || !!parsedCookies.openid_id_token;
+          const isBrowserSession =
+            !!parsedCookies.token_provider ||
+            !!parsedCookies.refreshToken ||
+            !!sessionTokens?.refreshToken;
+
+          if (isBrowserSession && !haveUsableIdToken) {
+            const refreshTokenForRefresh =
+              sessionTokens?.refreshToken || parsedCookies.refreshToken;
+
+            if (!refreshTokenForRefresh) {
+              done(null, false, {
+                message: 'OIDC refresh failed: no refresh cookie',
+              });
+              return;
+            }
+
+            const refreshed = await refreshOpenIDTokensFromCookie(
+              req,
+              req.res,
+              user._id.toString(),
+            );
+            if (!refreshed) {
+              done(null, false, { message: 'OIDC refresh failed' });
+              return;
+            }
+            // Session is now repopulated by setOpenIDAuthTokens (called from helper).
+            sessionTokens = req.session?.openidTokens;
+          }
+
           let accessToken = sessionTokens?.accessToken;
           let idToken = sessionTokens?.idToken;
           let refreshToken = sessionTokens?.refreshToken;
