@@ -45,6 +45,44 @@ type AllContentTypes =
 export const isOAuthToolCallName = (name?: string): boolean =>
   typeof name === 'string' && name.startsWith(`oauth${Constants.mcp_delimiter}`);
 
+const isElicitationContent = (
+  part?: Partial<TMessageContentParts>,
+): part is Extract<TMessageContentParts, { type: ContentTypes.ELICITATION }> =>
+  part?.type === ContentTypes.ELICITATION && 'elicitation' in part;
+
+/** Append or replace the UI-only authorization card identified by its flow. */
+export function upsertElicitationContent(
+  message: TMessage,
+  elicitation: Agents.ElicitationContent['elicitation'],
+): TMessage {
+  const content = [...(message.content ?? [])];
+  const index = content.findIndex(
+    (part) => isElicitationContent(part) && part.elicitation?.flowId === elicitation.flowId,
+  );
+  const part: Agents.ElicitationContent = { type: ContentTypes.ELICITATION, elicitation };
+  if (index >= 0) content[index] = part;
+  else content.push(part);
+  return { ...message, content };
+}
+
+/** Patch a card already on the response; a stale resolution must not create one. */
+export function resolveElicitationContent(
+  message: TMessage,
+  event: Agents.ElicitationResolvedEvent,
+): TMessage {
+  const content = [...(message.content ?? [])];
+  const index = content.findIndex(
+    (part) => isElicitationContent(part) && part.elicitation?.flowId === event.flowId,
+  );
+  if (index < 0 || !isElicitationContent(content[index])) return message;
+  const part = content[index];
+  content[index] = {
+    ...part,
+    elicitation: { ...part.elicitation, action: event.action, content: event.content },
+  };
+  return { ...message, content };
+}
+
 const isOAuthToolCallContent = (part?: Partial<TMessageContentParts>) => {
   if (part?.type !== ContentTypes.TOOL_CALL || !('tool_call' in part)) {
     return false;
@@ -176,21 +214,25 @@ export function updateContent(
       : undefined;
   const oauth = isOAuthToolCallName(incoming?.name);
   const content = message.content ?? [];
+  const hasAuxiliaryContent = content.some(
+    (part) => isOAuthToolCallContent(part) || isElicitationContent(part),
+  );
   // Ordinary messages keep the indexed writer's existing allocation and traversal behavior.
-  if (
-    !oauth &&
-    !isOAuthToolCallContent(content[content.length - 1]) &&
-    !isOAuthToolCallContent(content[index])
-  )
+  if (!oauth && !hasAuxiliaryContent)
     return writeContent(message, index, contentPart, finalUpdate, metadata);
 
   let nativeLength = content.length;
-  while (nativeLength > 0 && isOAuthToolCallContent(content[nativeLength - 1])) nativeLength--;
+  while (
+    nativeLength > 0 &&
+    (isOAuthToolCallContent(content[nativeLength - 1]) ||
+      isElicitationContent(content[nativeLength - 1]))
+  )
+    nativeLength--;
   const native = content.slice(0, nativeLength);
   const auxiliary: TMessageContentParts[] = [];
   for (let position = 0; position < content.length; position++) {
     const part = content[position];
-    if (!isOAuthToolCallContent(part)) continue;
+    if (!isOAuthToolCallContent(part) && !isElicitationContent(part)) continue;
     auxiliary.push(part);
     // Older snapshots may interleave a prompt with native content. Preserve absolute holes.
     if (position < nativeLength) delete native[position];
@@ -213,9 +255,10 @@ export function updateContent(
     );
     const active = auxiliary.filter(
       (part) =>
-        part.type === ContentTypes.TOOL_CALL &&
-        'tool_call' in part &&
-        Boolean(part.tool_call?.auth),
+        isElicitationContent(part) ||
+        (part.type === ContentTypes.TOOL_CALL &&
+          'tool_call' in part &&
+          Boolean(part.tool_call?.auth)),
     );
     return { ...result, content: [...(result.content ?? []), ...active] };
   }

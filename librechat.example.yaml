@@ -760,6 +760,8 @@ actions:
 #     #       properties:
 #     #         range: { type: string }
 #     #       required: [range]
+#     # elicitation: false  # Opt this server out of interactive MCP URL-authorization elicitation cards.
+#     #                     # Enabled by default; set to false to skip elicitation handling for this server.
 #   private-openid:
 #     type: streamable-http
 #     url: https://mcp.example.com/mcp

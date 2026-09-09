@@ -19,6 +19,8 @@ export type StepEvent =
   | { event: StepEvents.ON_TOOL_PREPARATION; data: Agents.ToolPreparationMarker }
   | { event: StepEvents.ON_RUN_STEP_COMPLETED; data: { result: Agents.ToolEndEvent } }
   | { event: StepEvents.ON_RUN_STEP_CLOSED; data: Agents.RunStepClosedEvent }
+  | { event: StepEvents.ON_ELICITATION; data: Agents.ElicitationEvent }
+  | { event: StepEvents.ON_ELICITATION_RESOLVED; data: Agents.ElicitationResolvedEvent }
   | { event: StepEvents.ON_SUMMARIZE_START; data: Agents.SummarizeStartEvent }
   | { event: StepEvents.ON_SUMMARIZE_DELTA; data: Agents.SummarizeDeltaEvent }
   | { event: StepEvents.ON_SUMMARIZE_COMPLETE; data: Agents.SummarizeCompleteEvent }

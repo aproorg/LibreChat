@@ -53,6 +53,7 @@ import BackgroundTaskCall from './Parts/BackgroundTaskCall';
 import { isError } from './ToolOutput/OutputRenderer';
 import { ErrorMessage } from './MessageContent';
 import AskUserQuestion from './AskUserQuestion';
+import ElicitationForm from './ElicitationForm';
 import RetrievalCall from './RetrievalCall';
 import ToolApproval from './ToolApproval';
 import AgentHandoff from './AgentHandoff';
@@ -670,6 +671,8 @@ const renderers: PartRenderers = {
         failed={part.failed}
       />
     ),
+    [ContentTypes.ELICITATION]: ({ part }) =>
+      part.elicitation ? <ElicitationForm {...part.elicitation} /> : null,
     /** Orphan label (its block's parts were filtered/hidden): renders as a
      *  standalone line. Labeled blocks normally render via ToolCallGroup,
      *  which consumes the label part as the group header instead. */

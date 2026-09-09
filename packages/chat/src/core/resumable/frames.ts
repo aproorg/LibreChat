@@ -17,9 +17,9 @@ import {
 } from './terminal';
 import { GENERATION_PROTOCOL_VERSION, supportsGenerationProtocolV2 } from '../protocol';
 import { isInitialNewConversation, buildCreatedInitialResponse } from './messages';
+import { isElicitationStepEvent, isOAuthStepEvent } from './events';
 import { reconcileGenerationLifecycle } from './reconcile';
 import { ABORT_SWEEP_STATUSES } from '../steer/chips';
-import { isOAuthStepEvent } from './events';
 import { handleSync } from './sync';
 
 export function handleOpen({ sub, host }: StreamContext): void {
@@ -290,7 +290,7 @@ export async function handleFrame(ctx: StreamContext, event: ChatEvent): Promise
         host.usage.tapStream(data.data, sub.liveSubmission());
       }
       if (!isResume && !run.createdStreamIds.has(currentStreamId)) {
-        if (isOAuthStepEvent(data)) {
+        if (isOAuthStepEvent(data) || isElicitationStepEvent(data)) {
           sub.preCreatedStepEvents.push(data);
           host.events.stepHandler(data, sub.liveSubmission() as EventSubmission);
           return;
