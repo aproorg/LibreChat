@@ -2,21 +2,23 @@ const loadConfigModels = require('./loadConfigModels');
 const loadDefaultModels = require('./loadDefaultModels');
 
 /**
- * Per-request memo of the resolved models config. One request resolves this
- * from several places (model validation, token config, agent initialization),
- * and each resolution may re-fetch gateway catalogs — `fetchModels` skips the
- * shared `MODEL_QUERIES` cache whenever an endpoint forwards user-bound
- * headers. Callers share one object; treat the result as read-only.
+ * Per-request memo of the resolved models config.
+ *
+ * Serving one page resolves this from seven places, each re-fetching every
+ * gateway's catalog. The shared `MODEL_QUERIES` cache cannot absorb that:
+ * `fetchModels` skips it whenever an endpoint forwards user-bound headers, since
+ * one user's list must never be served to another. The request is the exact
+ * scope that makes the result reusable, and an entry is collected with it.
+ *
+ * Callers share one object — treat the result as read-only.
  *
  * @type {WeakMap<object, Promise<Record<string, string[]>>>}
  */
 const inFlight = new WeakMap();
 
 async function resolveModelsConfig(req) {
-  const [defaultModelsConfig, customModelsConfig] = await Promise.all([
-    loadDefaultModels(req),
-    loadConfigModels(req),
-  ]);
+  const defaultModelsConfig = await loadDefaultModels(req);
+  const customModelsConfig = await loadConfigModels(req);
   return { ...defaultModelsConfig, ...customModelsConfig };
 }
 

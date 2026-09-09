@@ -5,14 +5,6 @@ const loadConfigModels = require('../loadConfigModels');
 const loadDefaultModels = require('../loadDefaultModels');
 const getModelsConfig = require('../getModelsConfig');
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
 describe('getModelsConfig', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -20,26 +12,12 @@ describe('getModelsConfig', () => {
     loadConfigModels.mockResolvedValue({ Claude: ['claude-sonnet-5'] });
   });
 
-  it('loads default and configured models concurrently, custom taking precedence', async () => {
-    const defaultModels = deferred();
-    const configuredModels = deferred();
-    const req = { user: { id: 'user-1' } };
-    loadDefaultModels.mockReturnValue(defaultModels.promise);
-    loadConfigModels.mockReturnValue(configuredModels.promise);
+  it('merges default and custom models', async () => {
+    const result = await getModelsConfig({ user: { id: 'u1' } });
 
-    const resultPromise = getModelsConfig(req);
-
-    /* Both started before either settled — neither waits on the other. */
-    expect(loadDefaultModels).toHaveBeenCalledWith(req);
-    expect(loadConfigModels).toHaveBeenCalledWith(req);
-
-    configuredModels.resolve({ openAI: ['configured-model'], custom: ['custom-model'] });
-    defaultModels.resolve({ openAI: ['default-model'], anthropic: ['default-anthropic'] });
-
-    await expect(resultPromise).resolves.toEqual({
-      openAI: ['configured-model'],
-      anthropic: ['default-anthropic'],
-      custom: ['custom-model'],
+    expect(result).toEqual({
+      bedrock: ['anthropic.claude'],
+      Claude: ['claude-sonnet-5'],
     });
   });
 

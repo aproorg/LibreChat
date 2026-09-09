@@ -29,7 +29,8 @@ jest.mock('~/components/Endpoints/MinimalIcon', () => ({
 }));
 
 jest.mock('~/utils', () => ({
-  ...jest.requireActual('~/utils'),
+  cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
+  getModelLabel: (labels?: Record<string, string>, id?: string) => labels?.[id ?? '']?.trim(),
   renderAgentAvatar: () => <span data-testid="agent-avatar" />,
 }));
 
