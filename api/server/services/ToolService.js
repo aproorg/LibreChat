@@ -1356,8 +1356,8 @@ async function loadToolDefinitionsWrapper({
     {
       isBuiltInTool,
       getOrFetchMCPServerTools,
-      refreshMCPServerTools,
       getServerDeferLoading,
+      refreshMCPServerTools,
       getActionToolDefinitions,
     },
   );
@@ -1458,8 +1458,8 @@ async function loadToolDefinitionsWrapper({
         {
           isBuiltInTool,
           getOrFetchMCPServerTools,
-          refreshMCPServerTools,
           getServerDeferLoading,
+          refreshMCPServerTools,
           getActionToolDefinitions,
         },
       );
