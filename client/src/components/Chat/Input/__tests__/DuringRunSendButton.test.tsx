@@ -24,6 +24,9 @@ jest.mock('@ariakit/react', () => ({
 }));
 
 const TEXT = 'stop, do not run that command';
+const STEER_LABEL = /^(?:Steer|com_ui_steer)$/;
+const QUEUE_LABEL = /^(?:Queue|com_ui_queue)$/;
+const INTERRUPT_STEER_LABEL = /^(?:Interrupt|com_ui_interrupt_steer)$/;
 
 const mockInterruptSteer = jest.fn(() => true);
 const mockSteerFromComposer = jest.fn(() => true);
@@ -125,7 +128,7 @@ function openMenu(options: MenuOptions = {}) {
       />
     </RecoilRoot>,
   );
-  expect(screen.getByText('com_ui_interrupt_steer')).toBeInTheDocument();
+  expect(screen.getByText(INTERRUPT_STEER_LABEL)).toBeInTheDocument();
 }
 
 beforeEach(() => {
@@ -141,7 +144,7 @@ describe('DuringRunSendButton — external hold', () => {
       </RecoilRoot>
     );
     const view = render(frame(false));
-    const labels = ['com_ui_steer', 'com_ui_queue', 'com_ui_interrupt_steer'];
+    const labels = [STEER_LABEL, QUEUE_LABEL, INTERRUPT_STEER_LABEL];
     view.rerender(frame(true));
     expect(screen.getByTestId('during-run-send-button')).toBeDisabled();
     for (const label of labels) {
@@ -156,7 +159,7 @@ describe('DuringRunSendButton — external hold', () => {
     expect(mockInterruptAndSend).not.toHaveBeenCalled();
     expect(mockOnConsumed).not.toHaveBeenCalled();
     view.rerender(frame(false));
-    const queue = screen.getByText('com_ui_queue').closest('button') as HTMLButtonElement;
+    const queue = screen.getByText(QUEUE_LABEL).closest('button') as HTMLButtonElement;
     expect(queue).toHaveAttribute('aria-disabled', 'false');
     fireEvent.click(queue);
     expect(mockQueueFromComposer).toHaveBeenCalledWith(TEXT);
@@ -173,7 +176,7 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
   test('disables Interrupt & steer while the run is paused on tool approval', () => {
     openMenu({ pausedOnApproval: true, canSteer: false });
 
-    const row = screen.getByText('com_ui_interrupt_steer').closest('button');
+    const row = screen.getByText(INTERRUPT_STEER_LABEL).closest('button');
     expect(row).toHaveAttribute('aria-disabled', 'true');
 
     fireEvent.click(row as HTMLButtonElement);
@@ -183,7 +186,7 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
 
   test('keeps Interrupt disabled until the first conversation can be steered', () => {
     openMenu({ canSteer: false, isNewConversation: true });
-    const row = screen.getByText('com_ui_interrupt_steer').closest('button');
+    const row = screen.getByText(INTERRUPT_STEER_LABEL).closest('button');
     expect(row).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(row as HTMLButtonElement);
     expect(mockInterruptSteer).not.toHaveBeenCalled();
@@ -193,7 +196,7 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
   test('the ordinary Steer row stays gated on canSteer', () => {
     openMenu({ pausedOnApproval: false, canSteer: false });
 
-    const row = screen.getByText('com_ui_steer').closest('button');
+    const row = screen.getByText(STEER_LABEL).closest('button');
     expect(row).toHaveAttribute('aria-disabled', 'true');
 
     fireEvent.click(row as HTMLButtonElement);
@@ -203,16 +206,16 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
   test('keeps Queue live but disables every generation mutation before the epoch arrives', () => {
     openMenu({ canSteer: false, canControlGeneration: false });
 
-    expect(screen.getByText('com_ui_steer').closest('button')).toHaveAttribute(
+    expect(screen.getByText(STEER_LABEL).closest('button')).toHaveAttribute(
       'aria-disabled',
       'true',
     );
-    expect(screen.getByText('com_ui_interrupt_steer').closest('button')).toHaveAttribute(
+    expect(screen.getByText(INTERRUPT_STEER_LABEL).closest('button')).toHaveAttribute(
       'aria-disabled',
       'true',
     );
 
-    const queue = screen.getByText('com_ui_queue').closest('button') as HTMLButtonElement;
+    const queue = screen.getByText(QUEUE_LABEL).closest('button') as HTMLButtonElement;
     expect(queue).toHaveAttribute('aria-disabled', 'false');
     fireEvent.click(queue);
     expect(mockQueueFromComposer).toHaveBeenCalledWith(TEXT);
@@ -224,11 +227,11 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
   test('both actions are available during a normal run', () => {
     openMenu({ pausedOnApproval: false, canSteer: true });
 
-    expect(screen.getByText('com_ui_interrupt_steer').closest('button')).toHaveAttribute(
+    expect(screen.getByText(INTERRUPT_STEER_LABEL).closest('button')).toHaveAttribute(
       'aria-disabled',
       'false',
     );
-    expect(screen.getByText('com_ui_steer').closest('button')).toHaveAttribute(
+    expect(screen.getByText(STEER_LABEL).closest('button')).toHaveAttribute(
       'aria-disabled',
       'false',
     );
@@ -242,20 +245,20 @@ describe('DuringRunSendButton — Interrupt & steer availability', () => {
  * Steer row — it would advertise a key that does something else.
  */
 describe('DuringRunSendButton — Enter hint follows the interrupt preference', () => {
-  const kbdFor = (label: string) =>
+  const kbdFor = (label: string | RegExp) =>
     screen.getByText(label).closest('button')?.querySelector('kbd')?.textContent ?? null;
 
   test('Enter is advertised on Steer when the preference is off', () => {
     openMenu({ canSteer: true, enterInterrupts: false });
-    expect(kbdFor('com_ui_steer')).toBe('⏎');
-    expect(kbdFor('com_ui_interrupt_steer')).not.toBe('⏎');
+    expect(kbdFor(STEER_LABEL)).toBe('⏎');
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).not.toBe('⏎');
   });
 
   test('Enter moves to Interrupt & steer when the preference is on', () => {
     openMenu({ canSteer: true, enterInterrupts: true });
-    expect(kbdFor('com_ui_interrupt_steer')).toBe('⏎');
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBe('⏎');
     /** No key reaches the plain Steer row in this mode, so it advertises none. */
-    expect(kbdFor('com_ui_steer')).toBeNull();
+    expect(kbdFor(STEER_LABEL)).toBeNull();
   });
 });
 
@@ -267,14 +270,14 @@ describe('DuringRunSendButton — Enter hint follows the interrupt preference', 
  * and a submit rebound to Alt+Enter submits instead of interrupting.
  */
 describe('DuringRunSendButton — hints follow the effective bindings', () => {
-  const kbdFor = (label: string) =>
+  const kbdFor = (label: string | RegExp) =>
     screen.getByText(label).closest('button')?.querySelector('kbd')?.textContent ?? null;
 
   test('defaults advertise every chord', () => {
     openMenu({ canSteer: true });
-    expect(kbdFor('com_ui_steer')).toBe('⏎');
-    expect(kbdFor('com_ui_queue')).toBe('Ctrl ⏎');
-    expect(kbdFor('com_ui_interrupt_steer')).toBe('Ctrl ⇧ ⏎');
+    expect(kbdFor(STEER_LABEL)).toBe('⏎');
+    expect(kbdFor(QUEUE_LABEL)).toBe('Ctrl ⏎');
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBe('Ctrl ⇧ ⏎');
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
   });
 
@@ -285,9 +288,9 @@ describe('DuringRunSendButton — hints follow the effective bindings', () => {
         focusSearch: { mac: 'Meta+Shift+Enter', other: 'Ctrl+Shift+Enter' },
       },
     });
-    expect(kbdFor('com_ui_interrupt_steer')).toBe('Alt ⏎');
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBe('Alt ⏎');
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
-    expect(kbdFor('com_ui_queue')).toBe('Ctrl ⏎');
+    expect(kbdFor(QUEUE_LABEL)).toBe('Ctrl ⏎');
   });
 
   test('drops the Interrupt & send hint when submit is rebound to its chord', () => {
@@ -298,33 +301,33 @@ describe('DuringRunSendButton — hints follow the effective bindings', () => {
       },
     });
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
-    expect(kbdFor('com_ui_steer')).toBe('⏎');
-    expect(kbdFor('com_ui_interrupt_steer')).toBe('Ctrl ⇧ ⏎');
+    expect(kbdFor(STEER_LABEL)).toBe('⏎');
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBe('Ctrl ⇧ ⏎');
   });
 
   test('a disabled row never advertises its chord', () => {
     openMenu({ pausedOnApproval: true, canSteer: false });
     /** Its action's own guard refuses the chord while paused on approval. */
-    expect(kbdFor('com_ui_interrupt_steer')).toBeNull();
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBeNull();
     /** The disabled Steer row drops its alternate-action hint the same way. */
-    expect(kbdFor('com_ui_steer')).toBeNull();
+    expect(kbdFor(STEER_LABEL)).toBeNull();
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
   });
 
   test('moves the default-action hint to Ctrl+Enter when Enter-to-send is off', () => {
     openMenu({ canSteer: true, enterToSend: false });
     /** Plain Enter inserts a newline during a run in this mode; ⌘/Ctrl+Enter submits the default. */
-    expect(kbdFor('com_ui_steer')).toBe('Ctrl ⏎');
-    expect(kbdFor('com_ui_queue')).toBeNull();
-    expect(kbdFor('com_ui_interrupt_steer')).toBe('Ctrl ⇧ ⏎');
+    expect(kbdFor(STEER_LABEL)).toBe('Ctrl ⏎');
+    expect(kbdFor(QUEUE_LABEL)).toBeNull();
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBe('Ctrl ⇧ ⏎');
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
   });
 
   test('keeps plain Enter but hides shortcut hints when shortcuts are disabled', () => {
     openMenu({ canSteer: true, shortcutsEnabled: false });
-    expect(kbdFor('com_ui_steer')).toBe('⏎');
-    expect(kbdFor('com_ui_queue')).toBeNull();
-    expect(kbdFor('com_ui_interrupt_steer')).toBeNull();
+    expect(kbdFor(STEER_LABEL)).toBe('⏎');
+    expect(kbdFor(QUEUE_LABEL)).toBeNull();
+    expect(kbdFor(INTERRUPT_STEER_LABEL)).toBeNull();
     expect(screen.queryByText('com_ui_interrupt_send')).not.toBeInTheDocument();
   });
 });
