@@ -10,6 +10,7 @@ import {
   getConfigDefaults,
   isAssistantsEndpoint,
   getEndpointField,
+  resolveModelSpecEndpoint,
 } from 'librechat-data-provider';
 import type { TAssistantsMap, TEndpointsConfig } from 'librechat-data-provider';
 import type { MentionOption } from '~/common';
@@ -205,6 +206,7 @@ export default function useMentions({
         icon: EndpointIcon({
           conversation: {
             ...modelSpec.preset,
+            endpoint: resolveModelSpecEndpoint(modelSpec) ?? null,
             iconURL: modelSpec.iconURL,
           },
           endpointsConfig,
