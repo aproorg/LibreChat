@@ -5,8 +5,8 @@ import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider'
 import type { Endpoint } from '~/common';
 import { useModelSelectorContext } from '../ModelSelectorContext';
 import { CustomMenuItem as MenuItem } from '../CustomMenu';
-import useActiveItem from '../useActiveItem';
 import { getModelName } from '../utils';
+import useActiveItem from '../useActiveItem';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 

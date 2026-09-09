@@ -1816,25 +1816,57 @@ describe('configSchema langfuse', () => {
   });
 });
 
-describe('endpointSchema models.filter', () => {
-  const base = {
-    name: 'MyGateway',
-    apiKey: 'gateway-key',
-    baseURL: 'https://gateway.example.com/v1',
-  };
-
-  it('parses filter when declared and leaves it undefined otherwise', () => {
-    const declared = endpointSchema.safeParse({
-      ...base,
-      models: { default: ['claude-sonnet-5'], fetch: true, filter: true },
-    });
-    const undeclared = endpointSchema.safeParse({
-      ...base,
-      models: { default: ['claude-sonnet-5'], fetch: true },
+describe('custom endpoint models.default', () => {
+  const parse = (models: Record<string, unknown>) =>
+    endpointSchema.partial().safeParse({
+      name: 'Claude',
+      apiKey: '${GATEWAY_KEY}',
+      baseURL: 'https://gateway.example.com/v1',
+      models,
     });
 
-    expect(declared.success && declared.data.models.filter).toBe(true);
-    expect(undeclared.success).toBe(true);
-    expect(undeclared.success && undeclared.data.models.filter).toBeUndefined();
+  it('accepts filter alongside fetch', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true, filter: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBe(true);
+  });
+
+  it('leaves filter undefined when not declared, so existing configs are unchanged', () => {
+    const result = parse({ default: ['claude-opus-5'], fetch: true });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.models?.filter).toBeUndefined();
+  });
+
+  /* An endpoint that declares nothing and never filters can never produce a
+     model. Without this it validates, then vanishes from the picker unexplained. */
+  it('rejects an empty list when the endpoint does not filter', () => {
+    const result = parse({ default: [] });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path).toEqual(['models', 'default']);
+  });
+
+  it('rejects an empty list even with fetch, when the endpoint does not filter', () => {
+    expect(parse({ default: [], fetch: true }).success).toBe(false);
+  });
+
+  it('rejects an empty list under an explicitly disabled filter', () => {
+    expect(parse({ default: [], fetch: true, filter: false }).success).toBe(false);
+  });
+
+  /* Under `filter` an empty list is a base configuration shipping an endpoint
+     template for a deployment to fill in. */
+  it('accepts an empty list under `filter`', () => {
+    expect(parse({ default: [], fetch: true, filter: true }).success).toBe(true);
+  });
+
+  it('accepts an empty list under `filter: complement`', () => {
+    expect(parse({ default: [], fetch: true, filter: 'complement' }).success).toBe(true);
+  });
+
+  it('rejects a filter that is neither boolean nor `complement`', () => {
+    expect(parse({ default: ['claude-opus-5'], fetch: true, filter: 'yes' }).success).toBe(false);
   });
 });

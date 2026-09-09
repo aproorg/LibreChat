@@ -1,11 +1,11 @@
 import {
-  ErrorTypes,
   EModelEndpoint,
   MAX_SUBAGENTS,
   setMaxSubagents,
   MAX_SUBAGENT_GRAPH_NODES,
   MAX_GRAPH_SUBAGENT_MEMBERS,
   Providers,
+  ErrorTypes,
 } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
@@ -407,7 +407,7 @@ describe('validateAgentModel', () => {
   });
 });
 
-describe('validateAgentModel — an endpoint with nothing to serve', () => {
+describe('validateAgentModel - custom endpoint filtering', () => {
   const res = {} as never;
   const agent = { id: 'agent-1', model: 'claude-opus-5', provider: 'Claude' } as never;
 
