@@ -20,6 +20,19 @@ jest.mock('@librechat/client', () => ({
       {children}
     </button>
   ),
+  PanelHeader: ({
+    children,
+    type,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    type?: 'button' | 'submit' | 'reset';
+    onClick?: () => void;
+  }) => (
+    <button type={type} onClick={onClick}>
+      {children}
+    </button>
+  ),
   ControlCombobox: ({
     ariaLabel,
     disabled,
@@ -91,7 +104,7 @@ function TestForm({
   formRef,
   models,
   modelsError = false,
-  modelsReady,
+  modelsReady = true,
   providers = [{ label: 'Custom', value: 'custom' }],
 }: {
   defaultModel?: string;
@@ -100,7 +113,7 @@ function TestForm({
   formRef?: React.MutableRefObject<UseFormReturn<AgentForm> | null>;
   models: Record<string, string[]>;
   modelsError?: boolean;
-  modelsReady: boolean;
+  modelsReady?: boolean;
   providers?: Array<{ label: string; value: string }>;
 }) {
   const methods = useForm<AgentForm>({
@@ -133,24 +146,6 @@ describe('ModelPanel', () => {
     localStorage.clear();
     mockEndpointsConfig = {};
     mockStartupConfig.mockReturnValue({});
-  });
-
-  it('displays a configured model label while retaining the model id', () => {
-    mockEndpointsConfig = {
-      custom: { order: 0, modelLabels: { 'custom-model': ' Custom Model ' } },
-    };
-    const { getByTestId } = render(
-      <TestForm
-        defaultProvider="custom"
-        defaultModel="custom-model"
-        models={{ custom: ['custom-model'] }}
-        modelsReady={true}
-      />,
-    );
-
-    expect(getByTestId('com_ui_model-display')).toHaveTextContent('Custom Model');
-    expect(getByTestId('com_ui_model-selected')).toHaveTextContent('custom-model');
-    expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('Custom Model');
   });
 
   it('disables model selection until the model catalogue is ready', () => {
@@ -424,5 +419,31 @@ describe('ModelPanel', () => {
     await waitFor(() => {
       expect(formRef.current?.getValues('model_parameters')).toEqual({});
     });
+  });
+});
+
+describe('ModelPanel model labels', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockEndpointsConfig = {};
+  });
+
+  it('displays a configured label while retaining the model id', () => {
+    mockEndpointsConfig = {
+      custom: { order: 0, modelLabels: { 'custom-model': ' Custom Model ' } },
+    };
+
+    const { getByTestId } = render(
+      <TestForm
+        defaultProvider="custom"
+        defaultModel="custom-model"
+        models={{ custom: ['custom-model'] }}
+        modelsReady={true}
+      />,
+    );
+
+    expect(getByTestId('com_ui_model-display')).toHaveTextContent('Custom Model');
+    expect(getByTestId('com_ui_model-selected')).toHaveTextContent('custom-model');
+    expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('Custom Model');
   });
 });
