@@ -44,8 +44,7 @@ const validateModel = async (req, res, next) => {
     return handleError(res, { text: 'Models not loaded' });
   }
 
-  const catalogKey = resolveModelCatalogKey(endpoint, modelsConfig);
-  const availableModels = modelsConfig[catalogKey];
+  const availableModels = modelsConfig[resolveModelCatalogKey(endpoint, modelsConfig)];
   if (!availableModels) {
     return handleError(res, { text: 'Endpoint models not loaded' });
   }
@@ -59,7 +58,7 @@ const validateModel = async (req, res, next) => {
   /* A filter-managed endpoint serving no models is unavailable, not being
      asked for an illegal model — a violation would penalize users whose stored
      conversations name an endpoint that no longer serves them. */
-  if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(catalogKey)) {
+  if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(endpoint)) {
     logger.debug(`[validateModel] "${endpoint}" has no models available; rejecting "${model}"`);
     return handleError(res, { text: 'Endpoint unavailable' });
   }

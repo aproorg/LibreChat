@@ -598,8 +598,7 @@ export async function validateAgentModel(
     };
   }
 
-  const catalogKey = resolveModelCatalogKey(endpoint, modelsConfig);
-  const availableModels = modelsConfig[catalogKey];
+  const availableModels = modelsConfig[resolveModelCatalogKey(endpoint, modelsConfig)];
   if (!availableModels) {
     return {
       isValid: false,
@@ -618,7 +617,7 @@ export async function validateAgentModel(
   /* A filter-managed endpoint serving no models is unavailable, not being
      asked for an illegal model — a violation would penalize the owner of a
      stored agent naming an endpoint that no longer serves it. */
-  if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(catalogKey)) {
+  if (availableModels.length === 0 && filterManagedEndpoints(req.config).has(endpoint)) {
     return {
       isValid: false,
       error: {
