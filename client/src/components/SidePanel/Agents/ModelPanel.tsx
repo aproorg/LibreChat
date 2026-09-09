@@ -68,7 +68,11 @@ export default function ModelPanel({
   const { data: startupConfig } = useGetStartupConfig();
   const { modelReasoning } = useModelReasoning(endpointsConfig, provider, model ?? '');
 
-  /** Display-only labels; `value` stays the id `ControlCombobox` hands back. */
+  /**
+   * Display-only labels declared by the provider's endpoint. `ControlCombobox`
+   * keeps `value` as the id it hands back, so labelling only changes what the
+   * option and the closed control read.
+   */
   const modelLabels = useMemo(
     () => getEndpointField(endpointsConfig, provider, 'modelLabels'),
     [endpointsConfig, provider],
