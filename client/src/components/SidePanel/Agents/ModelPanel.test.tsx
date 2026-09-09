@@ -2,10 +2,9 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { Providers } from 'librechat-data-provider';
 import { FormProvider, useForm } from 'react-hook-form';
 import { fireEvent, render } from '@testing-library/react';
-import type { TEndpointsConfig } from 'librechat-data-provider';
+import { Providers, type TEndpointsConfig } from 'librechat-data-provider';
 import type { AgentForm } from '~/common';
 import ModelPanel from './ModelPanel';
 
@@ -14,6 +13,19 @@ let mockEndpointsConfig: TEndpointsConfig = {};
 jest.mock('@librechat/client', () => ({
   Alert: ({ children }: { children: React.ReactNode }) => <div role="alert">{children}</div>,
   Button: ({ children, onClick, type }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type={type} onClick={onClick}>
+      {children}
+    </button>
+  ),
+  PanelHeader: ({
+    children,
+    type,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    type?: 'button' | 'submit' | 'reset';
+    onClick?: () => void;
+  }) => (
     <button type={type} onClick={onClick}>
       {children}
     </button>
@@ -77,6 +89,7 @@ jest.mock('~/hooks', () => ({
 
 jest.mock('~/utils', () => ({
   cn: (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' '),
+  getModelLabel: (labels?: Record<string, string>, id?: string) => labels?.[id ?? '']?.trim(),
 }));
 
 function TestForm({
@@ -84,14 +97,14 @@ function TestForm({
   defaultProvider = '',
   models,
   modelsError = false,
-  modelsReady,
+  modelsReady = true,
   providers = [{ label: 'Custom', value: 'custom' }],
 }: {
   defaultModel?: string;
   defaultProvider?: string;
   models: Record<string, string[]>;
   modelsError?: boolean;
-  modelsReady: boolean;
+  modelsReady?: boolean;
   providers?: Array<{ label: string; value: string }>;
 }) {
   const methods = useForm<AgentForm>({
@@ -119,24 +132,6 @@ describe('ModelPanel', () => {
   beforeEach(() => {
     localStorage.clear();
     mockEndpointsConfig = {};
-  });
-
-  it('displays a configured model label while retaining the model id', () => {
-    mockEndpointsConfig = {
-      custom: { order: 0, modelLabels: { 'custom-model': ' Custom Model ' } },
-    };
-    const { getByTestId } = render(
-      <TestForm
-        defaultProvider="custom"
-        defaultModel="custom-model"
-        models={{ custom: ['custom-model'] }}
-        modelsReady={true}
-      />,
-    );
-
-    expect(getByTestId('com_ui_model-display')).toHaveTextContent('Custom Model');
-    expect(getByTestId('com_ui_model-selected')).toHaveTextContent('custom-model');
-    expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('Custom Model');
   });
 
   it('disables model selection until the model catalogue is ready', () => {
@@ -284,5 +279,31 @@ describe('ModelPanel', () => {
     expect(container.querySelector('label[for="model"]')).not.toBeNull();
     expect(container.querySelector('#provider')).not.toBeNull();
     expect(container.querySelector('#model')).not.toBeNull();
+  });
+});
+
+describe('ModelPanel model labels', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockEndpointsConfig = {};
+  });
+
+  it('displays a configured label while retaining the model id', () => {
+    mockEndpointsConfig = {
+      custom: { order: 0, modelLabels: { 'custom-model': ' Custom Model ' } },
+    };
+
+    const { getByTestId } = render(
+      <TestForm
+        defaultProvider="custom"
+        defaultModel="custom-model"
+        models={{ custom: ['custom-model'] }}
+        modelsReady={true}
+      />,
+    );
+
+    expect(getByTestId('com_ui_model-display')).toHaveTextContent('Custom Model');
+    expect(getByTestId('com_ui_model-selected')).toHaveTextContent('custom-model');
+    expect(getByTestId('com_ui_model-custom-model')).toHaveTextContent('Custom Model');
   });
 });

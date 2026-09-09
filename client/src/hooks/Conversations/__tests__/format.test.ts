@@ -104,8 +104,8 @@ const contentByType: Record<ContentTypes, ExportableContentPart> = {
     elicitation: {
       flowId: 'flow-1',
       mode: 'url',
-      message: 'Please authorize',
-      url: 'https://example.com/authorize',
+      message: 'Authorization required',
+      url: 'https://example.com/auth',
     },
   },
 };
@@ -127,7 +127,7 @@ const expectedMarkdownByType: Record<ContentTypes, MessageContentExport> = {
   [ContentTypes.STEER]: ['You (steered)', 'Focus on the tests'],
   [ContentTypes.ACTIVITY_LABEL]: ['Activity', 'Searched runtime release notes'],
   [ContentTypes.ERROR]: ['Assistant', 'Something failed'],
-  [ContentTypes.ELICITATION]: [],
+  [ContentTypes.ELICITATION]: ['Assistant', 'Authorization required'],
 };
 
 describe('handledExportContentTypes', () => {
