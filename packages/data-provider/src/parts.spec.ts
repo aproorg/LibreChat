@@ -85,6 +85,10 @@ const samples: Record<ContentTypes, MappableContentPart> = {
     content: [{ type: ContentTypes.TEXT, text: 'Earlier, we talked.' }],
     summarizing: false,
   },
+  [ContentTypes.ELICITATION]: {
+    type: ContentTypes.ELICITATION,
+    elicitation: { flowId: 'flow-1', mode: 'form', message: 'Add details' },
+  },
   [ContentTypes.ACTIVITY_LABEL]: {
     type: ContentTypes.ACTIVITY_LABEL,
     activity_label: 'Searched the web',
@@ -106,6 +110,7 @@ const expectedUITypes: Record<ContentTypes, string> = {
   [ContentTypes.INPUT_AUDIO]: 'file',
   [ContentTypes.AGENT_UPDATE]: 'data-agent-update',
   [ContentTypes.SUMMARY]: 'data-summary',
+  [ContentTypes.ELICITATION]: 'data-elicitation',
   [ContentTypes.ACTIVITY_LABEL]: 'data-activity-label',
   [ContentTypes.STEER]: 'data-steer',
   [ContentTypes.ERROR]: 'data-error',

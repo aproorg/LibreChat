@@ -1,10 +1,10 @@
 import pick from 'lodash/pick';
-import { logger } from '@librechat/data-schemas';
+import { logger, getTenantId } from '@librechat/data-schemas';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { Permissions, PermissionTypes, DEFAULT_MCP_APPS_POLICY } from 'librechat-data-provider';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { TokenMethods, IUser } from '@librechat/data-schemas';
-import type { TMCPAppsPolicy } from 'librechat-data-provider';
+import type { Agents, TMCPAppsPolicy } from 'librechat-data-provider';
 import type {
   OboTokenResolver,
   OboTrustChecker,
@@ -16,6 +16,7 @@ import type { MCPAppOperationContext, MCPAppValidationContext } from './apps';
 import type { ScheduledMCPBearerInvocation } from '~/schedules/bearer';
 import type { MCPClientCapabilityProfile } from './capabilities';
 import type { AuthIdentityContext } from '~/utils/identity';
+import type { ElicitationFlowResult } from './elicitation';
 import type { GraphTokenResolver } from '~/utils/graph';
 import type { FlowStateManager } from '~/flow/manager';
 import type { MCPOAuthTokens } from './oauth';
@@ -60,6 +61,14 @@ import {
   type MCPAppBindingSubject,
   type MCPAppRuntimeTarget,
 } from './apps/binding';
+import {
+  asElicitationFlowManager,
+  extractUrlElicitation,
+  generateElicitationFlowId,
+  isElicitationSuccess,
+  isHttpUrl,
+  toElicitResultAction,
+} from './elicitation';
 import { getMCPAppToolsPublicationGeneration, getMCPToolsChangedGeneration } from './toolsChanged';
 import { mcpOptionsContainGraphTokenPlaceholder, preProcessGraphTokens } from '~/utils/graph';
 import { resolveDirectOpenIDBearerConfig, usesDirectOpenIDBearerRecovery } from './openid';
@@ -86,6 +95,35 @@ import { markMCPToolResultError } from './status';
 import { withMCPRequestSignal } from './signal';
 import { MCPConnection } from './connection';
 import { mcpConfig } from './mcpConfig';
+
+/** Buffer (ms) added over the flow TTL so the tool-call SDK timeout always
+ *  outlives the {@link FlowStateManager} wait that actually bounds the user. A
+ *  user who authorizes near the TTL deadline then gets their retried result
+ *  instead of a premature transport timeout. Mirrors the OAuth connect-timeout
+ *  floor in {@link MCPConnectionFactory.attemptToConnect}. */
+const ELICITATION_TIMEOUT_BUFFER_MS = 60 * 1000;
+
+/** Max elicitation flows a single (userId, serverName) may keep pending at once.
+ *  A misbehaving or hostile server can emit `elicitation/create` in a loop; each
+ *  one spawns a flow-store entry and an SSE card, so the count is capped to stop
+ *  a memory/resource DoS. Further requests past the cap are declined outright. */
+const MAX_PENDING_ELICITATIONS = 3;
+
+/** Combines the caller's request-abort signal with the SDK's per-elicitation
+ *  signal so cancelling the tool call OR the server cancelling/closing the
+ *  elicitation both tear down the pending flow wait. */
+function combineAbortSignals(
+  ...signals: Array<AbortSignal | null | undefined>
+): AbortSignal | undefined {
+  const active = signals.filter((signal): signal is AbortSignal => signal != null);
+  if (active.length === 0) {
+    return undefined;
+  }
+  if (active.length === 1) {
+    return active[0];
+  }
+  return AbortSignal.any(active);
+}
 
 function createOboToolCallErrorMessage(
   logPrefix: string,
@@ -187,6 +225,35 @@ export class MCPManager extends UserConnectionManager {
    * live tools/list_changed notifications (toolListVersion) that createdAt alone would miss.
    */
   private readonly toolCacheConnStamp = new Map<string, string>();
+
+  /** Live count of elicitation flows awaiting user input, keyed by
+   *  `${userId}:${serverName}`. Bounds concurrent `elicitation/create` cards per
+   *  (user, server) — see {@link MAX_PENDING_ELICITATIONS}. */
+  private readonly pendingElicitations = new Map<string, number>();
+
+  /** Reserves an elicitation slot for `(userId, serverName)`, returning `false`
+   *  when the cap is already reached so the caller can decline without spawning a
+   *  flow. A successful reservation must be paired with {@link releaseElicitation}. */
+  private reserveElicitation(userId: string, serverName: string): boolean {
+    const key = `${userId}:${serverName}`;
+    const pending = this.pendingElicitations.get(key) ?? 0;
+    if (pending >= MAX_PENDING_ELICITATIONS) {
+      return false;
+    }
+    this.pendingElicitations.set(key, pending + 1);
+    return true;
+  }
+
+  /** Releases a slot reserved by {@link reserveElicitation}. */
+  private releaseElicitation(userId: string, serverName: string): void {
+    const key = `${userId}:${serverName}`;
+    const next = (this.pendingElicitations.get(key) ?? 1) - 1;
+    if (next <= 0) {
+      this.pendingElicitations.delete(key);
+      return;
+    }
+    this.pendingElicitations.set(key, next);
+  }
 
   /** Creates and initializes the singleton MCPManager instance */
   public static async createInstance(
@@ -1535,6 +1602,8 @@ Please follow these instructions when using tools from the respective MCP server
     flowManager,
     oauthStart,
     oauthEnd,
+    elicitationStart,
+    elicitationEnd,
     customUserVars,
     graphTokenResolver,
     oboTokenResolver,
@@ -1547,6 +1616,8 @@ Please follow these instructions when using tools from the respective MCP server
     mcpApps,
     scheduledMCPInvocation,
     unattended,
+    elicitationStreamId,
+    elicitationStepId,
   }: {
     /** See {@link t.UserConnectionContext.unattended}. */
     unattended?: boolean;
@@ -1567,6 +1638,31 @@ Please follow these instructions when using tools from the respective MCP server
     flowManager: FlowStateManager<MCPOAuthTokens | null>;
     oauthStart?: t.OAuthStartHandler;
     oauthEnd?: () => Promise<void>;
+    /**
+     * When provided: (1) declares support for MCP elicitation, extending the
+     * `tools/call` timeout to outlive the flow-state wait (see
+     * {@link ELICITATION_TIMEOUT_BUFFER_MS}); (2) registers a
+     * handler for server-initiated `elicitation/create` requests (form/url
+     * modes); and (3) catches the -32042 `UrlElicitationRequired` exception on
+     * the initial `tools/call` response and retries once after the user
+     * authorizes. Called once per elicitation with enough context to render an
+     * in-chat card; resolution arrives via `flowManager` (same pattern as
+     * `oauthStart`/OAuth).
+     */
+    elicitationStart?: (params: {
+      flowId: string;
+      mode: 'form' | 'url';
+      message: string;
+      serverName?: string;
+      toolName?: string;
+      requestedSchema?: Agents.ElicitationSchema;
+      url?: string;
+      /** Url-mode only: the server-supplied id from `elicitation/create` or the
+       *  -32042 `data.elicitations[]` entry, retained for future
+       *  `notifications/elicitation/complete` correlation. */
+      elicitationId?: string;
+    }) => Promise<void>;
+    elicitationEnd?: (params: { flowId: string; action: ElicitationFlowResult['action'] }) => Promise<void>;
     graphTokenResolver?: GraphTokenResolver;
     oboTokenResolver?: OboTokenResolver;
     oboTrustChecker?: OboTrustChecker;
@@ -1576,6 +1672,10 @@ Please follow these instructions when using tools from the respective MCP server
     onOAuthCredentialsChanged?: t.UserConnectionContext['onOAuthCredentialsChanged'];
     onOAuthCredentialsChanging?: t.UserConnectionContext['onOAuthCredentialsChanging'];
     mcpApps?: TMCPAppsPolicy;
+    /** Resumable stream id associated with the elicitation event. */
+    elicitationStreamId?: string | null;
+    /** Run-step id associated with the elicitation event. */
+    elicitationStepId?: string;
   }): Promise<t.FormattedToolResponse> {
     if (scheduledBearerInvocation) requestScopedConnections = scheduledBearerInvocation.context;
     const userId = user?.id;
@@ -1598,6 +1698,7 @@ Please follow these instructions when using tools from the respective MCP server
       let connectionRetained = false;
       let deferredDisposalHeld = false;
       let attachSharedOAuthHandler: ((relay: OAuthLifecycleRelay) => () => void) | undefined;
+      let cleanupElicitationHandler: (() => void) | undefined;
       let disposeAfterCall = false;
       const retainConnectionLease = () => {
         if (!connection || connectionRetained) {
@@ -1655,7 +1756,7 @@ Please follow these instructions when using tools from the respective MCP server
             signal: options?.signal,
             customUserVars,
             requestBody,
-            requestScopedConnections,
+requestScopedConnections,
             serverConfig: providedConfig,
             directBearerRecoveryState,
             capabilityProfile,
@@ -1995,10 +2096,66 @@ Please follow these instructions when using tools from the respective MCP server
           }
         }
 
+        const elicitationFlowManager = asElicitationFlowManager(flowManager);
+
+        if (elicitationStart && userId) {
+          cleanupElicitationHandler = connection!.setElicitationHandler(
+            async (params, elicitationSignal) => {
+              const isUrlMode = params.mode === 'url';
+              if (isUrlMode && !isHttpUrl(params.url)) {
+                logger.warn(
+                  `${logPrefix}[${toolName}] Declining url-mode elicitation with a non-http(s) URL`,
+                );
+                return { action: 'decline' };
+              }
+              if (!this.reserveElicitation(userId, serverName)) {
+                logger.warn(
+                  `${logPrefix}[${toolName}] Declining elicitation: ${MAX_PENDING_ELICITATIONS} already pending for this server`,
+                );
+                return { action: 'decline' };
+              }
+              try {
+                const flowId = generateElicitationFlowId(userId, serverName, toolName, getTenantId());
+                const elicitationId = isUrlMode ? params.elicitationId : undefined;
+                await elicitationStart({
+                  flowId,
+                  mode: isUrlMode ? 'url' : 'form',
+                  message: params.message,
+                  serverName,
+                  toolName,
+                  requestedSchema: isUrlMode ? undefined : params.requestedSchema,
+                  url: isUrlMode ? params.url : undefined,
+                  elicitationId,
+                });
+                const flowResult = await elicitationFlowManager.createFlow(
+                  flowId,
+                  'mcp_elicit',
+                  {
+                    requestedSchema: isUrlMode ? undefined : params.requestedSchema,
+                    elicitationId,
+                  },
+                  combineAbortSignals(options?.signal, elicitationSignal),
+                );
+                return {
+                  action: toElicitResultAction(flowResult.action),
+                  content: flowResult.content,
+                };
+              } finally {
+                this.releaseElicitation(userId, serverName);
+              }
+            },
+          );
+        }
+
+        const elicitationTimeout = Math.max(
+          connection!.timeout ?? 0,
+          mcpConfig.OAUTH_FLOW_TTL + ELICITATION_TIMEOUT_BUFFER_MS,
+        );
         const requestTool = async () => {
           if (isScheduledMCPBearer(requestScopedConnections) && directBearerRecovery) {
-            if (!scheduledBearerInvocation)
+            if (!scheduledBearerInvocation) {
               throw new ScheduledMCPBearerError('tool_policy_denied', serverName);
+            }
             const current = await scheduledBearerInvocation.resolve({
               user,
               serverName,
@@ -2008,7 +2165,9 @@ Please follow these instructions when using tools from the respective MCP server
             const bearerHeader = Object.entries(
               'headers' in current ? (current.headers ?? {}) : {},
             ).find(([name]) => name.toLowerCase() === 'authorization');
-            if (!bearerHeader) throw new ScheduledMCPBearerError('binding_mismatch', serverName);
+            if (!bearerHeader) {
+              throw new ScheduledMCPBearerError('binding_mismatch', serverName);
+            }
             connection!.setRequestHeaders({
               ...resolvedHeaders,
               [bearerHeader[0]]: bearerHeader[1],
@@ -2034,14 +2193,11 @@ Please follow these instructions when using tools from the respective MCP server
               connection!.client.request(
                 {
                   method: 'tools/call',
-                  params: {
-                    name: toolName,
-                    arguments: toolArguments,
-                  },
+                  params: { name: toolName, arguments: toolArguments },
                 },
                 CallToolResultSchema,
                 {
-                  timeout: connection!.timeout,
+                  timeout: elicitationStart ? elicitationTimeout : connection!.timeout,
                   resetTimeoutOnProgress: true,
                   ...options,
                   signal,
@@ -2056,7 +2212,8 @@ Please follow these instructions when using tools from the respective MCP server
         const requestedCredentialSetId = connection.getOAuthCredentialSetId?.();
         let result: Awaited<ReturnType<typeof requestTool>>;
         try {
-          result = await requestTool();
+          try {
+            result = await requestTool();
         } catch (error) {
           if (error instanceof ScheduledMCPPolicyError) throw error;
           if (isScheduledMCPBearer(requestScopedConnections) && directBearerRecovery) {
@@ -2162,6 +2319,76 @@ Please follow these instructions when using tools from the respective MCP server
               throw error;
             }
             result = await requestTool();
+          }
+        }
+      } catch (toolCallError) {
+          const first = elicitationStart && userId ? extractUrlElicitation(toolCallError) : undefined;
+          if (!first) {
+            throw toolCallError;
+          }
+
+          const sharedAppConnection = await this.appConnections?.get(serverName);
+          if (sharedAppConnection && sharedAppConnection === connection) {
+            throw new McpError(
+              ErrorCode.InvalidRequest,
+              `${first.message} This server requires per-user authorization but is connected at ` +
+                `the app level; configure it to use a user-scoped connection, then retry.`,
+            );
+          }
+
+          const flowId = generateElicitationFlowId(userId!, serverName, toolName, getTenantId());
+          if (!this.reserveElicitation(userId!, serverName)) {
+            throw new McpError(
+              ErrorCode.InvalidRequest,
+              `${first.message} Too many pending authorizations for ${serverName}; complete or cancel one, then retry. Open ${first.url} to authorize.`,
+            );
+          }
+          try {
+            logger.info(
+              `${logPrefix}[${toolName}] URL elicitation required (-32042), flowId: ${flowId}`,
+            );
+            await elicitationStart!({
+              flowId,
+              mode: 'url',
+              message: first.message,
+              serverName,
+              toolName,
+              url: first.url,
+              elicitationId: first.elicitationId,
+            });
+
+            let flowResult: ElicitationFlowResult;
+            try {
+              flowResult = await elicitationFlowManager.createFlow(
+                flowId,
+                'mcp_elicit',
+                {
+                  elicitationId: first.elicitationId,
+                  streamId: elicitationStreamId ?? null,
+                  stepId: elicitationStepId,
+                },
+                options?.signal,
+              );
+            } catch (flowError) {
+              await elicitationEnd?.({ flowId, action: 'cancel' });
+              const reason = flowError instanceof Error ? flowError.message : String(flowError);
+              throw new McpError(
+                ErrorCode.InvalidRequest,
+                `${first.message} Open ${first.url} to authorize, then retry. (${reason})`,
+              );
+            }
+
+            if (!isElicitationSuccess(flowResult.action)) {
+              throw new McpError(
+                ErrorCode.InvalidRequest,
+                `${first.message} Authorization was cancelled. Open ${first.url} to authorize, then retry.`,
+              );
+            }
+
+            logger.debug(`${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`);
+            result = await requestTool();
+          } finally {
+            this.releaseElicitation(userId!, serverName);
           }
         }
         const hasPersistentUserConnections =
@@ -2326,6 +2553,7 @@ Please follow these instructions when using tools from the respective MCP server
         // Rethrowing allows the caller (createMCPTool) to handle the final user message
         throw error;
       } finally {
+        cleanupElicitationHandler?.();
         await releaseConnectionLease();
         // Ephemeral connections are never stored in userConnections, so disposing
         // is the only cleanup needed; removing the map entry here could orphan a
