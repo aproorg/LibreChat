@@ -36,17 +36,6 @@ export function normalizeExpiresAt(timestamp: number): number {
   return timestamp < SECONDS_THRESHOLD ? timestamp * 1000 : timestamp;
 }
 
-/** How many times {@link FlowStateManager.completeFlowIfPending} retries the
- *  distributed lock before conceding. Covers the window where the holder has
- *  acquired the lock but not yet written the terminal state. */
-const COMPLETE_LOCK_RETRY_MS = 50;
-/** Must span the store's lock TTL (5s in `cache/flows.ts`): if the holder dies
- *  after acquiring the lock, nothing settles the flow until that TTL expires,
- *  and conceding earlier returns a 409 with no winning action while the flow is
- *  still PENDING. Retrying to the TTL lets a later attempt take the lock over. */
-const COMPLETE_LOCK_TIMEOUT_MS = 6000;
-const COMPLETE_LOCK_ATTEMPTS = Math.ceil(COMPLETE_LOCK_TIMEOUT_MS / COMPLETE_LOCK_RETRY_MS);
-
 export class FlowStateManager<T = unknown> {
   private keyv: Keyv;
   private ttl: number;
@@ -416,29 +405,15 @@ export class FlowStateManager<T = unknown> {
     const lockableStore = this.keyv as LockableKeyv;
     if (lockableStore.acquireLock && lockableStore.releaseLock) {
       const lockKey = `lock:${flowKey}`;
-      for (let attempt = 0; attempt < COMPLETE_LOCK_ATTEMPTS; attempt++) {
-        const token = await lockableStore.acquireLock(lockKey);
-        if (token) {
-          try {
-            return await transition();
-          } finally {
-            await lockableStore.releaseLock(lockKey, token);
-          }
-        }
-        /** Losing the lock is not the same as losing the race: the holder may
-         *  still be between its read and its write. Returning false here would
-         *  have the caller re-read a PENDING state and report a conflict with no
-         *  winning action, so the loser's UI shows its own attempted action.
-         *  Retry briefly; if the holder settled the flow we observe the terminal
-         *  state and report the loss truthfully, and if it died the lock TTL
-         *  lets a later attempt take over. */
-        const observed = (await this.keyv.get(flowKey)) as FlowState<T> | undefined;
-        if (!observed || observed.status !== 'PENDING') {
-          return false;
-        }
-        await new Promise((resolve) => setTimeout(resolve, COMPLETE_LOCK_RETRY_MS));
+      const token = await lockableStore.acquireLock(lockKey);
+      if (!token) {
+        return false;
       }
-      return false;
+      try {
+        return await transition();
+      } finally {
+        await lockableStore.releaseLock(lockKey, token);
+      }
     }
 
     return this.withLocalLock(flowKey, transition);

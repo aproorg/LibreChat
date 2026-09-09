@@ -317,6 +317,21 @@ export function getMCPOAuthStatus(flowId: string): Promise<mcp.MCPOAuthStatusRes
   return request.get(endpoints.mcpOAuthStatus(flowId));
 }
 
+/**
+ * Resolves a pending MCP elicitation flow (form submission, URL-mode `elicitation/create`
+ * acknowledgement, or a -32042 URL-exception authorization continuation). `action:
+ * 'complete'` is the URL-exception "I've authorized — continue" signal; `'accept'` is the
+ * 2025-06-18 form-mode equivalent. Both resume the same waiting `MCPManager.callTool`.
+ */
+export const respondToElicitation = (
+  flowId: string,
+  body: {
+    action: ag.Agents.ElicitationAction;
+    content?: Record<string, ag.Agents.ElicitationValue>;
+  },
+): Promise<{ ok: boolean }> => {
+  return request.post(endpoints.mcpElicitationRespond(flowId), body);
+};
 /* Config */
 
 export type StartupConfigOptions = {
@@ -1597,21 +1612,4 @@ export interface ActiveJobsResponse {
 
 export const getActiveJobs = (): Promise<ActiveJobsResponse> => {
   return request.get(endpoints.activeJobs());
-};
-
-/**
- * Resolves a pending MCP URL-mode elicitation flow (a `mode: 'url'`
- * `elicitation/create` acknowledgement, or a -32042 URL-exception authorization
- * continuation). `action: 'complete'` is the URL-exception "I've authorized —
- * continue" signal; both resume the same waiting `MCPManager.callTool`. URL mode
- * carries no `content`.
- */
-export const respondToElicitation = (
-  flowId: string,
-  body: {
-    action: ag.Agents.ElicitationAction;
-    content?: Record<string, ag.Agents.ElicitationValue>;
-  },
-): Promise<{ ok: boolean }> => {
-  return request.post(endpoints.mcpElicitationRespond(flowId), body);
 };

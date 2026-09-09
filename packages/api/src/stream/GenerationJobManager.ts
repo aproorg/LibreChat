@@ -422,8 +422,6 @@ function getReplayStepId(event: t.ServerSentEvent): unknown {
     return result != null && typeof result === 'object' && 'id' in result ? result.id : undefined;
   }
 
-  /** Elicitation cards dedupe by flow, not step: a re-emitted card for the same
-   *  flowId replaces the pending one in place rather than stacking. */
   if (event.event === 'on_elicitation') {
     const elicitation = 'elicitation' in event.data ? event.data.elicitation : undefined;
     return elicitation != null && typeof elicitation === 'object' && 'flowId' in elicitation
@@ -438,22 +436,15 @@ function getReplayStepId(event: t.ServerSentEvent): unknown {
   return undefined;
 }
 
-/** Replay-only events: the OAuth run-step cards plus the UI-only URL-mode
- *  elicitation cards, so a refresh during a pending authorization doesn't lose
- *  the card until the flow times out. Self-gates by event type. */
 function isReplayEvent(event: t.ServerSentEvent): boolean {
   if (!('event' in event) || !event.data || typeof event.data !== 'object') {
     return false;
   }
+
+  // Replay URL-mode elicitation cards on resume (UI-only, like OAuth cards) so a
+  // refresh during a pending authorization doesn't lose the card until timeout.
   if (event.event === 'on_elicitation' || event.event === 'on_elicitation_resolved') {
     return true;
-  }
-  return isOAuthReplayEvent(event);
-}
-
-function isOAuthReplayEvent(event: t.ServerSentEvent): boolean {
-  if (!('event' in event) || !event.data || typeof event.data !== 'object') {
-    return false;
   }
 
   if (event.event === 'on_run_step') {
@@ -6597,7 +6588,12 @@ class GenerationJobManagerClass {
     if (event.event === UsageEvents.ON_TOKEN_USAGE) {
       return this.trackTokenUsage(streamId, event, expectedCreatedAt);
     }
-    if (isReplayEvent(event)) {
+    if (
+      (event.event === 'on_run_step' ||
+        event.event === 'on_run_step_delta' ||
+        event.event === 'on_run_step_completed') &&
+      isReplayEvent(event)
+    ) {
       return this.trackReplayEvent(streamId, event, expectedCreatedAt);
     }
   }

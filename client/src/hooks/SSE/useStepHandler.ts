@@ -71,10 +71,10 @@ type TStepEvent =
   | { event: StepEvents.ON_SUMMARIZE_DELTA; data: Agents.SummarizeDeltaEvent }
   | { event: StepEvents.ON_SUMMARIZE_COMPLETE; data: Agents.SummarizeCompleteEvent }
   | { event: StepEvents.ON_SUBAGENT_UPDATE; data: SubagentUpdateEvent }
-  | { event: StepEvents.ON_ELICITATION; data: Agents.ElicitationEvent }
-  | { event: StepEvents.ON_ELICITATION_RESOLVED; data: Agents.ElicitationResolvedEvent }
   | { event: StepEvents.ON_SANDBOX_STARTING; data: SandboxStartingEvent }
-  | { event: StepEvents.ON_PTC_TOOL_CALL; data: PtcToolCallEvent };
+  | { event: StepEvents.ON_PTC_TOOL_CALL; data: PtcToolCallEvent }
+  | { event: StepEvents.ON_ELICITATION; data: Agents.ElicitationEvent }
+  | { event: StepEvents.ON_ELICITATION_RESOLVED; data: Agents.ElicitationResolvedEvent };
 
 type MessageDeltaUpdate = {
   type: ContentTypes.TEXT;
@@ -524,6 +524,26 @@ export default function useStepHandler({
     }
 
     /**
+     * Elicitation cards are a standalone, pause-scoped UI part (see ON_ELICITATION
+     * below), not an indexed content slot — a tool-call+elicitation+final-text
+     * sequence can collide on the same server index once the run resumes with
+     * real content. Rather than let the type-mismatch guard below drop the
+     * incoming part (silently discarding the final assistant text), displace the
+     * card to the tail instead — same displacement pattern as the OAuth prompt
+     * above.
+     */
+    if (
+      contentType !== ContentTypes.ELICITATION &&
+      updatedContent[index]?.type === ContentTypes.ELICITATION
+    ) {
+      const displaced = updatedContent[index];
+      updatedContent[index] = undefined;
+      updatedContent.push(displaced);
+    }
+
+
+
+    /**
      * The synthetic ask-user-question card is pause-scoped UI appended at the end
      * of the content — exactly the ABSOLUTE index the resumed segment streams
      * into. Once real content arrives for that slot the pause is over: displace
@@ -549,24 +569,6 @@ export default function useStepHandler({
       updatedContent = updatedContent.map((part) =>
         isAnsweredAskUserQuestionPart(part) ? undefined : part,
       );
-    }
-
-    /**
-     * Elicitation cards are a standalone, pause-scoped UI part (see ON_ELICITATION
-     * below), not an indexed content slot — a tool-call+elicitation+final-text
-     * sequence can collide on the same server index once the run resumes with
-     * real content. Rather than let the type-mismatch guard below drop the
-     * incoming part (silently discarding the final assistant text), displace the
-     * card to the tail instead — same displacement pattern as the OAuth prompt
-     * and ask-user-question card above.
-     */
-    if (
-      contentType !== ContentTypes.ELICITATION &&
-      updatedContent[index]?.type === ContentTypes.ELICITATION
-    ) {
-      const displaced = updatedContent[index];
-      updatedContent[index] = undefined;
-      updatedContent.push(displaced);
     }
 
     if (!updatedContent[index] && contentType !== ContentTypes.TOOL_CALL) {

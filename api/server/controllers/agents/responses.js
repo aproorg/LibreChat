@@ -8,6 +8,7 @@ const {
   PermissionBits,
   hasPermissions,
   AgentCapabilities,
+  stripUiOnlyContentParts,
 } = require('librechat-data-provider');
 const {
   createRun,
@@ -1012,7 +1013,7 @@ const executeResponse = async (envelope, { req, res }) => {
         allMessages,
         true,
       );
-      const formatted = formatAgentMessages(stripActivityLabelParts(allMessages), {}, toolSet);
+      const formatted = formatAgentMessages(stripUiOnlyContentParts(stripActivityLabelParts(allMessages)), {}, toolSet);
       const formattedMessages = formatted.messages;
       const initialSummary = formatted.summary;
       let indexTokenCountMap = formatted.indexTokenCountMap;

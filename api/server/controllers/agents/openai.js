@@ -7,6 +7,7 @@ const {
   PermissionBits,
   hasPermissions,
   AgentCapabilities,
+  stripUiOnlyContentParts,
 } = require('librechat-data-provider');
 const {
   writeSSE,
@@ -813,7 +814,7 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
         openaiMessages,
         true,
       );
-      const formatted = formatAgentMessages(stripActivityLabelParts(openaiMessages), {}, toolSet);
+      const formatted = formatAgentMessages(stripUiOnlyContentParts(stripActivityLabelParts(openaiMessages)), {}, toolSet);
       const formattedMessages = formatted.messages;
       const initialSummary = formatted.summary;
       let indexTokenCountMap = formatted.indexTokenCountMap;

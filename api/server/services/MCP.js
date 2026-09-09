@@ -79,6 +79,23 @@ const RECONNECT_THROTTLE_MS = 10_000;
 const missingToolCache = new Map();
 const MISSING_TOOL_TTL_MS = 10_000;
 
+/**
+ * Bridges the elicitation SSE stream to the out-of-band completion route.
+ * `createElicitationStart` runs inside the streaming tool call, so it holds the
+ * stream context (`res`/`streamId`/`stepId`) and the form `requestedSchema`; the
+ * `POST /api/mcp/elicitation/:flowId` route runs in a separate request that has
+ * none of it. Keyed by `flowId`, this registry lets the route re-validate the
+ * submitted `content` against the real schema and emit `on_elicitation_resolved`
+ * back onto the originating stream. Entries are deleted on resolution; any left
+ * abandoned are bounded to {@link MAX_CACHE_SIZE} and TTL-swept once the map
+ * exceeds that cap (see {@link evictStale}).
+ * `elicitationId` (url mode only) is retained alongside them for future
+ * `notifications/elicitation/complete` correlation.
+ * @type {Map<string, { res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, elicitationId?: string, createdAt: number }>}
+ */
+const elicitationFlowContext = new Map();
+const ELICITATION_CONTEXT_TTL_MS = 10 * 60 * 1000;
+
 async function userCanUseMCPServers(user, req) {
   if (!user?.id || !user?.role) {
     return false;
@@ -104,24 +121,6 @@ function createMCPPermissionContext(req) {
   };
 }
 
-/**
- * Bridges the URL-mode elicitation SSE stream to the out-of-band completion
- * route. `createElicitationStart` runs inside the streaming tool call, so it
- * holds the stream context (`res`/`streamId`/`stepId`); the
- * `POST /api/mcp/elicitation/:flowId` route runs in a separate request that has
- * none of it. Keyed by `flowId`, this registry lets the route emit
- * `on_elicitation_resolved` back onto the originating stream. Entries are
- * deleted on resolution; any left abandoned are bounded to {@link MAX_CACHE_SIZE}
- * and TTL-swept once the map exceeds that cap (see {@link evictStale}).
- * `elicitationId` is retained alongside them for future
- * `notifications/elicitation/complete` correlation.
- * @type {Map<string, { res?: import('http').ServerResponse, streamId: string | null, stepId: string, elicitationId?: string, createdAt: number }>}
- */
-const elicitationFlowContext = new Map();
-const ELICITATION_CONTEXT_TTL_MS = 10 * 60 * 1000;
-
-const entryTimestamp = (value) => (typeof value === 'number' ? value : value?.createdAt);
-
 function evictStale(map, ttl) {
   if (map.size <= MAX_CACHE_SIZE) {
     return;
@@ -131,30 +130,13 @@ function evictStale(map, ttl) {
     // Entries are either a bare timestamp (number) or an object carrying a
     // `createdAt` field (e.g. elicitationFlowContext). Extract the timestamp
     // for either shape; drop entries whose age can't be determined.
-    const timestamp = entryTimestamp(value);
+    const timestamp = typeof value === 'number' ? value : value?.createdAt;
     if (timestamp == null || now - timestamp >= ttl) {
       map.delete(key);
     }
     if (map.size <= MAX_CACHE_SIZE) {
       return;
     }
-  }
-  /** Staleness alone does not enforce the cap: a burst of distinct users or
-   *  servers inside one TTL window leaves every entry fresh, and each one holds
-   *  a response object and a timer. Fall back to evicting oldest-first so the
-   *  map is bounded by MAX_CACHE_SIZE rather than by the TTL-window request
-   *  rate. Insertion order approximates age, so only entries without a usable
-   *  timestamp need the explicit sort. */
-  const byAge = [...map.entries()].sort((a, b) => {
-    const left = entryTimestamp(a[1]);
-    const right = entryTimestamp(b[1]);
-    return (left ?? 0) - (right ?? 0);
-  });
-  for (const [key] of byAge) {
-    if (map.size <= MAX_CACHE_SIZE) {
-      return;
-    }
-    map.delete(key);
   }
 }
 
@@ -758,37 +740,37 @@ function resolveToolCallUserId({ effectiveUser, capturedUser, invocationUserId, 
 
 /**
  * Emits the `on_elicitation` SSE event so the chat UI can render an
- * authorization card. Covers the URL-mode wire mechanisms: a `mode: 'url'`
+ * authorization/form card. Covers both wire mechanisms: a `mode: 'form'|'url'`
  * `elicitation/create` request, and the -32042 URL-exception path (always
- * `mode: 'url'`).
+ * `mode: 'url'`, no `requestedSchema`).
  * @param {object} params
  * @param {ServerResponse} params.res - The Express response object for sending events.
  * @param {string} params.stepId - The ID of the step.
  * @param {string | null} [params.streamId] - The stream ID for resumable mode.
- * @returns {(params: { flowId: string; mode: 'url'; message: string; serverName?: string; toolName?: string; url?: string; elicitationId?: string }) => Promise<void>}
+ * @returns {(params: { flowId: string; mode: 'form' | 'url'; message: string; serverName?: string; toolName?: string; requestedSchema?: object; url?: string; elicitationId?: string }) => Promise<void>}
  */
-function createElicitationStart({ res, stepId, streamId = null, jobCreatedAt }) {
-  return async function ({ flowId, mode, message, serverName, toolName, url, elicitationId }) {
-    // Capture stream context so the out-of-band completion route can emit
-    // `on_elicitation_resolved` onto this stream. `elicitationId` is retained
-    // for future `notifications/elicitation/complete` correlation; it is not
-    // part of the client-facing `on_elicitation` payload below.
-    // Schedule TTL-based cleanup so an abandoned flow (tab closed, timed out, or
-    // a completion that 404'd/never arrived) can't retain its `res`/context
-    // entry indefinitely — `evictStale` only sweeps on insertion once the map
-    // grows past MAX_CACHE_SIZE, which may never happen under low/medium traffic.
-    // Cleared in `resolveElicitationFlow` on normal resolution.
-    const cleanupTimer = setTimeout(() => {
-      elicitationFlowContext.delete(flowId);
-    }, ELICITATION_CONTEXT_TTL_MS);
-    cleanupTimer.unref?.();
+function createElicitationStart({ res, stepId, streamId = null }) {
+  return async function ({
+    flowId,
+    mode,
+    message,
+    serverName,
+    toolName,
+    requestedSchema,
+    url,
+    elicitationId,
+  }) {
+    // Capture stream context + schema so the out-of-band completion route can
+    // validate the response and emit `on_elicitation_resolved` onto this stream.
+    // `elicitationId` (url mode only) is retained for future
+    // `notifications/elicitation/complete` correlation; it is not part of the
+    // client-facing `on_elicitation` payload below.
     elicitationFlowContext.set(flowId, {
       res,
       streamId,
       stepId,
+      requestedSchema,
       elicitationId,
-      cleanupTimer,
-      jobCreatedAt,
       createdAt: Date.now(),
     });
     evictStale(elicitationFlowContext, ELICITATION_CONTEXT_TTL_MS);
@@ -796,13 +778,11 @@ function createElicitationStart({ res, stepId, streamId = null, jobCreatedAt }) 
     const data = {
       id: stepId,
       runId: Constants.USE_PRELIM_RESPONSE_MESSAGE_ID,
-      elicitation: { flowId, mode, message, serverName, toolName, url },
+      elicitation: { flowId, mode, message, serverName, toolName, requestedSchema, url },
     };
     const eventData = { event: 'on_elicitation', data };
     if (streamId) {
-      await GenerationJobManager.emitChunk(streamId, eventData, {
-        expectedCreatedAt: jobCreatedAt,
-      });
+      await GenerationJobManager.emitChunk(streamId, eventData);
     } else {
       sendEvent(res, eventData);
     }
@@ -810,11 +790,12 @@ function createElicitationStart({ res, stepId, streamId = null, jobCreatedAt }) 
 }
 
 /**
- * Returns the captured stream context for a pending elicitation flow, or
+ * Returns the captured stream/schema context for a pending elicitation flow, or
  * `undefined` once it has resolved or aged out. Used by the completion route to
- * verify a flow is still live before resolving it.
+ * recover the form `requestedSchema` for server-side validation when it is not
+ * (yet) threaded through the flow's persisted metadata.
  * @param {string} flowId
- * @returns {{ res?: import('http').ServerResponse, streamId: string | null, stepId: string, elicitationId?: string, createdAt: number } | undefined}
+ * @returns {{ res?: import('http').ServerResponse, streamId: string | null, stepId: string, requestedSchema?: object, elicitationId?: string, createdAt: number } | undefined}
  */
 function getElicitationFlowContext(flowId) {
   return elicitationFlowContext.get(flowId);
@@ -872,11 +853,7 @@ async function resolveElicitationFlow({
     if (!job) {
       return false;
     }
-    /** Stream IDs are conversation-scoped, so a completion arriving after the
-     *  conversation started a new generation would otherwise publish this stale
-     *  flow's resolution into the successor. Fence on the hydrated job's
-     *  creation time. */
-    context = { streamId, stepId, jobCreatedAt: job.createdAt };
+    context = { streamId, stepId };
   }
 
   const eventData = {
@@ -892,9 +869,7 @@ async function resolveElicitationFlow({
 
   try {
     if (context.streamId) {
-      await GenerationJobManager.emitChunk(context.streamId, eventData, {
-        expectedCreatedAt: context.jobCreatedAt,
-      });
+      await GenerationJobManager.emitChunk(context.streamId, eventData);
     } else if (context.res) {
       sendEvent(context.res, eventData);
     } else {
@@ -1447,7 +1422,6 @@ function createToolInstance({
         streamId,
         jobCreatedAt,
       });
-
       // Elicitation is enabled by default; a server config sets `elicitation: false`
       // to opt out. When disabled, we pass no `elicitationStart`, so MCPManager's
       // `if (elicitationStart && userId)` guards skip all elicitation handling.
@@ -1458,22 +1432,8 @@ function createToolInstance({
               res,
               stepId,
               streamId,
-              jobCreatedAt,
             });
-      /** Settles an already-rendered card when the wait ends without the user
-       *  submitting an action (Stop, or the flow TTL expiring). Only the
-       *  completion route emits `on_elicitation_resolved`, so without this the
-       *  card stays interactive and later submissions get a 404. */
-      const elicitationEnd = elicitationStart
-        ? async ({ flowId, action }) => {
-            await resolveElicitationFlow({
-              flowId,
-              action,
-              fallbackStreamId: streamId ?? null,
-              fallbackStepId: stepId,
-            });
-          }
-        : undefined;
+
       const customUserVars =
         config?.configurable?.userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
 
@@ -1514,7 +1474,6 @@ function createToolInstance({
         oauthStart,
         oauthEnd,
         elicitationStart,
-        elicitationEnd,
         elicitationStreamId: streamId,
         elicitationStepId: stepId,
         graphTokenResolver: getGraphApiToken,
@@ -1589,6 +1548,7 @@ function createToolInstance({
   });
   toolInstance.mcp = true;
   toolInstance.mcpRawServerName = serverName;
+  toolInstance.mcpServerDeferLoading = capturedServerConfig?.deferLoading === true;
   if (serverToolName !== toolName) {
     /** Upstream identity for stripped keys — lets the options aliasing in
      *  `buildToolClassification` heal legacy `tool_options` spellings. */
@@ -1608,7 +1568,6 @@ function createToolInstance({
   toolInstance.mcpRequiresEphemeralConnection = capturedServerConfig
     ? requiresEphemeralUserConnection(capturedServerConfig)
     : true;
-  toolInstance.mcpServerDeferLoading = capturedServerConfig?.deferLoading === true;
   // On Google/Vertex, propagate the union-flattened schema so definitions extracted
   // from this instance don't reach the Gemini converter with unsupported unions.
   toolInstance.mcpJsonSchema = isGoogle ? schema : parameters;
@@ -1878,9 +1837,6 @@ async function getServerConnectionStatus(
 }
 
 module.exports = {
-  createElicitationStart,
-  getElicitationFlowContext,
-  resolveElicitationFlow,
   createMCPTool,
   createMCPTools,
   toProviderToolDefinition,
@@ -1898,6 +1854,9 @@ module.exports = {
   resolveAllMcpConfigs,
   getAccessibleMCPServers,
   createOAuthStart,
+  createElicitationStart,
+  getElicitationFlowContext,
+  resolveElicitationFlow,
   checkOAuthFlowStatus,
   getServerConnectionStatus,
   createUnavailableToolStub,

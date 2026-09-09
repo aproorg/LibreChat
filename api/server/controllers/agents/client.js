@@ -4127,7 +4127,6 @@ class AgentClient extends BaseClient {
        */
       payload = stripUiOnlyContentParts(payload);
       this.memoryPayload = stripUiOnlyContentParts(this.memoryPayload);
-
       let {
         messages: initialMessages,
         indexTokenCountMap,

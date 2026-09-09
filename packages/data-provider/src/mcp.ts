@@ -195,6 +195,14 @@ const BaseOptionsSchema = z.object({
    */
   serverInstructions: z.union([z.boolean(), z.string()]).optional(),
   /**
+   * Controls whether this server's MCP elicitation requests surface an
+   * interactive card in chat (URL-authorization or form prompts).
+   * - undefined/true (default): elicitation requests are handled and rendered
+   * - false: elicitation handling is not wired for this server, so requests are
+   *   left to the transport's default (unsupported) behavior
+   */
+  elicitation: z.boolean().optional(),
+  /**
    * When true, every tool from this MCP server defaults to deferred loading:
    * the model receives the `tool_search` tool plus a name-only listing instead
    * of each tool's full schema. Sets the default for each tool's `defer_loading`;
@@ -203,13 +211,6 @@ const BaseOptionsSchema = z.object({
    */
   deferLoading: z.boolean().optional(),
   /**
-   * Controls whether this server's MCP elicitation requests surface an
-   * interactive card in chat (URL-authorization prompts).
-   * - undefined/true (default): elicitation requests are handled and rendered
-   * - false: elicitation handling is not wired for this server, so requests are
-   *   left to the transport's default (unsupported) behavior
-   */
-  elicitation: z.boolean().optional(),
    * Whether this server requires OAuth authentication
    * If not specified, will be auto-detected during construction
    */
