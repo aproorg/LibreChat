@@ -2074,5 +2074,19 @@
   "com_ui_zoom_in": "Stækka",
   "com_ui_zoom_level": "Aðdráttarstig",
   "com_ui_zoom_out": "Minnka",
-  "com_user_message": "Þú"
+  "com_user_message": "Þú",
+  "com_nav_about_diagnostics_copied": "Afritað",
+  "com_ui_good_afternoon": "Góðan daginn",
+  "com_ui_good_evening": "Gott kvöld",
+  "com_ui_good_morning": "Góðan daginn",
+  "com_ui_late_night": "Góða kvöldið",
+  "com_ui_max_file_size": "PNG, JPG eða JPEG (hámark {{0}})",
+  "com_ui_mermaid_source": "Upprunakóði:",
+  "com_ui_no_individual_access": "Engir notendur eða hópar hafa aðgang að þessum fulltrúa",
+  "com_ui_pagination": "Síðuskipting",
+  "com_ui_refresh_link": "Endurnýja tengil",
+  "com_ui_save_changes": "Vista breytingar",
+  "com_ui_select_or_create_prompt": "Veldu eða skrifaðu fyrirmæli",
+  "com_ui_share_files_refresh_note": "Endurnýjaðu tengilinn til að virkja þessa breytingu, skrár eru teknar sem skyndimynd þegar tengillinn er endurnýjaður.",
+  "com_ui_weekend_morning": "Góða helgi"
 }
