@@ -10,7 +10,7 @@ import type {
 import type { useLocalize } from '~/hooks';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import { Endpoint, SelectedValues } from '~/common';
-import { getModelLabel } from '~/utils';
+import { getModelLabel, getSpecAgentAvatarURL } from '~/utils';
 
 type NamedEndpoint = Pick<Endpoint, 'value' | 'agentNames' | 'assistantNames' | 'modelLabels'>;
 
@@ -176,11 +176,13 @@ export function getSelectedIcon({
   selectedValues,
   modelSpecs,
   endpointsConfig,
+  agentsMap,
 }: {
   mappedEndpoints: Endpoint[];
   selectedValues: SelectedValues;
   modelSpecs: TModelSpec[];
   endpointsConfig: TEndpointsConfig;
+  agentsMap?: TAgentsMap;
 }): React.ReactNode | null {
   const { endpoint, model, modelSpec } = selectedValues;
 
@@ -196,6 +198,7 @@ export function getSelectedIcon({
     return React.createElement(SpecIcon, {
       currentSpec: spec,
       endpointsConfig,
+      agentAvatarURL: getSpecAgentAvatarURL(spec, agentsMap),
     });
   }
 

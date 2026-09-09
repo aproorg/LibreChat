@@ -1,6 +1,7 @@
 import { EModelEndpoint, extractEnvVariable, normalizeEndpointName } from 'librechat-data-provider';
 import type { TCustomEndpoints, TEndpoint } from 'librechat-data-provider';
 import type { TCustomEndpointsConfig } from '~/types/endpoints';
+import { resolveEndpointProviderId } from './providers';
 import { isUserProvided } from '~/utils';
 
 /**
@@ -65,6 +66,12 @@ export function loadCustomEndpointsConfig(
         modelDisplayLabel,
         modelLabels,
         iconURL,
+        providerId: resolveEndpointProviderId({
+          name,
+          baseURL: resolvedBaseURL,
+          iconURL,
+          provider,
+        }),
       };
     }
   }

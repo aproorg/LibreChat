@@ -1,6 +1,6 @@
 const { handleError, filterManagedEndpoints } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
-const { ViolationTypes } = require('librechat-data-provider');
+const { resolveModelCatalogKey, ViolationTypes } = require('librechat-data-provider');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { getEndpointsConfig } = require('~/server/services/Config');
 const { logViolation } = require('~/cache');
@@ -44,7 +44,7 @@ const validateModel = async (req, res, next) => {
     return handleError(res, { text: 'Models not loaded' });
   }
 
-  const availableModels = modelsConfig[endpoint];
+  const availableModels = modelsConfig[resolveModelCatalogKey(endpoint, modelsConfig)];
   if (!availableModels) {
     return handleError(res, { text: 'Endpoint models not loaded' });
   }
