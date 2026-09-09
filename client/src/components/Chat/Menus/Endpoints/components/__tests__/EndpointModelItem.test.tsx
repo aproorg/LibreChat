@@ -95,7 +95,14 @@ describe('EndpointModelItem', () => {
       modelLabels: { 'claude-opus-4-8': 'Opus 4.8' },
       icon: null,
     };
-    renderItem({ modelId: 'claude-opus-4-8', endpoint: labelled });
+    render(
+      <EndpointModelItem
+        modelId="claude-opus-4-8"
+        endpoint={labelled}
+        isFavorite={false}
+        onToggleFavorite={jest.fn()}
+      />,
+    );
 
     expect(screen.getByRole('menuitem')).toHaveTextContent('Opus 4.8');
     expect(screen.getByRole('menuitem')).not.toHaveTextContent('claude-opus-4-8');
