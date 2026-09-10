@@ -34,11 +34,13 @@ jest.mock('@librechat/agents', () => ({
 
 import { Providers } from '@librechat/agents';
 import {
+  Tools,
   Constants,
   ErrorTypes,
+  Permissions,
   EModelEndpoint,
   EToolResources,
-  Tools,
+  PermissionTypes,
 } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { Agent } from 'librechat-data-provider';
@@ -1204,6 +1206,302 @@ describe('initializeAgent — provider web_search precedence', () => {
     expect(result.tools).toEqual([{ urlContext: {} }]);
     expect(countUrlContextTools(result.tools)).toBe(1);
     expect(countWebSearchDefinitions(result.toolDefinitions)).toBe(1);
+  });
+});
+
+describe('initializeAgent — model_parameters.web_search role gate', () => {
+  const buildRole = (overrides: Record<string, unknown> = {}) => ({
+    name: 'USER',
+    permissions: {
+      [PermissionTypes.WEB_SEARCH]: { [Permissions.USE]: true },
+      ...overrides,
+    },
+  });
+
+  const buildRoleGatedReq = () =>
+    ({ user: { id: 'user-1', role: 'USER' }, config: {} }) as unknown as ServerRequest;
+
+  /** `getOptions` is mocked per-call inside `createMocks`, so the only way to see
+   *  what `initializeAgent` actually handed the provider is the last recorded
+   *  `getProviderConfig` result — `result.model_parameters` instead reflects the
+   *  mocked `llmConfig`, which never carries `web_search`. */
+  function lastModelParametersSentToProvider(): Record<string, unknown> {
+    const results = mockGetProviderConfig.mock.results;
+    const { getOptions } = results[results.length - 1].value as {
+      getOptions: jest.Mock;
+    };
+    const [{ model_parameters }] = getOptions.mock.calls[0];
+    return model_parameters;
+  }
+
+  it('strips model_parameters.web_search when the role denies WEB_SEARCH', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = jest
+      .fn()
+      .mockResolvedValue(buildRole({ [PermissionTypes.WEB_SEARCH]: { [Permissions.USE]: false } }));
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: false }),
+    );
+  });
+
+  it('keeps model_parameters.web_search when the role grants WEB_SEARCH', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = jest.fn().mockResolvedValue(buildRole());
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: true }),
+    );
+  });
+
+  /** An endpoint's `customParams.paramDefinitions` can default `web_search` to
+   *  `true`, and the provider builders apply that default exactly when the field
+   *  is `undefined`. Leaving an absent parameter alone for a denied role is
+   *  therefore what lets the endpoint switch search back on. */
+  it('pins web_search false for a denied user when the agent sets no value', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model },
+    });
+    db.getRoleByName = jest
+      .fn()
+      .mockResolvedValue(buildRole({ [PermissionTypes.WEB_SEARCH]: { [Permissions.USE]: false } }));
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: false }),
+    );
+  });
+
+  it('leaves web_search unset for a permitted user when the agent sets no value', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model },
+    });
+    db.getRoleByName = jest.fn().mockResolvedValue(buildRole());
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).not.toHaveProperty('web_search');
+  });
+
+  it('skips the role read when the agent explicitly disabled web search', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: false },
+    });
+    db.getRoleByName = jest.fn().mockResolvedValue(buildRole());
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(db.getRoleByName).not.toHaveBeenCalled();
+  });
+
+  /** `/v1/chat/completions` and `/v1/responses` pass `runtime` and no `req`, so a
+   *  gate that read the user out of `req` would deny every user on those routes. */
+  it('keeps model_parameters.web_search for a permitted user when the caller passes runtime and no req', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = jest.fn().mockResolvedValue(buildRole());
+
+    await initializeAgent(
+      {
+        runtime: {
+          user: { id: 'user-1', role: 'USER' } as never,
+          appConfig: {} as never,
+          requestBody: {},
+          turnStartedAt: 1000,
+        },
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(db.getRoleByName).toHaveBeenCalledWith('USER', undefined);
+    /** One read, not one per grant: without a `req` there is no per-request cache
+     *  to dedupe the three permission checks. */
+    expect(db.getRoleByName).toHaveBeenCalledTimes(1);
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: true }),
+    );
+  });
+
+  it('strips model_parameters.web_search for a denied user when the caller passes runtime and no req', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = jest
+      .fn()
+      .mockResolvedValue(buildRole({ [PermissionTypes.WEB_SEARCH]: { [Permissions.USE]: false } }));
+
+    await initializeAgent(
+      {
+        runtime: {
+          user: { id: 'user-1', role: 'USER' } as never,
+          appConfig: {} as never,
+          requestBody: {},
+          turnStartedAt: 1000,
+        },
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: false }),
+    );
+  });
+
+  /** The embedder surface in `agents/openai/service.ts` reaches `initializeAgent`
+   *  through a closure that hides `db`, so `webSearchAvailable` is the only gate
+   *  available to it. */
+  it('strips model_parameters.web_search when webSearchAvailable is false without a db grant', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = undefined;
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+        webSearchAvailable: false,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: false }),
+    );
+  });
+
+  it('keeps model_parameters.web_search when webSearchAvailable is true', async () => {
+    const { agent, res, loadTools, db } = createMocks();
+    mockExtractLibreChatParams.mockReturnValueOnce({
+      resendFiles: false,
+      maxContextTokens: undefined,
+      modelOptions: { model: agent.model, web_search: true },
+    });
+    db.getRoleByName = undefined;
+
+    await initializeAgent(
+      {
+        req: buildRoleGatedReq(),
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+        webSearchAvailable: true,
+      },
+      db,
+    );
+
+    expect(lastModelParametersSentToProvider()).toEqual(
+      expect.objectContaining({ web_search: true }),
+    );
   });
 });
 
