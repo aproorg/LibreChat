@@ -28,11 +28,14 @@ const {
   buildMCPAuthRunStepDeltaEvent,
   buildMCPAuthRunStepCompletedEvent,
   isFileAuthoringToolDefinition,
+  checkAccessWithRequestCache,
 } = require('@librechat/api');
 const {
   Time,
   Tools,
   Constants,
+  Permissions,
+  PermissionTypes,
   CacheKeys,
   ErrorTypes,
   ContentTypes,
@@ -72,7 +75,35 @@ const { createMCPPermissionContext, resolveConfigServers } = require('~/server/s
 const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
 const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
-const { findPluginAuthsByKeys } = require('~/models');
+const { findPluginAuthsByKeys, getRoleByName } = require('~/models');
+
+/**
+ * Whether the requesting user's role grants `WEB_SEARCH.USE`.
+ *
+ * `web_search` is reachable both as an `agent.tools` entry and, on some
+ * providers, as a model parameter, so the capability switch alone does not
+ * authorize it — the role has to grant it too. Resolved once per filter pass
+ * because the tool filters are synchronous.
+ *
+ * Fails closed: a missing user or a lookup that throws denies the tool.
+ */
+const canUseWebSearch = async (req) => {
+  try {
+    return await checkAccessWithRequestCache({
+      req,
+      user: req?.user,
+      permissionType: PermissionTypes.WEB_SEARCH,
+      permissions: [Permissions.USE],
+      getRoleByName,
+    });
+  } catch (error) {
+    logger.error(
+      `[loadAgentTools][User: ${req?.user?.id}] Failed ${PermissionTypes.WEB_SEARCH} permission check`,
+      error,
+    );
+    return false;
+  }
+};
 const { getFlowStateManager, getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 
@@ -560,6 +591,10 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
   const hasMCPTools = agent.tools?.some((tool) => tool?.includes(Constants.mcp_delimiter));
   const mcpPermissionContext = createMCPPermissionContext(req);
   const canUseMCP = hasMCPTools ? await mcpPermissionContext.canUseServers(req.user) : true;
+  /** Resolved before the synchronous filter, and only when the agent asks for the
+   *  tool, so an agent without web search pays no role read. */
+  const webSearchAllowed =
+    agent.tools?.includes(Tools.web_search) === true ? await canUseWebSearch(req) : false;
 
   const filteredTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
@@ -569,7 +604,7 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       return checkCapability(AgentCapabilities.execute_code);
     }
     if (tool === Tools.web_search) {
-      return checkCapability(AgentCapabilities.web_search);
+      return checkCapability(AgentCapabilities.web_search) && webSearchAllowed;
     }
     if (isActionTool(tool)) {
       return actionsEnabled;
@@ -1132,6 +1167,9 @@ async function loadAgentTools({
   const mcpPermissionContext = createMCPPermissionContext(req);
   const canUseMCP = hasMCPTools ? await mcpPermissionContext.canUseServers(req.user) : true;
 
+  const webSearchAllowed =
+    agent.tools?.includes(Tools.web_search) === true ? await canUseWebSearch(req) : false;
+
   let includesWebSearch = false;
   const _agentTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
@@ -1139,7 +1177,7 @@ async function loadAgentTools({
     } else if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
     } else if (tool === Tools.web_search) {
-      includesWebSearch = checkCapability(AgentCapabilities.web_search);
+      includesWebSearch = checkCapability(AgentCapabilities.web_search) && webSearchAllowed;
       return includesWebSearch;
     } else if (isActionTool(tool)) {
       return actionsEnabled;

@@ -2,6 +2,8 @@ const { Constants: AgentConstants } = require('@librechat/agents');
 const {
   Tools,
   Constants,
+  Permissions,
+  PermissionTypes,
   EModelEndpoint,
   isActionTool,
   actionDelimiter,
@@ -75,8 +77,10 @@ jest.mock('../ActionService', () => ({
 jest.mock('~/server/services/Threads', () => ({
   recordUsage: jest.fn(),
 }));
+const mockGetRoleByName = jest.fn();
 jest.mock('~/models', () => ({
   findPluginAuthsByKeys: jest.fn(),
+  getRoleByName: (...args) => mockGetRoleByName(...args),
 }));
 jest.mock('~/config', () => ({
   getFlowStateManager: jest.fn(() => mockFlowManager),
@@ -106,7 +110,7 @@ const { PENDING_STALE_MS } = require('@librechat/api');
 
 function createMockReq(capabilities) {
   return {
-    user: { id: 'user_123' },
+    user: { id: 'user_123', role: 'USER' },
     config: {
       endpoints: {
         [EModelEndpoint.agents]: {
@@ -1654,5 +1658,90 @@ describe('ToolService - Action Capability Gating', () => {
       expect(callsByName.get(rawNameA).requestBuilder.path).toBe('/echo');
       expect(callsByName.get(rawNameB).requestBuilder.path).toBe('/items');
     });
+  });
+});
+
+describe('loadAgentTools — web search role permission gating', () => {
+  const capabilities = [
+    AgentCapabilities.tools,
+    AgentCapabilities.execute_code,
+    AgentCapabilities.web_search,
+  ];
+
+  const buildRole = (webSearchUse) => ({
+    name: 'USER',
+    permissions: { [PermissionTypes.WEB_SEARCH]: { [Permissions.USE]: webSearchUse } },
+  });
+
+  beforeEach(() => {
+    mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+    mockGetRoleByName.mockResolvedValue(buildRole(true));
+  });
+
+  it('omits web_search from definitions when WEB_SEARCH.USE is denied', async () => {
+    mockGetRoleByName.mockResolvedValue(buildRole(false));
+
+    await loadAgentTools({
+      req: createMockReq(capabilities),
+      res: {},
+      agent: { id: 'agent_123', tools: [Tools.web_search, Tools.execute_code] },
+      definitionsOnly: true,
+    });
+
+    const [callArgs] = mockLoadToolDefinitions.mock.calls[0];
+    expect(callArgs.tools).not.toContain(Tools.web_search);
+    expect(callArgs.tools).toContain(Tools.execute_code);
+  });
+
+  it('omits web_search from the runtime loader when WEB_SEARCH.USE is denied', async () => {
+    mockGetRoleByName.mockResolvedValue(buildRole(false));
+
+    await loadAgentTools({
+      req: createMockReq(capabilities),
+      res: {},
+      agent: { id: 'agent_123', tools: [Tools.web_search, Tools.execute_code] },
+      definitionsOnly: false,
+    });
+
+    const [callArgs] = mockLoadToolsUtil.mock.calls[0];
+    expect(callArgs.tools).not.toContain(Tools.web_search);
+    expect(callArgs.tools).toContain(Tools.execute_code);
+  });
+
+  it('keeps web_search when the role grants it', async () => {
+    await loadAgentTools({
+      req: createMockReq(capabilities),
+      res: {},
+      agent: { id: 'agent_123', tools: [Tools.web_search] },
+      definitionsOnly: true,
+    });
+
+    const [callArgs] = mockLoadToolDefinitions.mock.calls[0];
+    expect(callArgs.tools).toContain(Tools.web_search);
+  });
+
+  it('fails closed when the role lookup throws', async () => {
+    mockGetRoleByName.mockRejectedValue(new Error('mongo down'));
+
+    await loadAgentTools({
+      req: createMockReq(capabilities),
+      res: {},
+      agent: { id: 'agent_123', tools: [Tools.web_search, Tools.execute_code] },
+      definitionsOnly: true,
+    });
+
+    const [callArgs] = mockLoadToolDefinitions.mock.calls[0];
+    expect(callArgs.tools).not.toContain(Tools.web_search);
+  });
+
+  it('does not read the role when the agent has no web_search tool', async () => {
+    await loadAgentTools({
+      req: createMockReq(capabilities),
+      res: {},
+      agent: { id: 'agent_123', tools: [Tools.execute_code] },
+      definitionsOnly: true,
+    });
+
+    expect(mockGetRoleByName).not.toHaveBeenCalled();
   });
 });
