@@ -3,10 +3,11 @@ import keyBy from 'lodash/keyBy';
 import { ControlCombobox } from '@librechat/client';
 import { ChevronLeft, RotateCcw } from 'lucide-react';
 import { useFormContext, useWatch, Controller } from 'react-hook-form';
-import { componentMapping } from '~/components/SidePanel/Parameters/components';
 import {
+  Permissions,
   alternateName,
   getSettingsKeys,
+  PermissionTypes,
   getEndpointField,
   LocalStorageKeys,
   SettingDefinition,
@@ -15,11 +16,12 @@ import {
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
 import type { AgentForm, AgentModelPanelProps, StringOption } from '~/common';
+import { componentMapping } from '~/components/SidePanel/Parameters/components';
 import { useGetEndpointsQuery } from '~/data-provider';
+import { useLocalize, useHasAccess } from '~/hooks';
 import { useLiveAnnouncer } from '~/Providers';
-import { useLocalize } from '~/hooks';
-import { Panel } from '~/common';
 import { cn, getModelLabel } from '~/utils';
+import { Panel } from '~/common';
 
 export default function ModelPanel({
   providers,
@@ -85,6 +87,13 @@ export default function ModelPanel({
     [provider, endpointsConfig],
   );
 
+  /** `web_search` is a model parameter as well as a tool, so the role has to gate
+   *  it here too — otherwise the builder offers a switch the server will refuse. */
+  const hasWebSearchAccess = useHasAccess({
+    permissionType: PermissionTypes.WEB_SEARCH,
+    permission: Permissions.USE,
+  });
+
   const parameters = useMemo((): SettingDefinition[] => {
     const customParams = endpointsConfig[provider]?.customParams ?? {};
     const [combinedKey, endpointKey] = getSettingsKeys(endpointType ?? provider, model ?? '');
@@ -98,10 +107,10 @@ export default function ModelPanel({
       overriddenEndpointKey,
       model ?? '',
     );
-    return modelAwareParams.map(
-      (param) => (overriddenParamsMap[param.key] as SettingDefinition) ?? param,
-    );
-  }, [endpointType, endpointsConfig, model, provider]);
+    return modelAwareParams
+      .filter((param) => param.key !== 'web_search' || hasWebSearchAccess)
+      .map((param) => (overriddenParamsMap[param.key] as SettingDefinition) ?? param);
+  }, [endpointType, endpointsConfig, model, provider, hasWebSearchAccess]);
 
   const setOption = (optionKey: keyof t.AgentModelParameters) => (value: t.AgentParameterValue) => {
     setValue(`model_parameters.${optionKey}`, value);

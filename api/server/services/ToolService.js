@@ -28,14 +28,12 @@ const {
   buildMCPAuthRunStepDeltaEvent,
   buildMCPAuthRunStepCompletedEvent,
   isFileAuthoringToolDefinition,
-  checkAccessWithRequestCache,
+  checkWebSearchGrant,
 } = require('@librechat/api');
 const {
   Time,
   Tools,
   Constants,
-  Permissions,
-  PermissionTypes,
   CacheKeys,
   ErrorTypes,
   ContentTypes,
@@ -77,33 +75,10 @@ const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { findPluginAuthsByKeys, getRoleByName } = require('~/models');
 
-/**
- * Whether the requesting user's role grants `WEB_SEARCH.USE`.
- *
- * `web_search` is reachable both as an `agent.tools` entry and, on some
- * providers, as a model parameter, so the capability switch alone does not
- * authorize it — the role has to grant it too. Resolved once per filter pass
- * because the tool filters are synchronous.
- *
- * Fails closed: a missing user or a lookup that throws denies the tool.
- */
-const canUseWebSearch = async (req) => {
-  try {
-    return await checkAccessWithRequestCache({
-      req,
-      user: req?.user,
-      permissionType: PermissionTypes.WEB_SEARCH,
-      permissions: [Permissions.USE],
-      getRoleByName,
-    });
-  } catch (error) {
-    logger.error(
-      `[loadAgentTools][User: ${req?.user?.id}] Failed ${PermissionTypes.WEB_SEARCH} permission check`,
-      error,
-    );
-    return false;
-  }
-};
+/** Role half of the web-search gate. The tool filters below are synchronous, so
+ *  the grant is resolved once per pass and consulted inline. */
+const canUseWebSearch = (req) =>
+  checkWebSearchGrant({ req, user: req?.user, getRoleByName, context: 'loadAgentTools' });
 const { getFlowStateManager, getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 

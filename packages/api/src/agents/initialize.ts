@@ -22,7 +22,7 @@ import type {
 } from 'librechat-data-provider';
 import type { GenericTool, LCToolRegistry, ToolMap, LCTool } from '@librechat/agents';
 import type { IMongoFile, FileOwnerScope } from '@librechat/data-schemas';
-import type { Response as ServerResponse } from 'express';
+import type { Request, Response as ServerResponse } from 'express';
 import type {
   ServerRequest,
   EndpointDbMethods,
@@ -31,6 +31,7 @@ import type {
 } from '~/types';
 import type { LCAvailableTools, RequestScopedMCPConnectionStore } from '../mcp/types';
 import type { ResolvedManualSkill, ResolvedAlwaysApplySkill } from './skills';
+import type { CheckAccessParams } from '~/middleware/access';
 import type { TFilterFilesByAgentAccess } from './resources';
 import {
   injectSkillCatalog,
@@ -50,6 +51,7 @@ import {
   registerFileAuthoringTools,
   isFileAuthoringToolDefinition,
 } from './tools';
+import { checkWebSearchGrant } from '~/tools/rolePermissions';
 import { filterFilesByEndpointConfig } from '~/files';
 import { generateArtifactsPrompt } from '~/prompts';
 import { getProviderConfig } from '~/endpoints';
@@ -542,6 +544,9 @@ export interface InitializeAgentDbMethods extends EndpointDbMethods {
     has_more?: boolean;
     after?: string | null;
   }>;
+  /** Resolves a role by name for the `WEB_SEARCH` grant. Optional: when absent
+   *  the provider-native web search gate is not applied. */
+  getRoleByName?: CheckAccessParams['getRoleByName'];
 }
 
 /**
@@ -604,6 +609,32 @@ export async function initializeAgent(
   const { resendFiles, maxContextTokens, modelOptions } = extractLibreChatParams(
     _modelOptions as Record<string, unknown>,
   );
+
+  /** `model_parameters.web_search` turns on the provider's own web search and
+   *  never passes through the agent tool loader, so the tool gate does not cover
+   *  it. The agent builder's model-parameters panel writes this field, so it is
+   *  reachable by any user who can edit an agent.
+   *
+   *  An absent value is resolved too, not just an explicit `true`: the provider
+   *  builders apply their endpoint `defaultParams.web_search` exactly when the
+   *  field is `undefined`, so leaving it unset for a denied role is the state
+   *  that lets the endpoint grant it. An explicit `false` is already off. */
+  if (modelOptions.web_search !== false && db?.getRoleByName != null) {
+    const allowed = await checkWebSearchGrant({
+      req: params.req as Request | undefined,
+      user: params.req?.user,
+      getRoleByName: db.getRoleByName,
+    });
+    if (!allowed) {
+      const wasRequested = modelOptions.web_search === true;
+      modelOptions.web_search = false;
+      if (wasRequested) {
+        logger.warn(
+          `[initializeAgent][User: ${params.req?.user?.id}][Agent: ${agent.id}] Forbidden: role denies WEB_SEARCH; disabled model_parameters.web_search`,
+        );
+      }
+    }
+  }
 
   const provider = agent.provider;
   agent.endpoint = provider;
