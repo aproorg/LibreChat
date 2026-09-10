@@ -113,6 +113,10 @@ export default function AgentConfig() {
     permissionType: PermissionTypes.SKILLS,
     permission: Permissions.USE,
   });
+  const hasWebSearchAccess = useHasAccess({
+    permissionType: PermissionTypes.WEB_SEARCH,
+    permission: Permissions.USE,
+  });
   const showSkills = hasSkillsAccess && skillsEnabled;
   const { data: skillsData } = useListSkillsQuery({ limit: 100 }, { enabled: showSkills });
   const skillsMap = useMemo(() => {
@@ -369,7 +373,7 @@ export default function AgentConfig() {
           fileSearchEnabled ||
           artifactsEnabled ||
           contextEnabled ||
-          webSearchEnabled) && (
+          (webSearchEnabled && hasWebSearchAccess)) && (
           <div className="mb-4 flex w-full flex-col items-start gap-3">
             <label className="text-token-text-primary block text-sm font-medium">
               {localize('com_assistants_capabilities')}
@@ -377,7 +381,7 @@ export default function AgentConfig() {
             {/* Code Execution */}
             {codeEnabled && <CodeForm agent_id={agent_id} files={code_files} />}
             {/* Web Search */}
-            {webSearchEnabled && <SearchForm />}
+            {webSearchEnabled && hasWebSearchAccess && <SearchForm />}
             {/* File Context */}
             {contextEnabled && <FileContext agent_id={agent_id} files={context_files} />}
             {/* Artifacts */}
