@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import yauzl from 'yauzl';
 import { megabyte, excelMimeTypes, FileSources } from 'librechat-data-provider';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { WorkSheet } from 'xlsx';
 import type { MistralOCRUploadResult } from '~/types';
 import { assertSafeZipSize } from './zipSafety';
 
@@ -109,7 +110,7 @@ async function wordDocToText(file: Express.Multer.File): Promise<string> {
 async function excelSheetToText(file: Express.Multer.File): Promise<string> {
   // xlsx CDN build (0.20.x) does not bind fs internally when dynamically imported;
   // readFile() fails with "Cannot access file". read() takes a pre-loaded Buffer instead.
-  const { read, utils } = await import('xlsx');
+  const { read, utils, SSF } = await import('xlsx');
   const data = await fs.promises.readFile(file.path);
   /* Reject zip-bomb XLSX/ODS before SheetJS's internal extractor runs.
    * `.xls` (BIFF/CFB) is not a ZIP — magic-byte check skips the
@@ -117,16 +118,44 @@ async function excelSheetToText(file: Express.Multer.File): Promise<string> {
   if (data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b) {
     await assertSafeZipSize(data, { name: file.originalname ?? 'spreadsheet' });
   }
-  const workbook = read(data, { type: 'buffer' });
+  const workbook = read(data, { type: 'buffer', cellNF: true });
+  const date1904 = workbook.Workbook?.WBProps?.date1904 === true;
 
   let text = '';
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
+    fillUnformattedDates(worksheet, SSF, date1904);
     const worksheetAsCsvString = utils.sheet_to_csv(worksheet);
     text += `${sheetName}:\n${worksheetAsCsvString}\n`;
   }
 
   return text;
+}
+
+/**
+ * SheetJS reads `.` in a number format as the start of fractional seconds, so date formats such
+ * as `dd.mm.yyyy` throw while formatting and the cell is left with only its raw serial number,
+ * which `sheet_to_csv` then prints. Quoting those dots (but not `.0` fractional seconds) makes
+ * them literal separators.
+ */
+function fillUnformattedDates(
+  worksheet: WorkSheet,
+  ssf: (typeof import('xlsx'))['SSF'],
+  date1904: boolean,
+): void {
+  for (const [address, cell] of Object.entries(worksheet)) {
+    if (address.startsWith('!') || cell.t !== 'n' || cell.w != null) {
+      continue;
+    }
+    if (typeof cell.z !== 'string' || !ssf.is_date(cell.z)) {
+      continue;
+    }
+    try {
+      cell.w = ssf.format(cell.z.replace(/\.(?!0)/g, '"."'), cell.v, { date1904 });
+    } catch {
+      /* Keep the raw value when the format still cannot be rendered */
+    }
+  }
 }
 
 /**
