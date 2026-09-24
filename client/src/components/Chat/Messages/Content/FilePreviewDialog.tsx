@@ -2,9 +2,15 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import copy from 'copy-to-clipboard';
 import { Download } from 'lucide-react';
 import { useRecoilValue } from 'recoil';
+import { FileSources } from 'librechat-data-provider';
 import { OGDialog, OGDialogContent, OGDialogTitle, OGDialogDescription } from '@librechat/client';
 import { getDownloadFilename, logger, sortPagesByRelevance, triggerDownload } from '~/utils';
-import { revokeDownloadURL, useFileDownload, useSharedFileDownload } from '~/data-provider';
+import {
+  revokeDownloadURL,
+  useCodeOutputDownload,
+  useFileDownload,
+  useSharedFileDownload,
+} from '~/data-provider';
 import { getFileExtension, getPreviewKind, shouldUseSharedFileDownload } from './preview';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext } from '~/Providers';
@@ -72,6 +78,7 @@ export default function FilePreviewDialog({
   onOpenChange,
   fileName,
   fileId,
+  filePath,
   relevance,
   pages,
   pageRelevance,
@@ -91,11 +98,18 @@ export default function FilePreviewDialog({
     purpose: 'preview',
   });
   const { refetch: previewShared } = useSharedFileDownload(shareId, fileId, 'preview');
+  // Code-interpreter outputs aren't stored under the owner's file ACL — they're
+  // fetched from the session-scoped code-output route, same as the download
+  // chip (`useAttachmentLink`/`useCodeOutputDownload`), not `/api/files/download`.
+  const isCodeOutput = fileSource === FileSources.execute_code;
+  const { refetch: fetchCodeOutput } = useCodeOutputDownload(isCodeOutput ? (filePath ?? '') : '');
   // A shared viewer must stay inside the share-scoped authorization boundary;
   // citation and retrieval previews do not carry a rewritten filepath signal.
   const useShared = shouldUseSharedFileDownload(shareId, fileId);
-  const downloadFile = useShared ? downloadShared : downloadOwned;
-  const previewFile = useShared ? previewShared : previewOwned;
+  const sharedDownloadFile = useShared ? downloadShared : downloadOwned;
+  const sharedPreviewFile = useShared ? previewShared : previewOwned;
+  const downloadFile = isCodeOutput ? fetchCodeOutput : sharedDownloadFile;
+  const previewFile = isCodeOutput ? fetchCodeOutput : sharedPreviewFile;
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileBlobUrl, setFileBlobUrl] = useState<string | null>(null);

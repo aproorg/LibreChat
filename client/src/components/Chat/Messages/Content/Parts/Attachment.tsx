@@ -18,6 +18,8 @@ import FileContainer from '~/components/Chat/Input/Files/FileContainer';
 import { fileToArtifact, TOOL_ARTIFACT_TYPES } from '~/utils/artifacts';
 import FilePreview from '~/components/Chat/Input/Files/FilePreview';
 import Image from '~/components/Chat/Messages/Content/Image';
+import FilePreviewDialog from '../FilePreviewDialog';
+import { getPreviewKind } from '../preview';
 import ToolMermaidArtifact from './ToolMermaidArtifact';
 import ToolArtifactCard from './ToolArtifactCard';
 import { useAttachmentLink } from './LogLink';
@@ -120,6 +122,12 @@ PreviewPlaceholderCard.displayName = 'PreviewPlaceholderCard';
 
 const FileAttachment = memo(({ attachment }: { attachment: Partial<TAttachment> }) => {
   const [isVisible, setIsVisible] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  // Mount the dialog only once it's actually opened: it fetches/queries
+  // (Recoil + react-query) as soon as it renders, and most chips in a
+  // message are never clicked. Once opened, it stays mounted so a later
+  // close still gets its exit transition instead of vanishing.
+  const [hasOpenedPreview, setHasOpenedPreview] = useState(false);
   const file = attachment as TFile & TAttachmentMetadata;
   const { handleDownload } = useAttachmentLink({
     href: attachment.filepath ?? '',
@@ -129,6 +137,17 @@ const FileAttachment = memo(({ attachment }: { attachment: Partial<TAttachment> 
     source: file.source,
   });
   const extension = attachment.filename?.split('.').pop();
+  // PDFs and text files already have an in-app previewer (FilePreviewDialog);
+  // route the click there instead of force-downloading. Everything else
+  // (zip, images-as-chips, office docs handled upstream, etc.) keeps the
+  // existing download-on-click behavior.
+  const previewKind = getPreviewKind(attachment.filename ?? '', file.type, file.source);
+  const handleClick: React.MouseEventHandler<HTMLButtonElement> = previewKind
+    ? () => {
+        setHasOpenedPreview(true);
+        setIsPreviewOpen(true);
+      }
+    : handleDownload;
   /* Bridge the deferred-preview lifecycle: poll the backend for the
    * resolved record while the file is still pending. The hook is a
    * no-op for terminal states (legacy records, ready, failed
@@ -187,12 +206,24 @@ const FileAttachment = memo(({ attachment }: { attachment: Partial<TAttachment> 
     >
       <FileContainer
         file={attachment}
-        onClick={handleDownload}
+        onClick={handleClick}
         overrideType={extension}
         displayName={displayFilename(attachment.filename)}
         containerClassName="max-w-fit"
         buttonClassName="bg-surface-secondary hover:cursor-pointer hover:bg-surface-hover active:bg-surface-secondary focus:bg-surface-hover hover:border-border-heavy active:border-border-heavy"
       />
+      {previewKind && hasOpenedPreview && (
+        <FilePreviewDialog
+          open={isPreviewOpen}
+          onOpenChange={setIsPreviewOpen}
+          fileName={displayFilename(attachment.filename)}
+          fileId={file.file_id}
+          filePath={attachment.filepath}
+          fileType={file.type}
+          fileSource={file.source}
+          fileSize={file.bytes}
+        />
+      )}
     </div>
   );
 });
