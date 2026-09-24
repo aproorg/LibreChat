@@ -19,10 +19,10 @@ import { fileToArtifact, TOOL_ARTIFACT_TYPES } from '~/utils/artifacts';
 import FilePreview from '~/components/Chat/Input/Files/FilePreview';
 import Image from '~/components/Chat/Messages/Content/Image';
 import FilePreviewDialog from '../FilePreviewDialog';
-import { getPreviewKind } from '../preview';
+import { getPreviewKind, isCodeOutputFallback } from '../preview';
 import ToolMermaidArtifact from './ToolMermaidArtifact';
 import ToolArtifactCard from './ToolArtifactCard';
-import { useAttachmentLink } from './LogLink';
+import { isLocallyStoredSource, useAttachmentLink } from './LogLink';
 import { cn, getFileType } from '~/utils';
 
 const COLLAPSED_MAX_HEIGHT = 320;
@@ -140,9 +140,19 @@ const FileAttachment = memo(({ attachment }: { attachment: Partial<TAttachment> 
   // PDFs and text files already have an in-app previewer (FilePreviewDialog);
   // route the click there instead of force-downloading. Everything else
   // (zip, images-as-chips, office docs handled upstream, etc.) keeps the
-  // existing download-on-click behavior.
+  // existing download-on-click behavior. Gated on fetchability too: a
+  // previewable type is only actually openable if FilePreviewDialog has a
+  // route to its bytes — the owner ACL route (file_id + locally-stored
+  // source) or, for code-interpreter outputs that fell back to a bare
+  // download URL, the session-scoped code-output route. Anything else
+  // (e.g. an absolute http(s) filepath) keeps downloading on click, same
+  // as `useAttachmentLink` already does for that case.
   const previewKind = getPreviewKind(attachment.filename ?? '', file.type, file.source);
-  const handleClick: React.MouseEventHandler<HTMLButtonElement> = previewKind
+  const isOwnerFetchable = Boolean(file.file_id && isLocallyStoredSource(file.source));
+  const isPreviewFetchable =
+    isOwnerFetchable || isCodeOutputFallback(attachment.filepath, file.file_id, file.source);
+  const canPreview = Boolean(previewKind) && isPreviewFetchable;
+  const handleClick: React.MouseEventHandler<HTMLButtonElement> = canPreview
     ? () => {
         setHasOpenedPreview(true);
         setIsPreviewOpen(true);
@@ -212,7 +222,7 @@ const FileAttachment = memo(({ attachment }: { attachment: Partial<TAttachment> 
         containerClassName="max-w-fit"
         buttonClassName="bg-surface-secondary hover:cursor-pointer hover:bg-surface-hover active:bg-surface-secondary focus:bg-surface-hover hover:border-border-heavy active:border-border-heavy"
       />
-      {previewKind && hasOpenedPreview && (
+      {canPreview && hasOpenedPreview && (
         <FilePreviewDialog
           open={isPreviewOpen}
           onOpenChange={setIsPreviewOpen}

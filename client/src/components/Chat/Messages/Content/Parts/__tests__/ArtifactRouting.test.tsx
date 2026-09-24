@@ -24,6 +24,10 @@ jest.mock('~/hooks', () => ({
 
 jest.mock('../LogLink', () => ({
   useAttachmentLink: () => ({ handleDownload: jest.fn() }),
+  // Mirrors the real predicate (LogLink.tsx) — `FileAttachment` uses it to
+  // decide whether a chip is preview-openable or download-only.
+  isLocallyStoredSource: (source?: string) =>
+    ['local', 'firebase', 's3', 'cloudfront', 'azure_blob', 'text'].includes(source ?? ''),
 }));
 
 jest.mock('~/components/Chat/Input/Files/FileContainer', () => ({
@@ -68,6 +72,9 @@ jest.mock('~/utils', () => ({
   getFileType: () => ({ paths: [], color: '', title: 'Artifact' }),
   logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
   isArtifactRoute: () => false,
+  // Real impl (downloadFile.ts) — `preview.ts`'s `isCodeOutputFallback`
+  // needs this to exclude absolute http(s) targets.
+  isHttpDownloadTarget: (target?: string | null) => /^https?:\/\//i.test(target ?? ''),
 }));
 
 const baseAttachment = (overrides: Partial<TAttachment> = {}): TAttachment =>

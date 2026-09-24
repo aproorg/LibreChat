@@ -161,9 +161,19 @@ export const useSharedFileDownload = (
   );
 };
 
-export const useCodeOutputDownload = (url = ''): QueryObserverResult<string> => {
+/**
+ * `purpose` only differentiates the cache key. A preview read and a
+ * user-triggered download of the same `url` must not share a query
+ * identity — the preview effect can be mid-fetch when a download click
+ * fires (or vice versa), and React Query dedups same-key refetches into
+ * one in-flight request/consumption.
+ */
+export const useCodeOutputDownload = (
+  url = '',
+  purpose: 'download' | 'preview' = 'download',
+): QueryObserverResult<string> => {
   return useQuery(
-    [QueryKeys.fileDownload, url],
+    [QueryKeys.fileDownload, url, purpose],
     async () => {
       if (!url) {
         console.warn('No user ID provided for file download');

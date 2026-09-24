@@ -19,6 +19,10 @@ jest.mock('~/hooks', () => ({
 const mockHandleDownload = jest.fn();
 jest.mock('../LogLink', () => ({
   useAttachmentLink: () => ({ handleDownload: mockHandleDownload }),
+  // Mirrors the real predicate (LogLink.tsx) — kept in sync by hand like the
+  // sibling mock in Artifacts/__tests__/DownloadArtifact.test.tsx.
+  isLocallyStoredSource: (source?: string) =>
+    ['local', 'firebase', 's3', 'cloudfront', 'azure_blob', 'text'].includes(source ?? ''),
 }));
 
 jest.mock('~/components/Chat/Input/Files/FileContainer', () => ({
@@ -54,15 +58,16 @@ jest.mock('~/utils', () => ({
   getFileType: () => ({ paths: [], color: '', title: 'Artifact' }),
   logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
   isArtifactRoute: () => false,
+  // Real impl (downloadFile.ts) — `preview.ts`'s `isCodeOutputFallback`
+  // needs this to exclude absolute http(s) targets.
+  isHttpDownloadTarget: (target?: string | null) => /^https?:\/\//i.test(target ?? ''),
 }));
 
-const codeAttachment = (overrides: Partial<TAttachment> = {}): TAttachment =>
+const baseAttachment = (overrides: Partial<TAttachment> = {}): TAttachment =>
   ({
-    file_id: 'file-1',
     filename: 'report.pdf',
-    filepath: '/api/files/code/download/session-1/file-1',
+    filepath: '/files/file-1',
     type: 'application/pdf',
-    source: FileSources.execute_code,
     ...overrides,
   }) as TAttachment;
 
@@ -71,8 +76,15 @@ describe('FileAttachment preview routing', () => {
     mockHandleDownload.mockReset();
   });
 
-  it('opens the preview dialog for a previewable execute_code attachment (PDF) instead of downloading', () => {
-    render(<Attachment attachment={codeAttachment()} />);
+  it('opens the preview dialog for a persisted (owner-fetchable) PDF attachment', () => {
+    // Real shape for a normally-persisted code-interpreter output
+    // (api/server/services/Files/Code/process.js): a real file_id + a
+    // storage source, fetchable through the owner ACL route.
+    const persisted = baseAttachment({
+      file_id: 'file-1',
+      source: FileSources.local,
+    } as Partial<TAttachment>);
+    render(<Attachment attachment={persisted} />);
 
     expect(screen.queryByTestId('file-preview-dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('file-container'));
@@ -81,15 +93,44 @@ describe('FileAttachment preview routing', () => {
     expect(mockHandleDownload).not.toHaveBeenCalled();
   });
 
-  it('falls back to download for a non-previewable execute_code attachment (zip)', () => {
+  it('opens the preview dialog for a download-fallback PDF (no file_id/source)', () => {
+    // Real shape for `createDownloadFallback` (process.js): no file_id, no
+    // source — only filename + a code-output filepath.
+    const fallback = baseAttachment({
+      filepath: '/api/files/code/download/session-1/output-1',
+    });
+    render(<Attachment attachment={fallback} />);
+
+    expect(screen.queryByTestId('file-preview-dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('file-container'));
+
+    expect(screen.getByTestId('file-preview-dialog')).toHaveTextContent('report.pdf');
+    expect(mockHandleDownload).not.toHaveBeenCalled();
+  });
+
+  it('falls back to download for a non-previewable download-fallback attachment (zip)', () => {
     const zipType: string = 'application/zip';
-    const zip = codeAttachment({
-      file_id: 'file-2',
+    const zip = baseAttachment({
       filename: 'archive.zip',
-      filepath: '/api/files/code/download/session-1/file-2',
+      filepath: '/api/files/code/download/session-1/output-2',
       type: zipType,
     } as Partial<TAttachment>);
     render(<Attachment attachment={zip} />);
+
+    fireEvent.click(screen.getByTestId('file-container'));
+
+    expect(mockHandleDownload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('file-preview-dialog')).not.toBeInTheDocument();
+  });
+
+  it('falls back to download for a previewable type behind an absolute http(s) filepath', () => {
+    // Neither owner-fetchable (no file_id) nor a code-output fallback (not a
+    // relative code-output path) — the blob-fetch dialog has no route to
+    // its bytes, so it must keep downloading like `useAttachmentLink` does.
+    const external = baseAttachment({
+      filepath: 'https://cdn.example.com/uploads/report.pdf',
+    });
+    render(<Attachment attachment={external} />);
 
     fireEvent.click(screen.getByTestId('file-container'));
 
