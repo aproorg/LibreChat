@@ -4,8 +4,18 @@ import { Download } from 'lucide-react';
 import { useRecoilValue } from 'recoil';
 import { OGDialog, OGDialogContent, OGDialogTitle, OGDialogDescription } from '@librechat/client';
 import { getDownloadFilename, logger, sortPagesByRelevance, triggerDownload } from '~/utils';
-import { revokeDownloadURL, useFileDownload, useSharedFileDownload } from '~/data-provider';
-import { getFileExtension, getPreviewKind, shouldUseSharedFileDownload } from './preview';
+import {
+  revokeDownloadURL,
+  useCodeOutputDownload,
+  useFileDownload,
+  useSharedFileDownload,
+} from '~/data-provider';
+import {
+  getFileExtension,
+  getPreviewKind,
+  isCodeOutputFallback,
+  shouldUseSharedFileDownload,
+} from './preview';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
@@ -72,6 +82,7 @@ export default function FilePreviewDialog({
   onOpenChange,
   fileName,
   fileId,
+  filePath,
   relevance,
   pages,
   pageRelevance,
@@ -91,11 +102,27 @@ export default function FilePreviewDialog({
     purpose: 'preview',
   });
   const { refetch: previewShared } = useSharedFileDownload(shareId, fileId, 'preview');
+  // Code-interpreter outputs that fell back to a bare download URL (no
+  // persisted file_id/source — see `createDownloadFallback` server-side)
+  // aren't reachable through the owner-ACL route at all; fetch them the
+  // same way the download chip does (`useAttachmentLink`/
+  // `useCodeOutputDownload`), not `/api/files/download`.
+  const isCodeOutput = isCodeOutputFallback(filePath, fileId, fileSource);
+  const { refetch: downloadCodeOutput } = useCodeOutputDownload(
+    isCodeOutput ? (filePath ?? '') : '',
+    'download',
+  );
+  const { refetch: previewCodeOutput } = useCodeOutputDownload(
+    isCodeOutput ? (filePath ?? '') : '',
+    'preview',
+  );
   // A shared viewer must stay inside the share-scoped authorization boundary;
   // citation and retrieval previews do not carry a rewritten filepath signal.
   const useShared = shouldUseSharedFileDownload(shareId, fileId);
-  const downloadFile = useShared ? downloadShared : downloadOwned;
-  const previewFile = useShared ? previewShared : previewOwned;
+  const sharedDownloadFile = useShared ? downloadShared : downloadOwned;
+  const sharedPreviewFile = useShared ? previewShared : previewOwned;
+  const downloadFile = isCodeOutput ? downloadCodeOutput : sharedDownloadFile;
+  const previewFile = isCodeOutput ? previewCodeOutput : sharedPreviewFile;
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileBlobUrl, setFileBlobUrl] = useState<string | null>(null);
@@ -110,7 +137,7 @@ export default function FilePreviewDialog({
   const cancelledRef = useRef(false);
 
   const loadPreview = useCallback(async () => {
-    if (!fileId || !previewKind || loadingRef.current) {
+    if ((!fileId && !isCodeOutput) || !previewKind || loadingRef.current) {
       return;
     }
     loadingRef.current = true;
@@ -159,10 +186,10 @@ export default function FilePreviewDialog({
         setLoading(false);
       }
     }
-  }, [fileId, previewKind, previewFile]);
+  }, [fileId, isCodeOutput, previewKind, previewFile]);
 
   const handleDownload = useCallback(async () => {
-    if (!fileId) {
+    if (!fileId && !isCodeOutput) {
       return;
     }
     try {
@@ -174,7 +201,7 @@ export default function FilePreviewDialog({
     } catch (err) {
       logger.error('[FilePreviewDialog] Download failed:', err);
     }
-  }, [downloadFile, downloadFilename, fileId]);
+  }, [downloadFile, downloadFilename, fileId, isCodeOutput]);
 
   useEffect(() => {
     if (open && previewKind && fileContent === null && !fileBlobUrl) {
@@ -239,7 +266,7 @@ export default function FilePreviewDialog({
             <OGDialogDescription className="min-w-0 truncate">
               {metaParts.join(' · ')}
             </OGDialogDescription>
-            {fileId && (
+            {(fileId || isCodeOutput) && (
               <button
                 type="button"
                 onClick={handleDownload}
