@@ -214,6 +214,26 @@ describe('Document Parser', () => {
     await expect(parseDocument({ file })).resolves.toBeDefined();
   });
 
+  test('parseDocument() renders dates with dotted number formats instead of serials', async () => {
+    const file = {
+      originalname: 'sample-dotted-dates.xlsx',
+      path: path.join(__dirname, 'sample-dotted-dates.xlsx'),
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    } as Express.Multer.File;
+
+    const document = await parseDocument({ file });
+
+    expect(document.text).toBe(
+      'Dates:\n' +
+        'Format,Value\n' +
+        'dd.mm.yyyy,31.08.2026\n' +
+        'dd.mm,01.09\n' +
+        'd.m.yyyy,7.8.2026\n' +
+        'dd/mm/yyyy,31/08/2026\n' +
+        '"#,##0.00","1,234.50"\n',
+    );
+  });
+
   test('parseDocument() parses empty xlsx with only sheet name', async () => {
     const file = {
       originalname: 'empty.xlsx',
