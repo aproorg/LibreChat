@@ -2,6 +2,7 @@ import { read, utils, SSF } from 'xlsx';
 import { readFile, stat } from 'node:fs/promises';
 import { workbookToText, SPREADSHEET_LIMITS, SpreadsheetLimitError } from './workbook';
 import { assertSafeZipSize, ZipBombError } from './zipSafety';
+import { fillUnformattedDates } from './spreadsheetDates';
 
 export type SpreadsheetReply = { ok: true; text: string } | { ok: false; limited: boolean };
 
@@ -44,6 +45,7 @@ async function run(filePath: string): Promise<void> {
       cellHTML: false,
       dense: false,
     });
+    fillUnformattedDates(workbook, SSF);
     reply = { ok: true, text: workbookToText(workbook, utils, SSF.format) };
   } catch (error) {
     reply = {
