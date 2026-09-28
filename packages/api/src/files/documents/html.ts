@@ -7,6 +7,7 @@ import {
 } from 'librechat-data-provider';
 import { tryLibreOfficePreview } from './libreoffice';
 import { METAFILE_KEY_JS, extractPptxMetafileSvgs } from './metafiles';
+import { fillUnformattedDates } from './spreadsheetDates';
 import { assertSafeZipSize } from './zipSafety';
 
 /**
@@ -802,7 +803,8 @@ export async function excelSheetToHtml(buffer: Buffer): Promise<string> {
     await assertSafeZipSize(buffer, { name: 'spreadsheet' });
   }
   const XLSX = await import('xlsx');
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
+  fillUnformattedDates(workbook, XLSX.SSF);
   const sheets = await renderWorkbookSheets(workbook, XLSX);
   /* The per-sheet HTML from `sheet_to_html` is generally well-formed but we
    * still sanitize it (defense in depth). The chrome (tab strip, banners) is
