@@ -289,6 +289,17 @@ describe('Office HTML producers', () => {
       expect(html).toContain('Sheet One');
       expect(html).toContain('Second Sheet');
     });
+
+    test('renders dates with dotted number formats instead of serials', async () => {
+      const html = await excelSheetToHtml(readFixture('sample-dotted-dates.xlsx'));
+      expect(html).toContain('31.08.2026');
+      expect(html).toContain('01.09');
+      expect(html).toContain('7.8.2026');
+      expect(html).toContain('31. August 2026 kl. 12:35');
+      expect(html).toContain('12:35:00.4');
+      expect(html).not.toContain('46265');
+      expect(html).not.toContain('46241');
+    });
   });
 
   describe('csvToHtml', () => {
