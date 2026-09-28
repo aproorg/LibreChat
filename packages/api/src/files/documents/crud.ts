@@ -3,6 +3,7 @@ import yauzl from 'yauzl';
 import { megabyte, excelMimeTypes, FileSources } from 'librechat-data-provider';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { MistralOCRUploadResult } from '~/types';
+import { fillUnformattedDates } from './spreadsheetDates';
 import { assertSafeZipSize } from './zipSafety';
 
 type FileParseFn = (file: Express.Multer.File) => Promise<string>;
@@ -109,7 +110,7 @@ async function wordDocToText(file: Express.Multer.File): Promise<string> {
 async function excelSheetToText(file: Express.Multer.File): Promise<string> {
   // xlsx CDN build (0.20.x) does not bind fs internally when dynamically imported;
   // readFile() fails with "Cannot access file". read() takes a pre-loaded Buffer instead.
-  const { read, utils } = await import('xlsx');
+  const { read, utils, SSF } = await import('xlsx');
   const data = await fs.promises.readFile(file.path);
   /* Reject zip-bomb XLSX/ODS before SheetJS's internal extractor runs.
    * `.xls` (BIFF/CFB) is not a ZIP — magic-byte check skips the
@@ -117,7 +118,8 @@ async function excelSheetToText(file: Express.Multer.File): Promise<string> {
   if (data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b) {
     await assertSafeZipSize(data, { name: file.originalname ?? 'spreadsheet' });
   }
-  const workbook = read(data, { type: 'buffer' });
+  const workbook = read(data, { type: 'buffer', cellNF: true });
+  fillUnformattedDates(workbook, SSF);
 
   let text = '';
   for (const sheetName of workbook.SheetNames) {
