@@ -230,7 +230,10 @@ describe('Document Parser', () => {
         'dd.mm,01.09\n' +
         'd.m.yyyy,7.8.2026\n' +
         'dd/mm/yyyy,31/08/2026\n' +
-        '"#,##0.00","1,234.50"\n',
+        '"#,##0.00","1,234.50"\n' +
+        '"d. mmmm yyyy ""kl."" hh:mm",31. August 2026 kl. 12:35\n' +
+        'dd\\.mm\\.yyyy,31.08.2026\n' +
+        'hh:mm:ss.0,12:35:00.4\n',
     );
   });
 

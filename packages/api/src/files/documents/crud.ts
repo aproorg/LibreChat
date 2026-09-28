@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import yauzl from 'yauzl';
 import { megabyte, excelMimeTypes, FileSources } from 'librechat-data-provider';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import type { WorkSheet } from 'xlsx';
 import type { MistralOCRUploadResult } from '~/types';
+import { fillUnformattedDates } from './spreadsheetDates';
 import { assertSafeZipSize } from './zipSafety';
 
 type FileParseFn = (file: Express.Multer.File) => Promise<string>;
@@ -119,43 +119,16 @@ async function excelSheetToText(file: Express.Multer.File): Promise<string> {
     await assertSafeZipSize(data, { name: file.originalname ?? 'spreadsheet' });
   }
   const workbook = read(data, { type: 'buffer', cellNF: true });
-  const date1904 = workbook.Workbook?.WBProps?.date1904 === true;
+  fillUnformattedDates(workbook, SSF);
 
   let text = '';
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
-    fillUnformattedDates(worksheet, SSF, date1904);
     const worksheetAsCsvString = utils.sheet_to_csv(worksheet);
     text += `${sheetName}:\n${worksheetAsCsvString}\n`;
   }
 
   return text;
-}
-
-/**
- * SheetJS reads `.` in a number format as the start of fractional seconds, so date formats such
- * as `dd.mm.yyyy` throw while formatting and the cell is left with only its raw serial number,
- * which `sheet_to_csv` then prints. Quoting those dots (but not `.0` fractional seconds) makes
- * them literal separators.
- */
-function fillUnformattedDates(
-  worksheet: WorkSheet,
-  ssf: (typeof import('xlsx'))['SSF'],
-  date1904: boolean,
-): void {
-  for (const [address, cell] of Object.entries(worksheet)) {
-    if (address.startsWith('!') || cell.t !== 'n' || cell.w != null) {
-      continue;
-    }
-    if (typeof cell.z !== 'string' || !ssf.is_date(cell.z)) {
-      continue;
-    }
-    try {
-      cell.w = ssf.format(cell.z.replace(/\.(?!0)/g, '"."'), cell.v, { date1904 });
-    } catch {
-      /* Keep the raw value when the format still cannot be rendered */
-    }
-  }
 }
 
 /**
