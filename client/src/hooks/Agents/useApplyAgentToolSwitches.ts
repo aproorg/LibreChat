@@ -17,6 +17,9 @@ export function useApplyAgentToolSwitches({
   const agentRef = useRef(agent);
   agentRef.current = agent;
   const agentId = agent?.id;
+  /** The saved agent's cache entry is replaced in place when its creator edits it,
+   *  so reseed on a change in the switch config itself, not just the agent id. */
+  const switchesKey = agent ? JSON.stringify(getAgentToolSwitches(agent)) : '';
 
   useEffect(() => {
     const current = agentRef.current;
@@ -43,5 +46,5 @@ export function useApplyAgentToolSwitches({
         ],
       }),
     }));
-  }, [agentId, convoId, setEphemeralAgent]);
+  }, [agentId, switchesKey, convoId, setEphemeralAgent]);
 }
