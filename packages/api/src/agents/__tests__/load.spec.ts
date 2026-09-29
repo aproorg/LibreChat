@@ -1101,6 +1101,74 @@ describe('loadAgent', () => {
     }
   });
 
+  describe('user tool switches', () => {
+    const createSwitchableAgent = async () => {
+      const agentId = `agent_${uuidv4()}`;
+      await createAgent({
+        id: agentId,
+        name: 'Switchable Agent',
+        provider: 'openai',
+        model: 'gpt-4',
+        author: new mongoose.Types.ObjectId(),
+        tools: ['web_search', 'execute_code', 'search_mcp_docs', 'read_mcp_files'],
+        tool_options: {
+          web_search: { user_toggle: 'on' },
+          execute_code: { user_toggle: 'off' },
+          sys__server__sys_mcp_docs: { user_toggle: 'on' },
+        },
+      });
+      return agentId;
+    };
+
+    const load = (agentId: string, userToolSwitches?: LoadAgentParams['userToolSwitches']) =>
+      loadAgent(
+        {
+          req: { user: { id: 'user123' } },
+          agent_id: agentId,
+          endpoint: 'agents',
+          userToolSwitches,
+        },
+        deps,
+      );
+
+    test('keeps creator defaults when the chat sends no switches', async () => {
+      const agentId = await createSwitchableAgent();
+      const result = await load(agentId);
+      expect(result!.tools).toEqual(['web_search', 'search_mcp_docs', 'read_mcp_files']);
+    });
+
+    test('drops a built-in and an MCP server the chat switched off', async () => {
+      const agentId = await createSwitchableAgent();
+      const result = await load(agentId, { web_search: false, mcp: [] });
+      expect(result!.tools).toEqual(['read_mcp_files']);
+    });
+
+    test('keeps a default-off built-in the chat switched on, without adding unattached tools', async () => {
+      const agentId = await createSwitchableAgent();
+      const result = await load(agentId, { execute_code: true, file_search: true, mcp: ['docs'] });
+      expect(result!.tools).toEqual([
+        'web_search',
+        'execute_code',
+        'search_mcp_docs',
+        'read_mcp_files',
+      ]);
+    });
+
+    test('leaves tools untouched for an agent without user toggles', async () => {
+      const agentId = `agent_${uuidv4()}`;
+      await createAgent({
+        id: agentId,
+        name: 'Plain Agent',
+        provider: 'openai',
+        model: 'gpt-4',
+        author: new mongoose.Types.ObjectId(),
+        tools: ['web_search', 'search_mcp_docs'],
+      });
+      const result = await load(agentId, { web_search: false, mcp: [] });
+      expect(result!.tools).toEqual(['web_search', 'search_mcp_docs']);
+    });
+  });
+
   describe('Edge Cases', () => {
     test('should handle loadAgent with malformed req object', async () => {
       const result = await loadAgent(
