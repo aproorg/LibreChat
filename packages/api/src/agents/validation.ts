@@ -10,7 +10,6 @@ import {
   ErrorTypes,
   MAX_SUBAGENT_GRAPH_NODES,
   MAX_GRAPH_SUBAGENT_MEMBERS,
-  MAX_SUBAGENTS,
 } from 'librechat-data-provider';
 import type {
   Agent,
@@ -152,13 +151,14 @@ export const graphEdgeSchema: z.ZodObject<
     .transform((v) => (v === '' ? undefined : v)),
 });
 
-/** Per-tool options schema (defer_loading, allowed_callers, run_in_background, describe_intent) */
+/** Per-tool options schema (defer_loading, allowed_callers, run_in_background, describe_intent, user_toggle) */
 export const toolOptionsSchema: z.ZodObject<
   {
     defer_loading: z.ZodOptional<z.ZodBoolean>;
     allowed_callers: z.ZodOptional<z.ZodArray<z.ZodEnum<['direct', 'code_execution']>, 'many'>>;
     run_in_background: z.ZodOptional<z.ZodBoolean>;
     describe_intent: z.ZodOptional<z.ZodBoolean>;
+    user_toggle: z.ZodOptional<z.ZodEnum<['on', 'off']>>;
   },
   'strip'
 > = z.object({
@@ -166,6 +166,7 @@ export const toolOptionsSchema: z.ZodObject<
   allowed_callers: z.array(z.enum(['direct', 'code_execution'])).optional(),
   run_in_background: z.boolean().optional(),
   describe_intent: z.boolean().optional(),
+  user_toggle: z.enum(['on', 'off']).optional(),
 });
 
 /** Agent tool options - map of tool_id to tool options */
@@ -178,6 +179,7 @@ export const agentToolOptionsSchema: z.ZodOptional<
         allowed_callers: z.ZodOptional<z.ZodArray<z.ZodEnum<['direct', 'code_execution']>, 'many'>>;
         run_in_background: z.ZodOptional<z.ZodBoolean>;
         describe_intent: z.ZodOptional<z.ZodBoolean>;
+        user_toggle: z.ZodOptional<z.ZodEnum<['on', 'off']>>;
       },
       'strip',
       z.ZodTypeAny,
@@ -186,12 +188,14 @@ export const agentToolOptionsSchema: z.ZodOptional<
         allowed_callers?: ('direct' | 'code_execution')[] | undefined;
         run_in_background?: boolean | undefined;
         describe_intent?: boolean | undefined;
+        user_toggle?: 'on' | 'off' | undefined;
       },
       {
         defer_loading?: boolean | undefined;
         allowed_callers?: ('direct' | 'code_execution')[] | undefined;
         run_in_background?: boolean | undefined;
         describe_intent?: boolean | undefined;
+        user_toggle?: 'on' | 'off' | undefined;
       }
     >
   >
@@ -528,6 +532,7 @@ export const agentBaseSchema: z.ZodObject<
             >;
             run_in_background: z.ZodOptional<z.ZodBoolean>;
             describe_intent: z.ZodOptional<z.ZodBoolean>;
+            user_toggle: z.ZodOptional<z.ZodEnum<['on', 'off']>>;
           },
           'strip',
           z.ZodTypeAny,
@@ -536,12 +541,14 @@ export const agentBaseSchema: z.ZodObject<
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           },
           {
             defer_loading?: boolean | undefined;
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           }
         >
       >
@@ -707,6 +714,7 @@ export const agentCreateSchema: z.ZodObject<
             >;
             run_in_background: z.ZodOptional<z.ZodBoolean>;
             describe_intent: z.ZodOptional<z.ZodBoolean>;
+            user_toggle: z.ZodOptional<z.ZodEnum<['on', 'off']>>;
           },
           'strip',
           z.ZodTypeAny,
@@ -715,12 +723,14 @@ export const agentCreateSchema: z.ZodObject<
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           },
           {
             defer_loading?: boolean | undefined;
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           }
         >
       >
@@ -844,6 +854,7 @@ export const agentUpdateSchema: z.ZodObject<
             >;
             run_in_background: z.ZodOptional<z.ZodBoolean>;
             describe_intent: z.ZodOptional<z.ZodBoolean>;
+            user_toggle: z.ZodOptional<z.ZodEnum<['on', 'off']>>;
           },
           'strip',
           z.ZodTypeAny,
@@ -852,12 +863,14 @@ export const agentUpdateSchema: z.ZodObject<
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           },
           {
             defer_loading?: boolean | undefined;
             allowed_callers?: ('direct' | 'code_execution')[] | undefined;
             run_in_background?: boolean | undefined;
             describe_intent?: boolean | undefined;
+            user_toggle?: 'on' | 'off' | undefined;
           }
         >
       >
