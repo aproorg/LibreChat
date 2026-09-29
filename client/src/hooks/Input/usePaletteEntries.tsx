@@ -241,7 +241,11 @@ export default function usePaletteEntries({
 
   /* A saved agent whose scope admits no skill renders no skill rows, so the
      catalog is not paged in for it. */
-  const skillsListable = enabled && canUseSkills && skillsEnabled;
+  const skillsListable =
+    enabled &&
+    canUseSkills &&
+    skillsEnabled &&
+    (context?.agentToolSwitches == null || context.agentToolSwitches.builtins.skills != null);
   const allSkills = useAllSkills(
     skillsListable && catalogEnabled && agentSkillIds?.length !== 0,
     catalogOpenRevision,
@@ -279,6 +283,8 @@ export default function usePaletteEntries({
       mcpServerManager,
       searchApiKeyForm,
     } = context;
+    const isSwitchableBuiltin = (tool: string) =>
+      context.agentToolSwitches == null || context.agentToolSwitches.builtins[tool] != null;
 
     const pushTool = (
       itemId: string,
@@ -305,7 +311,7 @@ export default function usePaletteEntries({
       });
     };
 
-    if (toolsEnabled && canUseWebSearch && webSearchEnabled) {
+    if (toolsEnabled && canUseWebSearch && webSearchEnabled && isSwitchableBuiltin('web_search')) {
       /* Same rule the old tools menu used for its gear: only credentials the
          user can actually provide are editable. Toggling opens the key dialog
          on its own while unauthenticated, so this pill is what keeps existing
@@ -336,7 +342,7 @@ export default function usePaletteEntries({
       );
     }
 
-    if (toolsEnabled && canRunCode && codeEnabled) {
+    if (toolsEnabled && canRunCode && codeEnabled && isSwitchableBuiltin('execute_code')) {
       pushTool(
         'execute_code',
         localize('com_ui_run_code'),
@@ -348,7 +354,12 @@ export default function usePaletteEntries({
       );
     }
 
-    if (toolsEnabled && canUseFileSearch && fileSearchEnabled) {
+    if (
+      toolsEnabled &&
+      canUseFileSearch &&
+      fileSearchEnabled &&
+      isSwitchableBuiltin('file_search')
+    ) {
       pushTool(
         'file_search',
         localize('com_assistants_file_search'),
@@ -372,7 +383,7 @@ export default function usePaletteEntries({
       );
     }
 
-    if (toolsEnabled && canUseMemory && memoryEnabled) {
+    if (toolsEnabled && canUseMemory && memoryEnabled && isSwitchableBuiltin('memory')) {
       pushTool(
         'memory',
         localize('com_ui_memory'),
@@ -384,7 +395,7 @@ export default function usePaletteEntries({
       );
     }
 
-    if (toolsEnabled && artifactsEnabled) {
+    if (toolsEnabled && artifactsEnabled && isSwitchableBuiltin('artifacts')) {
       const stored = artifacts.toggleState;
       const mode = stored == null || stored === false ? '' : String(stored);
       const artifactsOn = mode !== '';
