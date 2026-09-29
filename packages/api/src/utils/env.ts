@@ -106,6 +106,16 @@ export function encodeHeaderValue(value: string): string {
  * @param user - The user object to extract safe fields from
  * @returns A new object containing only allowed fields plus federatedTokens if present
  */
+/**
+ * Set on `req.user` for unattended requests (Scheduled Chats) whose deployment opted in with
+ * `SCHEDULES_OMIT_UNAVAILABLE_OPENID_HEADERS=true`. Such requests have no browser session, so the
+ * user's OpenID tokens are unavailable: `resolveHeaders` then omits a header whose OpenID
+ * credential placeholder cannot be resolved instead of failing the request. MCP resolution
+ * (`processMCPEnv`) is unaffected and still signals re-authentication.
+ */
+export const OMIT_UNAVAILABLE_OPENID_HEADERS = 'omitUnavailableOpenIDHeaders' as const;
+type UnattendedOpenIDUser = { [OMIT_UNAVAILABLE_OPENID_HEADERS]?: boolean };
+
 export function createSafeUser(
   user: IUser | null | undefined,
 ): Partial<SafeUser> & { federatedTokens?: IUser['federatedTokens'] } {
@@ -136,6 +146,10 @@ export function createSafeUser(
 
   if ('federatedTokens' in user) {
     safeUser.federatedTokens = user.federatedTokens;
+  }
+
+  if ((user as UnattendedOpenIDUser)[OMIT_UNAVAILABLE_OPENID_HEADERS] === true) {
+    (safeUser as UnattendedOpenIDUser)[OMIT_UNAVAILABLE_OPENID_HEADERS] = true;
   }
 
   return safeUser;
@@ -300,6 +314,7 @@ function processSingleValue({
   body = undefined,
   isHeader = false,
   dbSourced = false,
+  omitUnavailableOpenID = false,
 }: {
   originalValue: string;
   customUserVars?: Record<string, string>;
@@ -308,6 +323,8 @@ function processSingleValue({
   isHeader?: boolean;
   /** When true, only resolve customUserVars — skip env vars, user/OpenID/body placeholders */
   dbSourced?: boolean;
+  /** Leave OpenID credential placeholders unresolved (for the caller to omit) instead of throwing when the tokens are unavailable */
+  omitUnavailableOpenID?: boolean;
 }): string {
   // Type guard: ensure we're working with a string
   if (typeof originalValue !== 'string') {
@@ -345,6 +362,8 @@ function processSingleValue({
   const openidTokenInfo = extractOpenIDTokenInfo(user);
   if (openidTokenInfo && isOpenIDTokenValid(openidTokenInfo)) {
     value = processOpenIDPlaceholders(value, openidTokenInfo);
+  } else if (openidTokenInfo && omitUnavailableOpenID) {
+    /** Credential placeholders stay literal so `resolveHeaders` omits the whole header */
   } else if (openidTokenInfo) {
     const unresolvable = OPENID_ACCESS_CREDENTIAL_PLACEHOLDER_PATTERN.exec(value);
     if (unresolvable) {
@@ -616,6 +635,8 @@ export function resolveHeaders(options?: {
 }): Record<string, string> {
   const { headers, user, body, customUserVars, stripUnresolved = false } = options ?? {};
   const inputHeaders = headers ?? {};
+  const omitUnavailableOpenID =
+    (user as UnattendedOpenIDUser | undefined)?.[OMIT_UNAVAILABLE_OPENID_HEADERS] === true;
 
   const resolvedHeaders: Record<string, string> = { ...inputHeaders };
 
@@ -627,8 +648,9 @@ export function resolveHeaders(options?: {
         user: user as IUser,
         body,
         isHeader: true, // Important: Enable header encoding
+        omitUnavailableOpenID,
       });
-      if (!stripUnresolved) {
+      if (!stripUnresolved && !omitUnavailableOpenID) {
         resolvedHeaders[key] = processed;
         return;
       }
@@ -643,7 +665,7 @@ export function resolveHeaders(options?: {
         return;
       }
 
-      resolvedHeaders[key] = stripUnresolvedPlaceholders(processed);
+      resolvedHeaders[key] = stripUnresolved ? stripUnresolvedPlaceholders(processed) : processed;
     });
   }
 

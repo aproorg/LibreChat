@@ -8,7 +8,9 @@ import {
   resolveNestedObject,
   processMCPEnv,
   encodeHeaderValue,
+  OMIT_UNAVAILABLE_OPENID_HEADERS,
 } from './env';
+import { OpenIDReauthRequiredError } from './oidc';
 import { applyRequestHeaders } from '~/mcp/utils';
 
 function isStdioOptions(options: MCPOptions): options is Extract<MCPOptions, { type?: 'stdio' }> {
@@ -2643,5 +2645,61 @@ describe('processMCPEnv OpenID re-authentication signalling', () => {
     } else {
       throw new Error('Expected streamable-http options');
     }
+  });
+});
+
+describe('resolveHeaders with unavailable OpenID tokens for unattended requests', () => {
+  function tokenlessOpenIDUser(omit: boolean) {
+    return createSafeUser({
+      ...createTestUser({ id: 'user-123', provider: 'openid' }),
+      openidId: 'oidc-sub-456',
+      email: 'me@example.com',
+      ...(omit && { [OMIT_UNAVAILABLE_OPENID_HEADERS]: true }),
+    } as unknown as IUser);
+  }
+
+  const headers = {
+    authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}',
+    'x-openid-access-token': '{{LIBRECHAT_OPENID_ACCESS_TOKEN}}',
+    'x-user-email': '{{LIBRECHAT_USER_EMAIL}}',
+  };
+
+  it('throws without the unattended marker', () => {
+    expect(() =>
+      resolveHeaders({ headers, user: tokenlessOpenIDUser(false), stripUnresolved: true }),
+    ).toThrow(OpenIDReauthRequiredError);
+  });
+
+  it.each([true, false])(
+    'omits OpenID credential headers and keeps the rest (stripUnresolved=%s)',
+    (stripUnresolved) => {
+      const result = resolveHeaders({
+        headers,
+        user: tokenlessOpenIDUser(true),
+        stripUnresolved,
+      });
+
+      expect(result).toEqual({ 'x-user-email': 'me@example.com' });
+    },
+  );
+
+  it('still substitutes valid tokens when the marker is set', () => {
+    const user = createSafeUser({
+      ...createTestUser({ id: 'user-123', provider: 'openid' }),
+      openidId: 'oidc-sub-456',
+      [OMIT_UNAVAILABLE_OPENID_HEADERS]: true,
+      federatedTokens: {
+        access_token: 'live-access-token',
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      },
+    } as unknown as IUser);
+
+    const result = resolveHeaders({
+      headers: { 'x-openid-access-token': '{{LIBRECHAT_OPENID_ACCESS_TOKEN}}' },
+      user,
+      stripUnresolved: true,
+    });
+
+    expect(result).toEqual({ 'x-openid-access-token': 'live-access-token' });
   });
 });
