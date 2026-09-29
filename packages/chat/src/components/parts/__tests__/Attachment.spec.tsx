@@ -173,3 +173,68 @@ describe('AttachmentGroup', () => {
     expect(screen.getByRole('button', { name: 'results.zip' })).toBeInTheDocument();
   });
 });
+
+describe('AttachmentGroup file identity dedup', () => {
+  it('collapses two attachments sharing a file identity into a single, non-folded row', () => {
+    renderRow(
+      <AttachmentGroup
+        attachments={[
+          file({ file_id: 'dup', filename: 'report.pptx' }),
+          file({ file_id: 'dup', filename: 'report.pptx' }),
+        ]}
+      />,
+    );
+
+    // A folded row only appears once the unique count exceeds one, so dedup
+    // must run before the count that decides whether to render it.
+    expect(screen.queryByRole('button', { name: /files$/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'report.pptx' })).toHaveLength(1);
+  });
+
+  it('folds distinct identities only, using the last occurrence for a repeated identity', () => {
+    renderRow(
+      <AttachmentGroup
+        attachments={[
+          file({ file_id: 'dup', filename: 'old-name.zip' }),
+          file({ file_id: 'other', filename: 'notes.zip' }),
+          file({ file_id: 'dup', filename: 'new-name.zip' }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 files' }));
+
+    expect(screen.getByRole('button', { name: 'new-name.zip' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'notes.zip' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'old-name.zip' })).not.toBeInTheDocument();
+  });
+
+  it('keeps two id-less attachments with the same filename but different filepaths', () => {
+    renderRow(
+      <AttachmentGroup
+        attachments={[
+          file({ file_id: undefined, filename: 'output.csv', filepath: '/uploads/a/output.csv' }),
+          file({ file_id: undefined, filename: 'output.csv', filepath: '/uploads/b/output.csv' }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 files' }));
+
+    expect(screen.getAllByRole('button', { name: 'output.csv' })).toHaveLength(2);
+  });
+
+  it('collapses two id-less attachments sharing the same filepath into one row', () => {
+    renderRow(
+      <AttachmentGroup
+        attachments={[
+          file({ file_id: undefined, filename: 'output.csv', filepath: '/uploads/a/output.csv' }),
+          file({ file_id: undefined, filename: 'output.csv', filepath: '/uploads/a/output.csv' }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /files$/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'output.csv' })).toHaveLength(1);
+  });
+});

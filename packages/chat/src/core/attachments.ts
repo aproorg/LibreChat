@@ -180,26 +180,52 @@ export function mergeAttachments(
 }
 
 /** Maps Attachments by `toolCallId` for quick lookup */
+function attachmentWriteTime(attachment: TAttachment): number {
+  const file = attachment as Partial<TFile>;
+  const value = file.updatedAt ?? file.createdAt;
+  if (value == null) {
+    return 0;
+  }
+  const time = new Date(value as string | number | Date).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+/** Maps attachments by tool call, keeping only the newest linked copy of a file. */
 export function mapAttachments(
   attachments: Array<TAttachment | null | undefined>,
 ): Record<string, TAttachment[] | undefined> {
   const attachmentMap: Record<string, TAttachment[] | undefined> = {};
+  const identities = attachments.map((attachment) =>
+    attachment == null ? undefined : attachmentFileKey(attachment),
+  );
+  const newestByIdentity = new Map<string, { index: number; time: number }>();
 
-  for (const attachment of attachments) {
-    if (attachment === null || attachment === undefined) {
-      continue;
+  attachments.forEach((attachment, index) => {
+    const identity = identities[index];
+    if (attachment == null || identity == null || !attachment.toolCallId) {
+      return;
+    }
+    const time = attachmentWriteTime(attachment);
+    const current = newestByIdentity.get(identity);
+    if (!current || time > current.time || (time === current.time && index > current.index)) {
+      newestByIdentity.set(identity, { index, time });
+    }
+  });
+
+  attachments.forEach((attachment, index) => {
+    if (attachment == null) {
+      return;
+    }
+    const identity = identities[index];
+    const newest = identity == null ? undefined : newestByIdentity.get(identity);
+    if (newest && newest.index !== index) {
+      return;
     }
     const key = attachment.toolCallId || '';
-    if (key.length === 0) {
-      continue;
+    if (!key) {
+      return;
     }
-
-    if (!attachmentMap[key]) {
-      attachmentMap[key] = [];
-    }
-
-    attachmentMap[key]?.push(attachment);
-  }
-
+    (attachmentMap[key] ??= []).push(attachment);
+  });
   return attachmentMap;
 }

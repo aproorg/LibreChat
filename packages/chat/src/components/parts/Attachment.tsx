@@ -16,6 +16,7 @@ import {
 } from './attachmentTypes';
 import { ARTIFACT_ROW_NAV_SPACING, ROW_GLYPH_SLOT, TOOL_ROW_CLASSES } from './rows';
 import FileContainer from '../composer/files/FileContainer';
+import { attachmentFileKey } from '../../core/attachments';
 import { useMessagePartsHost } from '../../react/host';
 import useExpandCollapse from './useExpandCollapse';
 import { useFilesHost } from '../../react/files';
@@ -167,10 +168,19 @@ const FileAttachmentGroup = memo(({ attachments }: { attachments: TAttachment[] 
   const panelId = useId();
   const [isExpanded, setIsExpanded] = useState(false);
   const { ref: expandRef } = useExpandCollapse(isExpanded);
-  const visibleAttachments = useMemo(
-    () => attachments.filter((attachment) => Boolean(attachment.filepath)),
-    [attachments],
-  );
+  const visibleAttachments = useMemo(() => {
+    const byIdentity = new Map<string, TAttachment>();
+    let unidentifiedCount = 0;
+    for (const attachment of attachments) {
+      if (!attachment.filepath) {
+        continue;
+      }
+      const key = attachmentFileKey(attachment) ?? `__unidentified-${unidentifiedCount++}`;
+      byIdentity.delete(key);
+      byIdentity.set(key, attachment);
+    }
+    return Array.from(byIdentity.values());
+  }, [attachments]);
   const count = visibleAttachments.length;
   const summary = useMemo(() => {
     const names = visibleAttachments.map((attachment) => displayFilename(attachment.filename));

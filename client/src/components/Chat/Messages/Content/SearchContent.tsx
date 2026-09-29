@@ -1,7 +1,6 @@
 import { Suspense, useMemo, Fragment } from 'react';
 import { DelayedRender } from '@librechat/client';
 import { ContentTypes } from 'librechat-data-provider';
-import { MessagePartIndex } from '@librechat/chat/react';
 import type {
   Agents,
   TMessage,
@@ -11,10 +10,10 @@ import type {
 } from 'librechat-data-provider';
 import type { ReactNode, ReactElement } from 'react';
 import { ErrorSourceProvider } from '~/components/Messages/Content/Error/source';
+import { MessageContext, SearchContext, useMessageContext } from '~/Providers';
 import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import { ErrorMessage, UnfinishedMessage } from './MessageContent';
 import { cn, mapAttachments } from '~/utils';
-import { SearchContext } from '~/Providers';
 import MarkdownLite from './MarkdownLite';
 import { AgentUpdate } from './Parts';
 import Part from './Part';
@@ -41,6 +40,7 @@ const SearchContent = ({
 }) => {
   const { enableUserMsgMarkdown } = useMessagePartsHost().useUserTextPreferences();
   const { messageId } = message;
+  const messageContext = useMessageContext();
 
   const attachmentMap = useMemo(() => mapAttachments(attachments ?? []), [attachments]);
 
@@ -69,7 +69,6 @@ const SearchContent = ({
             }
             const partElement: ReactElement = (
               <Part
-                key={`display-${messageId}-${idx}`}
                 showCursor={false}
                 isSubmitting={false}
                 isCreatedByUser={message.isCreatedByUser}
@@ -77,17 +76,21 @@ const SearchContent = ({
                 part={part}
               />
             );
-            /** An error part resolves the agent a handoff made active from its own position,
-             *  which it reads from the message context; persisted content is compacted, so `idx` is
-             *  that position in `message.content`. */
-            const rendered: ReactElement =
-              part.type === ContentTypes.ERROR ? (
-                <MessagePartIndex key={`display-${messageId}-${idx}`} index={idx}>
-                  {partElement}
-                </MessagePartIndex>
-              ) : (
-                partElement
-              );
+            /** File-card ownership reads MessageContext, but search results
+             * render outside a normal message row. Supply this row's identity
+             * and the persisted part index explicitly. */
+            const rendered: ReactElement = (
+              <MessageContext.Provider
+                key={`display-${messageId}-${idx}`}
+                value={{
+                  ...messageContext,
+                  messageId,
+                  ...(part.type === ContentTypes.ERROR ? { partIndex: idx } : {}),
+                }}
+              >
+                {partElement}
+              </MessageContext.Provider>
+            );
             if (!resumesAfterSteer) {
               return rendered;
             }
