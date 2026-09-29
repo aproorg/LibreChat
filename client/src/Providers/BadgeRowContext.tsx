@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { useSetRecoilState } from 'recoil';
 import { Tools, Constants, LocalStorageKeys, AgentCapabilities } from 'librechat-data-provider';
-import type { TAgentsEndpoint, TEphemeralAgent } from 'librechat-data-provider';
+import type { AgentToolSwitches, TAgentsEndpoint, TEphemeralAgent } from 'librechat-data-provider';
 import {
   useMCPServerManager,
   useSearchApiKeyForm,
@@ -16,6 +16,8 @@ interface BadgeRowContextType {
   conversationId?: string | null;
   storageContextKey?: string;
   agentsConfig?: TAgentsEndpoint | null;
+  /** Present only in a saved agent's chat: the tools its creator made switchable. */
+  agentToolSwitches?: AgentToolSwitches;
   skills: ReturnType<typeof useToolToggle>;
   memory: ReturnType<typeof useToolToggle>;
   webSearch: ReturnType<typeof useToolToggle>;
@@ -38,6 +40,7 @@ interface BadgeRowProviderProps {
   conversationId?: string | null;
   specName?: string | null;
   observeToolAuthorization?: boolean;
+  agentToolSwitches?: AgentToolSwitches;
 }
 
 export default function BadgeRowProvider({
@@ -46,6 +49,7 @@ export default function BadgeRowProvider({
   conversationId,
   specName,
   observeToolAuthorization = false,
+  agentToolSwitches,
 }: BadgeRowProviderProps) {
   const lastContextKeyRef = useRef<string>('');
   const hasInitializedRef = useRef(false);
@@ -272,13 +276,34 @@ export default function BadgeRowProvider({
     isAuthenticated: true,
   });
 
+  const agentServers = useMemo(
+    () => (agentToolSwitches ? Object.keys(agentToolSwitches.mcp) : undefined),
+    [agentToolSwitches],
+  );
   const mcpServerManager = useMCPServerManager({
     conversationId,
     storageContextKey,
     specName,
+    agentServers,
     ownsChatSelection: true,
     observeToolAuthorization,
   });
+
+  /** In a saved agent's chat the MCP menu offers exactly the servers its creator made
+   *  switchable, including ones `chatMenu: false` hides from plain chats. */
+  const chatMcpServerManager = useMemo(() => {
+    if (!agentToolSwitches) {
+      return mcpServerManager;
+    }
+    const isSwitchable = ({ serverName }: { serverName: string }) =>
+      serverName in agentToolSwitches.mcp;
+    const agentMCPServers = mcpServerManager.availableMCPServers.filter(isSwitchable);
+    return {
+      ...mcpServerManager,
+      availableMCPServers: agentMCPServers,
+      selectableServers: agentMCPServers,
+    };
+  }, [mcpServerManager, agentToolSwitches]);
 
   const value: BadgeRowContextType = {
     skills,
@@ -287,11 +312,12 @@ export default function BadgeRowProvider({
     artifacts,
     fileSearch,
     agentsConfig,
+    agentToolSwitches,
     conversationId,
     storageContextKey,
     codeInterpreter,
     searchApiKeyForm,
-    mcpServerManager,
+    mcpServerManager: chatMcpServerManager,
   };
 
   return <BadgeRowContext.Provider value={value}>{children}</BadgeRowContext.Provider>;

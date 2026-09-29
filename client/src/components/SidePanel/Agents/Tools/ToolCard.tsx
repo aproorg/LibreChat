@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import { VerifiedIcon } from '@librechat/client';
-import { Check, Globe, Info, Settings, Star, User } from 'lucide-react';
+import { Check, Globe, Settings, Star, User } from 'lucide-react';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import type { AgentItem } from './items/types';
 import { hasConfigurableSettings } from './items/configurable';
@@ -97,12 +97,6 @@ function ToolCardImpl({
   const skill = item.kind === 'skill' ? item.skill : undefined;
   const isPublicSkill = skill?.isPublic === true;
   const isSharedSkill = skill != null && skill.author !== user?.id && Boolean(skill.authorName);
-  const showInfoOnly =
-    item.kind === 'builtin' &&
-    item.id === 'web_search' &&
-    !canConfigure &&
-    onConfigure !== undefined;
-  const DetailIcon = canConfigure ? Settings : Info;
 
   return (
     /* touch:h-36 with touch:pb-9 on the content: where a coarse pointer exists the
@@ -194,18 +188,16 @@ function ToolCardImpl({
           </div>
         ) : null}
       </button>
-      {(canFavorite || canConfigure || showInfoOnly) && (
+      {(canFavorite || canConfigure) && (
         <div className="absolute bottom-2 right-2 flex items-center gap-1">
-          {(canConfigure || showInfoOnly) && (
+          {canConfigure && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onConfigure?.(item);
               }}
-              aria-label={
-                canConfigure ? localize('com_ui_tools_configure') : localize('com_ui_tools_info')
-              }
+              aria-label={localize('com_ui_tools_configure')}
               className={cn(
                 'flex size-7 items-center justify-center rounded-lg text-text-secondary',
                 'transition duration-150 hover:bg-surface-hover hover:text-text-primary',
@@ -213,7 +205,7 @@ function ToolCardImpl({
                 'focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring-primary',
               )}
             >
-              <DetailIcon className="size-4" aria-hidden="true" />
+              <Settings className="size-4" aria-hidden="true" />
             </button>
           )}
           {canFavorite && (
