@@ -6,6 +6,7 @@ import {
   getEphemeralSender,
   resolveSpecArtifacts,
   encodeEphemeralAgentId,
+  applyAgentToolSwitches,
   resolveMCPAppsPolicy,
   resolveSpecUserToggles,
   resolveSpecSkillsEnabled,
@@ -66,6 +67,8 @@ export interface LoadAgentParams {
   agent_id: string;
   endpoint: string;
   model_parameters?: AgentModelParameters & { model?: string };
+  /** Per-chat switch state; applied only to a saved primary agent. */
+  userToolSwitches?: TEphemeralAgent | null;
 }
 
 /**
@@ -209,7 +212,7 @@ export async function loadAgent(
   params: LoadAgentParams,
   deps: LoadAgentDeps,
 ): Promise<Agent | null> {
-  const { req, spec, agent_id, endpoint, model_parameters } = params;
+  const { req, spec, agent_id, endpoint, model_parameters, userToolSwitches } = params;
   if (!agent_id) {
     return null;
   }
@@ -223,5 +226,8 @@ export async function loadAgent(
   }
 
   agent.version ??= agent.versions?.length ?? 0;
+  if (userToolSwitches !== undefined) {
+    agent.tools = applyAgentToolSwitches(agent, userToolSwitches).tools;
+  }
   return agent;
 }

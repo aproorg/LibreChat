@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { useSetRecoilState } from 'recoil';
 import { Tools, Constants, LocalStorageKeys, AgentCapabilities } from 'librechat-data-provider';
-import type { TAgentsEndpoint, TEphemeralAgent } from 'librechat-data-provider';
+import type { AgentToolSwitches, TAgentsEndpoint, TEphemeralAgent } from 'librechat-data-provider';
 import {
   useMCPServerManager,
   useSearchApiKeyForm,
@@ -16,6 +16,7 @@ interface BadgeRowContextType {
   conversationId?: string | null;
   storageContextKey?: string;
   agentsConfig?: TAgentsEndpoint | null;
+  agentToolSwitches?: AgentToolSwitches;
   skills: ReturnType<typeof useToolToggle>;
   memory: ReturnType<typeof useToolToggle>;
   webSearch: ReturnType<typeof useToolToggle>;
@@ -38,6 +39,7 @@ interface BadgeRowProviderProps {
   conversationId?: string | null;
   specName?: string | null;
   observeToolAuthorization?: boolean;
+  agentToolSwitches?: AgentToolSwitches;
 }
 
 export default function BadgeRowProvider({
@@ -46,6 +48,7 @@ export default function BadgeRowProvider({
   conversationId,
   specName,
   observeToolAuthorization = false,
+  agentToolSwitches,
 }: BadgeRowProviderProps) {
   const lastContextKeyRef = useRef<string>('');
   const hasInitializedRef = useRef(false);
@@ -272,13 +275,31 @@ export default function BadgeRowProvider({
     isAuthenticated: true,
   });
 
-  const mcpServerManager = useMCPServerManager({
+  const agentServers = useMemo(
+    () => (agentToolSwitches ? Object.keys(agentToolSwitches.mcp) : undefined),
+    [agentToolSwitches],
+  );
+  const rawMcpServerManager = useMCPServerManager({
     conversationId,
     storageContextKey,
     specName,
+    agentServers,
     ownsChatSelection: true,
     observeToolAuthorization,
   });
+  const mcpServerManager = useMemo(() => {
+    if (!agentToolSwitches) {
+      return rawMcpServerManager;
+    }
+    const isSwitchable = ({ serverName }: { serverName: string }) =>
+      serverName in agentToolSwitches.mcp;
+    const agentMCPServers = rawMcpServerManager.availableMCPServers.filter(isSwitchable);
+    return {
+      ...rawMcpServerManager,
+      availableMCPServers: agentMCPServers,
+      selectableServers: agentMCPServers,
+    };
+  }, [rawMcpServerManager, agentToolSwitches]);
 
   /* Memoized because this is an inline child of `ChatForm`, which re-renders on
      every keystroke: a fresh value here invalidated every consumer's memo, and
@@ -292,6 +313,7 @@ export default function BadgeRowProvider({
       artifacts,
       fileSearch,
       agentsConfig,
+      agentToolSwitches,
       conversationId,
       storageContextKey,
       codeInterpreter,
@@ -305,6 +327,7 @@ export default function BadgeRowProvider({
       artifacts,
       fileSearch,
       agentsConfig,
+      agentToolSwitches,
       conversationId,
       storageContextKey,
       codeInterpreter,

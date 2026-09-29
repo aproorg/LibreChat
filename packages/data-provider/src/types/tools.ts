@@ -77,6 +77,9 @@ export interface FileSearchResource {
  */
 export type AllowedCaller = 'direct' | 'code_execution';
 
+/** Switchable by a chat user on a saved agent; absent means the creator locked it. */
+export type UserToolToggle = 'on' | 'off';
+
 export const AGENT_TOOL_APPROVAL_MODES = ['ask', 'allow', 'chat', 'always'] as const;
 export type AgentToolApprovalMode = (typeof AGENT_TOOL_APPROVAL_MODES)[number];
 
@@ -164,6 +167,7 @@ export type ToolOptions = {
    * @default false
    */
   describe_intent?: boolean;
+  user_toggle?: UserToolToggle;
 };
 
 /**
