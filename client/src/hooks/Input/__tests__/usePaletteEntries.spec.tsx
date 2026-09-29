@@ -293,6 +293,28 @@ describe('usePaletteEntries', () => {
     });
   });
 
+  describe('saved agent tool switches', () => {
+    it('offers only switchable built-ins and the agent-scoped MCP servers in the palette', () => {
+      const context = fullContext();
+      context.agentToolSwitches = {
+        builtins: { web_search: true },
+        mcp: { github: true },
+      };
+      context.mcpServerManager.selectableServers = [
+        { serverName: 'github', config: { title: 'Github' } },
+      ];
+      mockContext = context;
+
+      const listed = entries().result.current;
+      expect(
+        listed.filter((item) => item.key.startsWith('builtin:')).map((item) => item.key),
+      ).toEqual(['builtin:web_search']);
+      expect(listed.filter((item) => item.key.startsWith('mcp:')).map((item) => item.key)).toEqual([
+        'mcp:github',
+      ]);
+    });
+  });
+
   describe('choosing a row', () => {
     it('flips each tool through its own toggle', () => {
       const context = fullContext();

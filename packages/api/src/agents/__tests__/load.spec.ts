@@ -442,6 +442,35 @@ describe('loadAgent', () => {
     expect(result!.version).toBe(1);
   });
 
+  test('applies saved-agent chat switches without enabling locked tools', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const agentId = `agent_${uuidv4()}`;
+    await createAgent({
+      id: agentId,
+      name: 'Switchable Agent',
+      provider: 'openai',
+      model: 'gpt-4',
+      author: userId,
+      tools: ['web_search', 'execute_code'],
+      tool_options: {
+        web_search: { user_toggle: 'on' },
+        execute_code: { user_toggle: 'off' },
+      },
+    });
+
+    const result = await loadAgent(
+      {
+        req: { user: { id: userId.toString() } },
+        agent_id: agentId,
+        endpoint: 'openai',
+        userToolSwitches: { web_search: false, execute_code: true, file_search: true },
+      },
+      deps,
+    );
+
+    expect(result?.tools).toEqual(['execute_code']);
+  });
+
   test('should return agent even when user is not author (permissions checked at route level)', async () => {
     const authorId = new mongoose.Types.ObjectId();
     const userId = new mongoose.Types.ObjectId();

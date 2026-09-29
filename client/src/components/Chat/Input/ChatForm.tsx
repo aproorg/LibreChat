@@ -29,6 +29,7 @@ import {
   PermissionTypes,
   isAgentsEndpoint,
   isAssistantsEndpoint,
+  getAgentToolSwitches,
 } from 'librechat-data-provider';
 import type { TChatProject, TMessage, TConversation } from 'librechat-data-provider';
 import type { QueuedMessageContext } from '@librechat/chat';
@@ -44,6 +45,7 @@ import {
   useSubmitMessage,
   useFocusChatEffect,
   useCodeWorkspace,
+  useApplyAgentToolSwitches,
 } from '~/hooks';
 import {
   cn,
@@ -66,6 +68,7 @@ import {
   PendingToolApprovalPanel,
 } from '~/components/Chat/approval/Review';
 import { onGreetingSettled, canClaimWelcomeFocus, isTouchFirst } from '../welcome';
+import { useGetAgentByIdQuery, useGetStartupConfig } from '~/data-provider';
 import useDiscardPastedFiles from '~/hooks/Files/useDiscardPastedFiles';
 import useComposerRestore from '~/hooks/Input/useComposerRestore';
 import { useChatSettings } from '~/Providers/ChatSettingsContext';
@@ -77,7 +80,6 @@ import { chatDirectionAtom } from '~/store/chatDirection';
 import ProjectLandingChip from '../ProjectLandingChip';
 import useHasAccess from '~/hooks/Roles/useHasAccess';
 import useDictation from '~/hooks/Input/useDictation';
-import { useGetStartupConfig } from '~/data-provider';
 import { lazyWithRecovery } from '~/lib/assets/lazy';
 import TextareaHeader from './TextareaHeader';
 import AutoPlayAudio from './AutoPlayAudio';
@@ -212,6 +214,16 @@ const ChatForm = memo(function ChatForm({
       !isAgentsEndpoint(endpoint) &&
       !isAssistantsEndpoint(endpoint),
     [endpoint, modelSpec?.hideBadgeRow],
+  );
+  const switchableAgentId =
+    isAgentsEndpoint(endpoint) && modelSpec?.hideBadgeRow !== true
+      ? conversation?.agent_id
+      : undefined;
+  const { data: savedAgent } = useGetAgentByIdQuery(switchableAgentId);
+  useApplyAgentToolSwitches({ agent: savedAgent, conversationId: conversation?.conversationId });
+  const agentToolSwitches = useMemo(
+    () => (switchableAgentId && savedAgent ? getAgentToolSwitches(savedAgent) : undefined),
+    [switchableAgentId, savedAgent],
   );
   const conversationId = useMemo(
     () => conversation?.conversationId ?? Constants.NEW_CONVO,
@@ -861,6 +873,7 @@ const ChatForm = memo(function ChatForm({
         specName={conversation?.spec}
         isSubmitting={isSubmitting}
         observeToolAuthorization={showTools}
+        agentToolSwitches={agentToolSwitches ?? undefined}
       >
         <Bar
           index={index}
