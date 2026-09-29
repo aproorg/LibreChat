@@ -1,7 +1,13 @@
 import path from 'path';
 import { v4 } from 'uuid';
 import { createHash } from 'node:crypto';
-import { megabyte, fileConfig, imageExtRegex, inferMimeType } from 'librechat-data-provider';
+import {
+  megabyte,
+  fileConfig,
+  imageExtRegex,
+  inferMimeType,
+  mergeFileConfig,
+} from 'librechat-data-provider';
 import type { CodeEnvRef, FileSources, getEndpointFileConfig } from 'librechat-data-provider';
 import type { CodeFileCommitData } from '@librechat/data-schemas';
 import type {
@@ -12,10 +18,10 @@ import type {
   CodeOutputDownloadFallback,
   ProcessPublishedCodeOutputInput,
 } from './publication';
+import type { hasOfficeHtmlPath, getExtractedTextFormat, OfficePreviewSetting } from './extract';
 import type { FileProvisionStorage, FileStorageUploadObserver } from '../operations';
 import type { sanitizeArtifactPath, flattenArtifactPath } from '~/utils/files';
 import type { classifyCodeArtifact, CodeArtifactCategory } from './classify';
-import type { hasOfficeHtmlPath, getExtractedTextFormat } from './extract';
 import type { RetentionExpiry } from '~/files/retention';
 import type { extractCodeArtifactText } from './extract';
 import type { logAxiosError } from '~/utils/axios';
@@ -95,6 +101,7 @@ export interface CodeOutputProcessorDeps {
     category: CodeArtifactCategory;
     file_id: string;
     previewRevision?: string | null;
+    officePreview?: OfficePreviewSetting;
   }) => Promise<CodeOutputStoredFile | null>;
   hasOfficeHtmlPath: typeof hasOfficeHtmlPath;
   sanitizeArtifactPath: typeof sanitizeArtifactPath;
@@ -475,6 +482,7 @@ export async function processCodeOutput(
               category,
               file_id: file.file_id,
               previewRevision: file.previewRevision,
+              officePreview: mergeFileConfig(req.config?.fileConfig).officePreview,
             }),
           ),
           previewRevision: file.previewRevision,
