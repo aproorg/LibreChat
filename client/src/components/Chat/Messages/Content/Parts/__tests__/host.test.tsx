@@ -1,4 +1,5 @@
 import React from 'react';
+import { RecoilRoot } from 'recoil';
 import { SoleToolContext, useToolAutoExpand } from '@librechat/chat/react';
 import { render, renderHook, screen, fireEvent } from '@testing-library/react';
 import type { TAttachment } from 'librechat-data-provider';
@@ -31,7 +32,7 @@ jest.mock('../LogLink', () => ({
   useAttachmentLink: () => ({ handleDownload: jest.fn() }),
 }));
 
-/** A host backed by plain values: rendering under it must not touch Recoil, Jotai or app providers. */
+/** A host backed by plain values: aside from ToolArtifactCard's claim atom, it uses no app state. */
 function createHost(overrides: Partial<MessagePartsHost> = {}): MessagePartsHost {
   const message: MessagePartMessage = { messageId: 'msg-1', isSubmitting: false };
   return {
@@ -147,11 +148,13 @@ describe('message parts host', () => {
       useArtifactPanel: () => panel,
     });
     render(
-      <MessagePartsHostProvider host={host}>
-        <ToolArtifactCard attachment={attachment} artifact={artifact} />
-      </MessagePartsHostProvider>,
+      <RecoilRoot>
+        <MessagePartsHostProvider host={host}>
+          <ToolArtifactCard attachment={attachment} artifact={artifact} />
+        </MessagePartsHostProvider>
+      </RecoilRoot>,
     );
-    expect(panel.register).not.toHaveBeenCalled();
+    expect(panel.register).toHaveBeenCalledWith(artifact);
     expect(panel.open).toHaveBeenCalledWith('artifact-1');
   });
 
@@ -163,9 +166,11 @@ describe('message parts host', () => {
       useToolArtifactClaim: () => [null, setClaim],
     });
     const { rerender } = render(
-      <MessagePartsHostProvider host={host}>
-        <ToolArtifactCard attachment={attachment} artifact={artifact} />
-      </MessagePartsHostProvider>,
+      <RecoilRoot>
+        <MessagePartsHostProvider host={host}>
+          <ToolArtifactCard attachment={attachment} artifact={artifact} />
+        </MessagePartsHostProvider>
+      </RecoilRoot>,
     );
     expect(setClaim).toHaveBeenCalledWith(expect.any(String));
     expect(panel.open).not.toHaveBeenCalled();
@@ -180,9 +185,11 @@ describe('message parts host', () => {
       useToolArtifactClaim: () => [claimKey, setClaim],
     });
     rerender(
-      <MessagePartsHostProvider host={claimed}>
-        <ToolArtifactCard attachment={attachment} artifact={artifact} />
-      </MessagePartsHostProvider>,
+      <RecoilRoot>
+        <MessagePartsHostProvider host={claimed}>
+          <ToolArtifactCard attachment={attachment} artifact={artifact} />
+        </MessagePartsHostProvider>
+      </RecoilRoot>,
     );
     expect(panel.register).toHaveBeenCalledWith(artifact);
   });
