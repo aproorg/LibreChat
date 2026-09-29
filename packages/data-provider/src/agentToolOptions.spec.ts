@@ -199,6 +199,21 @@ describe('applyAgentToolSwitches', () => {
     );
     expect(result.tools).toEqual([]);
   });
+
+  it('drops raw-name placeholder and wildcard tokens of a normalized server', () => {
+    const agent = {
+      tools: ['sys__server__sys_mcp_My Docs', 'sys__all__sys_mcp_My Docs', 'search_mcp_My_Docs'],
+      tool_options: { [mcpServerToggleKey('My Docs')]: { user_toggle: 'on' as const } },
+    };
+    expect(applyAgentToolSwitches(agent, { mcp: [] }).tools).toEqual([]);
+    expect(
+      applyAgentToolSwitches({ ...agent, tools: ['sys__all__sys_mcp_My Docs'] }, { mcp: [] }).tools,
+    ).toEqual([]);
+    expect(applyAgentToolSwitches(agent, { mcp: ['My Docs'] })).toEqual({
+      tools: agent.tools,
+      mcp: ['My_Docs'],
+    });
+  });
 });
 
 describe('pickUserToggleOptions', () => {

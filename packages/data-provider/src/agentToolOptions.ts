@@ -8,7 +8,7 @@ import {
   type AgentToolOptions,
   type AllowedCaller,
 } from './types/tools';
-import { Constants, splitMCPToolKey, normalizeServerName } from './config';
+import { Constants, splitMCPToolKey, normalizeMCPToolKey, normalizeServerName } from './config';
 
 const actionDomainSeparatorRegex = new RegExp(actionDomainSeparator, 'g');
 
@@ -111,9 +111,14 @@ export function pickUserToggleOptions(
 }
 
 /** Tool keys carry the normalized server name, which may itself contain the MCP
- *  delimiter; the switch servers' key names disambiguate the split. */
-function toolServerName(tool: string, keyServerNames: string[]): string | undefined {
-  return splitMCPToolKey(tool, keyServerNames)[1];
+ *  delimiter; the switch servers' key names disambiguate the split. Placeholder and
+ *  wildcard tokens may still carry the raw configured name, so that is normalized first. */
+function toolServerName(
+  tool: string,
+  serverNames: string[],
+  keyServerNames: string[],
+): string | undefined {
+  return splitMCPToolKey(normalizeMCPToolKey(tool, serverNames), keyServerNames)[1];
 }
 
 /** The creator's switchable set and defaults. Locked or unattached tools never appear. */
@@ -129,7 +134,7 @@ export function getAgentToolSwitches(agent: SwitchableAgent): AgentToolSwitches 
   }
   const serverNames = getMCPSwitchServerNames(options);
   const keyServerNames = serverNames.map(normalizeServerName);
-  const attached = new Set(tools.map((tool) => toolServerName(tool, keyServerNames)));
+  const attached = new Set(tools.map((tool) => toolServerName(tool, serverNames, keyServerNames)));
   serverNames.forEach((serverName, index) => {
     if (attached.has(keyServerNames[index])) {
       switches.mcp[serverName] = options[mcpServerToggleKey(serverName)]?.user_toggle === 'on';
@@ -155,7 +160,8 @@ export function applyAgentToolSwitches(
     }
   }
   const requestedServers = Array.isArray(requested?.mcp) ? requested.mcp : undefined;
-  const keyServerNames = getMCPSwitchServerNames(agent.tool_options).map(normalizeServerName);
+  const serverNames = getMCPSwitchServerNames(agent.tool_options);
+  const keyServerNames = serverNames.map(normalizeServerName);
   const offServers = new Set(
     Object.entries(mcp)
       .filter(
@@ -167,7 +173,7 @@ export function applyAgentToolSwitches(
   const kept: string[] = [];
   const keptServers = new Set<string>();
   for (const tool of tools) {
-    const serverName = toolServerName(tool, keyServerNames);
+    const serverName = toolServerName(tool, serverNames, keyServerNames);
     if (dropped.has(tool) || (serverName != null && offServers.has(serverName))) {
       continue;
     }
