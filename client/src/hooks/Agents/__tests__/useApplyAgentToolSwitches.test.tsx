@@ -8,6 +8,7 @@ import type { TEphemeralAgent } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { MCPServerDefinition } from '~/hooks/MCP/useMCPServerManager';
 import { useApplyAgentToolSwitches } from '../useApplyAgentToolSwitches';
+import { cleanupTimestampedStorage } from '~/utils/timestamps';
 import { useMCPSelect } from '~/hooks/MCP/useMCPSelect';
 import { ephemeralAgentByConvoId } from '~/store';
 
@@ -126,5 +127,48 @@ describe('useApplyAgentToolSwitches', () => {
     expect(
       JSON.parse(localStorage.getItem(`${LocalStorageKeys.LAST_MCP_}real1`) ?? 'null'),
     ).toEqual([]);
+  });
+
+  it('keeps a default-on server the user turned off after the app reloads', async () => {
+    let applyTemplate: (agent: TEphemeralAgent) => void = () => undefined;
+    function TemplateWriter() {
+      applyTemplate = useSetRecoilState(ephemeralAgentByConvoId('real1'));
+      return null;
+    }
+    const store = createStore();
+    const tree = (conversationId: string | null) => (
+      <RecoilRoot>
+        <Provider store={store}>
+          <TemplateWriter />
+          <Chat agent={withToggle('on')} conversationId={conversationId} />
+        </Provider>
+      </RecoilRoot>
+    );
+    const { rerender, unmount } = render(tree(null));
+    await waitFor(() => expect(selected).toEqual([serverName]));
+
+    act(() => select([]));
+    await waitFor(() => expect(selected).toEqual([]));
+
+    act(() => {
+      applyTemplate({ mcp: [] });
+      rerender(tree('real1'));
+    });
+    await waitFor(() =>
+      expect(localStorage.getItem(`${LocalStorageKeys.LAST_MCP_}real1`)).not.toBeNull(),
+    );
+    unmount();
+
+    /** App startup prunes conversation keys without a timestamp. */
+    cleanupTimestampedStorage();
+    render(
+      <RecoilRoot>
+        <Provider store={createStore()}>
+          <Chat agent={withToggle('on')} conversationId="real1" />
+        </Provider>
+      </RecoilRoot>,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(selected).toEqual([]);
   });
 });

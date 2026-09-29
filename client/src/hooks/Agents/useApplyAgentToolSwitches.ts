@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useSetAtom } from 'jotai';
 import { useRecoilCallback, useSetRecoilState } from 'recoil';
-import { Constants, getAgentToolSwitches } from 'librechat-data-provider';
+import { Constants, LocalStorageKeys, getAgentToolSwitches } from 'librechat-data-provider';
 import type { Agent, TEphemeralAgent } from 'librechat-data-provider';
 import { ephemeralAgentByConvoId, mcpValuesAtomFamily } from '~/store';
 import { applyAgentToolSwitchDefaults } from '~/utils';
+import { setTimestamp } from '~/utils/timestamps';
 
 export function useApplyAgentToolSwitches({
   agent,
@@ -54,6 +55,9 @@ export function useApplyAgentToolSwitches({
     if (carried) {
       if (Array.isArray(carried.mcp)) {
         setMCPValues(carried.mcp);
+        /** An explicit empty list overrides the creator's default-on servers, so it
+         *  needs a timestamp to survive startup cleanup like a non-empty one. */
+        setTimestamp(`${LocalStorageKeys.LAST_MCP_}${convoId}`);
       }
       return;
     }
