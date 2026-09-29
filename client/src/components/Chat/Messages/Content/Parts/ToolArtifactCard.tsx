@@ -1,8 +1,9 @@
-import { memo, useEffect, useId, useLayoutEffect, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import type { TAttachment, TFile, TAttachmentMetadata } from 'librechat-data-provider';
 import type { Artifact } from '~/common';
 import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import { artifactRowKind, isCodeOnlyArtifact } from '~/utils/artifacts';
+import useToolArtifactClaim, { isStrictlyNewer } from './claim';
 import { displayFilename } from './attachmentTypes';
 import { useAttachmentLink } from './LogLink';
 import ArtifactRow from './ArtifactRow';
@@ -58,8 +59,11 @@ interface ToolArtifactCardProps {
  *     of context.
  */
 const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) => {
-  const claimKey = useId();
-  const { useMessage, useArtifactPanel, useToolArtifactClaim } = useMessagePartsHost();
+  const {
+    useMessage,
+    useArtifactPanel,
+    useToolArtifactClaim: useGlobalArtifactClaim,
+  } = useMessagePartsHost();
   const { isSubmitting, messageId } = useMessage();
   const ownerMessageId = messageId || attachment.messageId || '';
   const file = attachment as TFile & TAttachmentMetadata;
@@ -72,9 +76,10 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
     close,
     consumeJustResolved,
   } = useArtifactPanel(artifact.id);
-  const [claim, setClaim] = useToolArtifactClaim(artifact.id);
+  const { isMyClaim: canRender, claimKey } = useToolArtifactClaim(artifact.id);
+  const [globalClaim, setGlobalClaim] = useGlobalArtifactClaim(artifact.id);
+  const isMyGlobalClaim = globalClaim === claimKey;
   const isSelected = artifact.id === currentArtifactId;
-  const isMyClaim = claim === claimKey;
   /* `consumeJustResolved` reads and resets only this response's flag, without
    * subscribing to other file or message flags. The deferred-preview hook flips
    * it to `true` on the pending→ready edge; we consume it once, so repeat mounts
@@ -86,35 +91,36 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
   }
 
   useLayoutEffect(() => {
-    // Always (re)claim on mount — a later card for the same id displaces
-    // an earlier one, so the chip migrates to the most recent mention.
-    setClaim(claimKey);
+    // A global latest-mount claim breaks equal-timestamp ties for panel
+    // registration. Display claims remain message-scoped so each message
+    // keeps its own card.
+    setGlobalClaim(claimKey);
     return () => {
-      // Only release when the claim is still ours; if a sibling already
-      // took over we don't want to clobber its claim.
-      setClaim((prev) => (prev === claimKey ? null : prev));
+      setGlobalClaim((prev) => (prev === claimKey ? null : prev));
     };
-  }, [claimKey, setClaim]);
+  }, [claimKey, setGlobalClaim]);
 
   useEffect(() => {
-    // Only the claim-winner writes. Two cards with the same `artifact.id`
-    // but divergent content (same file_id reused across turns) would
-    // otherwise see each other's write through `existingEntry`, detect
-    // drift, and trade overwrites in a loop. Gating on `isMyClaim`
-    // makes registration single-writer per id.
-    if (!isMyClaim) {
-      return;
-    }
-    if (
+    const contentDrifted = !(
       existingEntry != null &&
       existingEntry.content === artifact.content &&
       existingEntry.type === artifact.type &&
       existingEntry.title === artifact.title
-    ) {
+    );
+    if (!contentDrifted) {
+      return;
+    }
+    // A newer version wins regardless of mount order. Equal timestamps
+    // use the global latest-mount claim so tied versions settle on one writer.
+    const isNewerOrTied =
+      existingEntry == null ||
+      isStrictlyNewer(artifact, existingEntry) ||
+      (artifact.lastUpdateTime === existingEntry.lastUpdateTime && isMyGlobalClaim);
+    if (!isNewerOrTied) {
       return;
     }
     register(artifact);
-  }, [artifact, existingEntry, isMyClaim, register]);
+  }, [artifact, existingEntry, isMyGlobalClaim, register]);
 
   useEffect(() => {
     if (isCodeOnlyArtifact(artifact.type)) {
@@ -174,7 +180,7 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
 
   // Another card with the same artifact id has the active claim — render
   // nothing here, that row is the canonical trigger for this file.
-  if (claim != null && !isMyClaim) {
+  if (!canRender) {
     return null;
   }
 
