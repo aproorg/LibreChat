@@ -171,4 +171,38 @@ describe('useApplyAgentToolSwitches', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(selected).toEqual([]);
   });
+
+  it('keeps a default-on server turned off in an existing chat after a reload near the cleanup age', async () => {
+    const hour = 60 * 60 * 1000;
+    const storageKey = `${LocalStorageKeys.LAST_MCP_}c1`;
+    const tree = () => (
+      <RecoilRoot>
+        <Provider store={createStore()}>
+          <Chat agent={withToggle('on')} conversationId="c1" />
+        </Provider>
+      </RecoilRoot>
+    );
+    const { unmount } = render(tree());
+    await waitFor(() => expect(selected).toEqual([serverName]));
+
+    /** The last non-empty selection was stamped 47 hours ago. */
+    localStorage.setItem(`${storageKey}_TIMESTAMP`, String(Date.now() - 47 * hour));
+    act(() => select([]));
+    await waitFor(() => expect(selected).toEqual([]));
+    unmount();
+
+    /** Reload three hours later: startup cleanup runs before the chat mounts. */
+    const now = Date.now() + 3 * hour;
+    const dateNow = jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      cleanupTimestampedStorage();
+    } finally {
+      dateNow.mockRestore();
+    }
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toEqual([]);
+
+    render(tree());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(selected).toEqual([]);
+  });
 });

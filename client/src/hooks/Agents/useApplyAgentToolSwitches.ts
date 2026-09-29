@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useSetAtom } from 'jotai';
+import { useAtom } from 'jotai';
 import { useRecoilCallback, useSetRecoilState } from 'recoil';
 import { Constants, LocalStorageKeys, getAgentToolSwitches } from 'librechat-data-provider';
 import type { Agent, TEphemeralAgent } from 'librechat-data-provider';
@@ -16,7 +16,7 @@ export function useApplyAgentToolSwitches({
 }) {
   const convoId = conversationId ?? Constants.NEW_CONVO;
   const setEphemeralAgent = useSetRecoilState(ephemeralAgentByConvoId(convoId));
-  const setMCPValues = useSetAtom(mcpValuesAtomFamily(convoId));
+  const [mcpValues, setMCPValues] = useAtom(mcpValuesAtomFamily(convoId));
   const getEphemeralAgent = useRecoilCallback(
     ({ snapshot }) =>
       () =>
@@ -29,7 +29,9 @@ export function useApplyAgentToolSwitches({
   const agentId = agent?.id;
   /** The saved agent's cache entry is replaced in place when its creator edits it,
    *  so reseed on a change in the switch config itself, not just the agent id. */
-  const switchesKey = agent ? JSON.stringify(getAgentToolSwitches(agent)) : '';
+  const agentSwitches = agent ? getAgentToolSwitches(agent) : null;
+  const switchesKey = agentSwitches ? JSON.stringify(agentSwitches) : '';
+  const hasMCPSwitches = agentSwitches != null && Object.keys(agentSwitches.mcp).length > 0;
 
   useEffect(() => {
     const current = agentRef.current;
@@ -55,9 +57,6 @@ export function useApplyAgentToolSwitches({
     if (carried) {
       if (Array.isArray(carried.mcp)) {
         setMCPValues(carried.mcp);
-        /** An explicit empty list overrides the creator's default-on servers, so it
-         *  needs a timestamp to survive startup cleanup like a non-empty one. */
-        setTimestamp(`${LocalStorageKeys.LAST_MCP_}${convoId}`);
       }
       return;
     }
@@ -77,4 +76,18 @@ export function useApplyAgentToolSwitches({
       }),
     }));
   }, [agentId, switchesKey, convoId, setEphemeralAgent, setMCPValues, getEphemeralAgent]);
+
+  /** An explicit empty list overrides the creator's default-on servers, so it needs a
+   *  fresh timestamp to survive startup cleanup; plain chats only stamp non-empty lists. */
+  useEffect(() => {
+    const storageKey = `${LocalStorageKeys.LAST_MCP_}${convoId}`;
+    if (
+      !hasMCPSwitches ||
+      convoId === Constants.NEW_CONVO ||
+      localStorage.getItem(storageKey) === null
+    ) {
+      return;
+    }
+    setTimestamp(storageKey);
+  }, [hasMCPSwitches, convoId, mcpValues]);
 }
