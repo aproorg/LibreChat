@@ -62,6 +62,7 @@ const {
   EModelEndpoint,
   resolveAllowedStatefulCodeEnvironments,
   removeCodeExecutionCaller,
+  pickUserToggleOptions,
   hasActivePiiFields,
   hasActivePiiPatterns,
   openapiToFunction,
@@ -1012,6 +1013,8 @@ const getAgentHandler = async (req, res, expandProperties = false) => {
         provider: agent.provider,
         model: agent.model,
         model_parameters: getSafeModelParameters(agent.model_parameters),
+        tools: agent.tools,
+        tool_options: pickUserToggleOptions(agent.tool_options),
         isPublic: agent.isPublic,
         version: agent.version,
         // Safe metadata

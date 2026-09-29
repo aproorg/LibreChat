@@ -10,12 +10,14 @@ import React, {
 } from 'react';
 import { Badge } from '@librechat/client';
 import { useRecoilValue, useRecoilCallback } from 'recoil';
+import { Tools, getAgentToolSwitches } from 'librechat-data-provider';
 import type { LucideIcon } from 'lucide-react';
 import type { BadgeItem } from '~/common';
+import { useChatBadges, useApplyAgentToolSwitches } from '~/hooks';
+import { useGetAgentByIdQuery } from '~/data-provider';
 import CodeInterpreter from './CodeInterpreter';
 import { BadgeRowProvider } from '~/Providers';
 import ToolsDropdown from './ToolsDropdown';
-import { useChatBadges } from '~/hooks';
 import ToolDialogs from './ToolDialogs';
 import FileSearch from './FileSearch';
 import Artifacts from './Artifacts';
@@ -30,6 +32,7 @@ interface BadgeRowProps {
   onChange: (badges: Pick<BadgeItem, 'id'>[]) => void;
   onToggle?: (badgeId: string, currentActive: boolean) => void;
   conversationId?: string | null;
+  agentId?: string | null;
   specName?: string | null;
   isSubmitting?: boolean;
   isInChat: boolean;
@@ -145,6 +148,7 @@ const dragReducer = (state: DragState, action: DragAction): DragState => {
 function BadgeRow({
   showEphemeralBadges,
   conversationId,
+  agentId,
   specName,
   isSubmitting,
   onChange,
@@ -166,6 +170,13 @@ function BadgeRow({
   const containerRectRef = useRef<DOMRect | null>(null);
 
   const allBadges = useChatBadges();
+  const { data: agent } = useGetAgentByIdQuery(agentId);
+  useApplyAgentToolSwitches({ agent, conversationId });
+  const agentToolSwitches = useMemo(
+    () => (agentId && agent ? getAgentToolSwitches(agent) : undefined),
+    [agentId, agent],
+  );
+  const hasSwitchableServer = Object.keys(agentToolSwitches?.mcp ?? {}).length > 0;
   const isEditing = useRecoilValue(store.isEditingBadges);
 
   const badges = useMemo(
@@ -329,9 +340,10 @@ function BadgeRow({
       specName={specName}
       isSubmitting={isSubmitting}
       observeToolAuthorization={showEphemeralBadges === true}
+      agentToolSwitches={agentToolSwitches}
     >
       <div ref={containerRef} className="relative flex flex-wrap items-center gap-2">
-        {showEphemeralBadges === true && <ToolsDropdown />}
+        {(showEphemeralBadges === true || agentToolSwitches != null) && <ToolsDropdown />}
         {tempBadges.map((badge, index) => (
           <React.Fragment key={badge.id}>
             {dragState.draggedBadge && dragState.insertIndex === index && ghostBadge && (
@@ -380,6 +392,14 @@ function BadgeRow({
             <Memory />
             <Artifacts />
             <MCPSelect />
+          </>
+        )}
+        {showEphemeralBadges !== true && agentToolSwitches != null && (
+          <>
+            {agentToolSwitches.builtins[Tools.web_search] != null && <WebSearch />}
+            {agentToolSwitches.builtins[Tools.execute_code] != null && <CodeInterpreter />}
+            {agentToolSwitches.builtins[Tools.file_search] != null && <FileSearch />}
+            {hasSwitchableServer && <MCPSelect />}
           </>
         )}
         {ghostBadge && (

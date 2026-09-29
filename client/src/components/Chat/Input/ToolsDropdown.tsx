@@ -3,6 +3,7 @@ import * as Ariakit from '@ariakit/react';
 import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
 import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
 import {
+  Tools,
   AuthType,
   Permissions,
   ArtifactModes,
@@ -73,6 +74,10 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const canUseMemory = useHasMemoryAccess();
   const showMemory = canUseMemory && memoryEnabled && user?.personalization?.memories !== false;
+
+  const agentToolSwitches = context?.agentToolSwitches;
+  const isSwitchable = (tool: Tools) =>
+    agentToolSwitches == null || agentToolSwitches.builtins[tool] != null;
 
   const [isPopoverActive, setIsPopoverActive] = useState(false);
   const isDisabled = disabled ?? false;
@@ -162,7 +167,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const dropdownItems: MenuItemProps[] = [];
 
-  if (fileSearchEnabled && canUseFileSearch) {
+  if (fileSearchEnabled && canUseFileSearch && isSwitchable(Tools.file_search)) {
     dropdownItems.push({
       onClick: handleFileSearchToggle,
       hideOnClick: false,
@@ -194,7 +199,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (canUseWebSearch && webSearchEnabled) {
+  if (canUseWebSearch && webSearchEnabled && isSwitchable(Tools.web_search)) {
     dropdownItems.push({
       onClick: handleWebSearchToggle,
       hideOnClick: false,
@@ -248,7 +253,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (canUseSkills && skillsEnabled) {
+  if (canUseSkills && skillsEnabled && agentToolSwitches == null) {
     dropdownItems.push({
       onClick: handleSkillsToggle,
       hideOnClick: false,
@@ -280,7 +285,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (showMemory) {
+  if (showMemory && agentToolSwitches == null) {
     dropdownItems.push({
       onClick: handleMemoryToggle,
       hideOnClick: false,
@@ -312,7 +317,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (canRunCode && codeEnabled) {
+  if (canRunCode && codeEnabled && isSwitchable(Tools.execute_code)) {
     dropdownItems.push({
       onClick: handleCodeInterpreterToggle,
       hideOnClick: false,
@@ -346,7 +351,7 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     });
   }
 
-  if (artifactsEnabled && setIsArtifactsPinned != null) {
+  if (artifactsEnabled && setIsArtifactsPinned != null && agentToolSwitches == null) {
     dropdownItems.push({
       hideOnClick: false,
       render: (props) => (

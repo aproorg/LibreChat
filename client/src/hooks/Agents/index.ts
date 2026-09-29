@@ -19,3 +19,4 @@ export type {
 } from './useCodeWorkspace';
 export { default as useMCPToolOptions } from './useMCPToolOptions';
 export * from './useApplyModelSpecAgents';
+export * from './useApplyAgentToolSwitches';

@@ -860,6 +860,9 @@ const ChatForm = memo(function ChatForm({
                   }
                   isSubmitting={isSubmitting}
                   conversationId={conversationId}
+                  agentId={
+                    isAgentsEndpoint(endpoint) && !hideBadgeRow ? conversation?.agent_id : undefined
+                  }
                   specName={conversation?.spec}
                   onChange={setBadges}
                   isInChat={
