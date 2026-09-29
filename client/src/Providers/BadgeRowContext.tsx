@@ -276,25 +276,32 @@ export default function BadgeRowProvider({
     isAuthenticated: true,
   });
 
+  const agentServers = useMemo(
+    () => (agentToolSwitches ? Object.keys(agentToolSwitches.mcp) : undefined),
+    [agentToolSwitches],
+  );
   const mcpServerManager = useMCPServerManager({
     conversationId,
     storageContextKey,
     specName,
+    agentServers,
     ownsChatSelection: true,
     observeToolAuthorization,
   });
 
-  /** In a saved agent's chat the MCP menu offers only the servers its creator made switchable. */
+  /** In a saved agent's chat the MCP menu offers exactly the servers its creator made
+   *  switchable, including ones `chatMenu: false` hides from plain chats. */
   const chatMcpServerManager = useMemo(() => {
     if (!agentToolSwitches) {
       return mcpServerManager;
     }
     const isSwitchable = ({ serverName }: { serverName: string }) =>
       serverName in agentToolSwitches.mcp;
+    const agentMCPServers = mcpServerManager.availableMCPServers.filter(isSwitchable);
     return {
       ...mcpServerManager,
-      availableMCPServers: mcpServerManager.availableMCPServers.filter(isSwitchable),
-      selectableServers: mcpServerManager.selectableServers.filter(isSwitchable),
+      availableMCPServers: agentMCPServers,
+      selectableServers: agentMCPServers,
     };
   }, [mcpServerManager, agentToolSwitches]);
 
