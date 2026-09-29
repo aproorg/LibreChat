@@ -8,7 +8,7 @@ import {
   type AgentToolOptions,
   type AllowedCaller,
 } from './types/tools';
-import { Constants } from './config';
+import { Constants, splitMCPToolKey, normalizeServerName } from './config';
 
 const actionDomainSeparatorRegex = new RegExp(actionDomainSeparator, 'g');
 
@@ -83,20 +83,37 @@ export interface AgentToolSwitches {
 
 type SwitchableAgent = Pick<Agent, 'tools' | 'tool_options'>;
 
-function isServerTool(tool: string, serverName: string): boolean {
-  const suffix = `${Constants.mcp_delimiter}${serverName}`;
-  return tool.endsWith(suffix) || tool === `${Constants.mcp_prefix}${serverName}`;
+const mcpServerTogglePrefix = mcpServerToggleKey('');
+
+/** Configured names of the servers carrying a `user_toggle`, attached or not. */
+export function getMCPSwitchServerNames(toolOptions: AgentToolOptions | undefined): string[] {
+  return Object.entries(toolOptions ?? {})
+    .filter(
+      ([key, options]) => key.startsWith(mcpServerTogglePrefix) && options.user_toggle != null,
+    )
+    .map(([key]) => key.slice(mcpServerTogglePrefix.length));
 }
 
-function attachedServerNames(tools: string[]): string[] {
-  const names = new Set<string>();
-  for (const tool of tools) {
-    const index = tool.lastIndexOf(Constants.mcp_delimiter);
-    if (index >= 0) {
-      names.add(tool.slice(index + Constants.mcp_delimiter.length));
+/** Only the `user_toggle` of each entry, so a view-only reader learns nothing else. */
+export function pickUserToggleOptions(
+  toolOptions: AgentToolOptions | undefined,
+): AgentToolOptions | undefined {
+  if (toolOptions == null) {
+    return undefined;
+  }
+  const picked: AgentToolOptions = {};
+  for (const [key, options] of Object.entries(toolOptions)) {
+    if (options.user_toggle != null) {
+      picked[key] = { user_toggle: options.user_toggle };
     }
   }
-  return Array.from(names);
+  return picked;
+}
+
+/** Tool keys carry the normalized server name, which may itself contain the MCP
+ *  delimiter; the switch servers' key names disambiguate the split. */
+function toolServerName(tool: string, keyServerNames: string[]): string | undefined {
+  return splitMCPToolKey(tool, keyServerNames)[1];
 }
 
 /** The creator's switchable set and defaults. Locked or unattached tools never appear. */
@@ -110,12 +127,14 @@ export function getAgentToolSwitches(agent: SwitchableAgent): AgentToolSwitches 
       switches.builtins[tool] = toggle === 'on';
     }
   }
-  for (const serverName of attachedServerNames(tools)) {
-    const toggle = options[mcpServerToggleKey(serverName)]?.user_toggle;
-    if (toggle != null) {
-      switches.mcp[serverName] = toggle === 'on';
+  const serverNames = getMCPSwitchServerNames(options);
+  const keyServerNames = serverNames.map(normalizeServerName);
+  const attached = new Set(tools.map((tool) => toolServerName(tool, keyServerNames)));
+  serverNames.forEach((serverName, index) => {
+    if (attached.has(keyServerNames[index])) {
+      switches.mcp[serverName] = options[mcpServerToggleKey(serverName)]?.user_toggle === 'on';
     }
-  }
+  });
   return switches;
 }
 
@@ -136,13 +155,26 @@ export function applyAgentToolSwitches(
     }
   }
   const requestedServers = Array.isArray(requested?.mcp) ? requested.mcp : undefined;
-  const offServers = Object.entries(mcp)
-    .filter(
-      ([name, isDefaultOn]) => !(requestedServers ? requestedServers.includes(name) : isDefaultOn),
-    )
-    .map(([name]) => name);
-  const kept = tools.filter(
-    (tool) => !dropped.has(tool) && !offServers.some((name) => isServerTool(tool, name)),
+  const keyServerNames = getMCPSwitchServerNames(agent.tool_options).map(normalizeServerName);
+  const offServers = new Set(
+    Object.entries(mcp)
+      .filter(
+        ([name, isDefaultOn]) =>
+          !(requestedServers ? requestedServers.includes(name) : isDefaultOn),
+      )
+      .map(([name]) => normalizeServerName(name)),
   );
-  return { tools: kept, mcp: attachedServerNames(kept) };
+  const kept: string[] = [];
+  const keptServers = new Set<string>();
+  for (const tool of tools) {
+    const serverName = toolServerName(tool, keyServerNames);
+    if (dropped.has(tool) || (serverName != null && offServers.has(serverName))) {
+      continue;
+    }
+    kept.push(tool);
+    if (serverName != null) {
+      keptServers.add(serverName);
+    }
+  }
+  return { tools: kept, mcp: Array.from(keptServers) };
 }

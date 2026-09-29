@@ -3,6 +3,7 @@ import {
   mcpServerToggleKey,
   getAgentToolSwitches,
   applyAgentToolSwitches,
+  pickUserToggleOptions,
   normalizeActionToolName,
   removeCodeExecutionCaller,
 } from './agentToolOptions';
@@ -87,6 +88,24 @@ describe('getAgentToolSwitches', () => {
   it('is empty without tool_options', () => {
     expect(getAgentToolSwitches({ tools: ['web_search'] })).toEqual({ builtins: {}, mcp: {} });
   });
+
+  it('keeps a server whose name contains the MCP delimiter', () => {
+    expect(
+      getAgentToolSwitches({
+        tools: ['search_mcp_Google_mcp_Workspace'],
+        tool_options: { [mcpServerToggleKey('Google_mcp_Workspace')]: { user_toggle: 'on' } },
+      }),
+    ).toEqual({ builtins: {}, mcp: { Google_mcp_Workspace: true } });
+  });
+
+  it('keys a server by its configured name when its tool keys use the normalized name', () => {
+    expect(
+      getAgentToolSwitches({
+        tools: ['search_mcp_My_Docs'],
+        tool_options: { [mcpServerToggleKey('My Docs')]: { user_toggle: 'off' } },
+      }),
+    ).toEqual({ builtins: {}, mcp: { 'My Docs': false } });
+  });
 });
 
 describe('applyAgentToolSwitches', () => {
@@ -145,6 +164,31 @@ describe('applyAgentToolSwitches', () => {
     expect(result).toEqual({ tools: ['file_search'], mcp: [] });
   });
 
+  it('tells apart a server named bar from one named foo_mcp_bar', () => {
+    const tool_options = {
+      [mcpServerToggleKey('bar')]: { user_toggle: 'on' as const },
+      [mcpServerToggleKey('foo_mcp_bar')]: { user_toggle: 'on' as const },
+    };
+    const tools = ['a_mcp_bar', 'b_mcp_foo_mcp_bar'];
+    expect(applyAgentToolSwitches({ tools, tool_options }, { mcp: ['bar'] }).tools).toEqual([
+      'a_mcp_bar',
+    ]);
+    expect(applyAgentToolSwitches({ tools, tool_options }, { mcp: ['foo_mcp_bar'] }).tools).toEqual(
+      ['b_mcp_foo_mcp_bar'],
+    );
+  });
+
+  it('matches the chat list by configured name for a normalized server', () => {
+    const agent = {
+      tools: ['search_mcp_My_Docs'],
+      tool_options: { [mcpServerToggleKey('My Docs')]: { user_toggle: 'off' as const } },
+    };
+    expect(applyAgentToolSwitches(agent, { mcp: [] }).tools).toEqual([]);
+    expect(applyAgentToolSwitches(agent, { mcp: ['My Docs'] }).tools).toEqual([
+      'search_mcp_My_Docs',
+    ]);
+  });
+
   it('drops the server placeholder and wildcard tokens with the server', () => {
     const result = applyAgentToolSwitches(
       {
@@ -154,5 +198,24 @@ describe('applyAgentToolSwitches', () => {
       { mcp: [] },
     );
     expect(result.tools).toEqual([]);
+  });
+});
+
+describe('pickUserToggleOptions', () => {
+  it('keeps only user_toggle entries and nothing else from the options', () => {
+    expect(
+      pickUserToggleOptions({
+        web_search: { user_toggle: 'off', defer_loading: true },
+        search_mcp_docs: { allowed_callers: ['direct'] },
+        [mcpServerToggleKey('docs')]: { user_toggle: 'on' },
+      }),
+    ).toEqual({
+      web_search: { user_toggle: 'off' },
+      [mcpServerToggleKey('docs')]: { user_toggle: 'on' },
+    });
+  });
+
+  it('returns undefined without options', () => {
+    expect(pickUserToggleOptions(undefined)).toBeUndefined();
   });
 });
