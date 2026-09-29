@@ -1,9 +1,9 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
-import { useSetRecoilState } from 'recoil';
 import { Provider, createStore } from 'jotai';
+import { useRecoilValue, useSetRecoilState } from 'recoil';
 import { act, render, waitFor } from '@testing-library/react';
-import { LocalStorageKeys, mcpServerToggleKey } from 'librechat-data-provider';
+import { Constants, LocalStorageKeys, mcpServerToggleKey } from 'librechat-data-provider';
 import type { TEphemeralAgent } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { MCPServerDefinition } from '~/hooks/MCP/useMCPServerManager';
@@ -93,6 +93,57 @@ describe('useApplyAgentToolSwitches', () => {
       await waitFor(() => expect(selected).toEqual([serverName]));
     },
   );
+
+  describe('switching agents inside one new chat', () => {
+    const agentX: SavedAgent = {
+      id: 'agent_x',
+      tools: ['web_search', 'echo_mcp_x-server'],
+      tool_options: {
+        web_search: { user_toggle: 'on' },
+        [mcpServerToggleKey('x-server')]: { user_toggle: 'on' },
+      },
+    };
+    let ephemeralAgent: TEphemeralAgent | null = null;
+    let store = createStore();
+    beforeEach(() => {
+      ephemeralAgent = null;
+      store = createStore();
+    });
+    function Probe({ agent }: { agent: SavedAgent }) {
+      useApplyAgentToolSwitches({ agent, conversationId: null });
+      ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(Constants.NEW_CONVO));
+      return null;
+    }
+    const tree = (agent: SavedAgent) => (
+      <RecoilRoot>
+        <Provider store={store}>
+          <Probe agent={agent} />
+        </Provider>
+      </RecoilRoot>
+    );
+
+    it("shows the next agent's defaults and clears the previous agent's switches", async () => {
+      const { rerender } = render(tree(agentX));
+      await waitFor(() => expect(ephemeralAgent).toEqual({ web_search: true, mcp: ['x-server'] }));
+
+      rerender(
+        tree({
+          id: 'agent_y',
+          tools: ['execute_code'],
+          tool_options: { execute_code: { user_toggle: 'off' } },
+        }),
+      );
+      await waitFor(() => expect(ephemeralAgent).toEqual({ execute_code: false, mcp: [] }));
+    });
+
+    it("clears the previous agent's switches when the next agent has none", async () => {
+      const { rerender } = render(tree(agentX));
+      await waitFor(() => expect(ephemeralAgent).toEqual({ web_search: true, mcp: ['x-server'] }));
+
+      rerender(tree({ id: 'agent_z', tools: ['web_search'], tool_options: {} }));
+      await waitFor(() => expect(ephemeralAgent).toEqual({ mcp: [] }));
+    });
+  });
 
   it('keeps a default-on server the user turned off once the new chat gets its real id', async () => {
     const store = createStore();

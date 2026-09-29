@@ -1,8 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { useAtom } from 'jotai';
 import { useRecoilCallback, useSetRecoilState } from 'recoil';
-import { Constants, LocalStorageKeys, getAgentToolSwitches } from 'librechat-data-provider';
-import type { Agent, TEphemeralAgent } from 'librechat-data-provider';
+import {
+  Constants,
+  LocalStorageKeys,
+  getAgentToolSwitches,
+  switchableBuiltinTools,
+} from 'librechat-data-provider';
+import type { Agent, TEphemeralAgent, SwitchableBuiltinTool } from 'librechat-data-provider';
 import { ephemeralAgentByConvoId, mcpValuesAtomFamily } from '~/store';
 import { applyAgentToolSwitchDefaults } from '~/utils';
 import { setTimestamp } from '~/utils/timestamps';
@@ -23,7 +28,12 @@ export function useApplyAgentToolSwitches({
         snapshot.getLoadable(ephemeralAgentByConvoId(convoId)).contents as TEphemeralAgent | null,
     [convoId],
   );
-  const seededRef = useRef<{ convoId: string; seedKey: string } | null>(null);
+  const seededRef = useRef<{
+    convoId: string;
+    seedKey: string;
+    builtins: SwitchableBuiltinTool[];
+    servers: string[];
+  } | null>(null);
   const agentRef = useRef(agent);
   agentRef.current = agent;
   const agentId = agent?.id;
@@ -39,13 +49,38 @@ export function useApplyAgentToolSwitches({
       return;
     }
     const switches = getAgentToolSwitches(current);
+    const switchableBuiltins = switchableBuiltinTools.filter((tool) => tool in switches.builtins);
     const switchableServers = Object.keys(switches.mcp);
-    if (Object.keys(switches.builtins).length === 0 && switchableServers.length === 0) {
-      return;
-    }
     const previousSeed = seededRef.current;
     const seedKey = `${agentId}:${switchesKey}`;
-    seededRef.current = { convoId, seedKey };
+    seededRef.current = {
+      convoId,
+      seedKey,
+      builtins: switchableBuiltins,
+      servers: switchableServers,
+    };
+    /** Another agent picked in this same chat leaves its switches behind; drop them. */
+    const stale =
+      previousSeed?.convoId === convoId && previousSeed.seedKey !== seedKey ? previousSeed : null;
+    const withoutStale = (previous: TEphemeralAgent | null): TEphemeralAgent | null => {
+      if (!stale || !previous) {
+        return previous;
+      }
+      const next: TEphemeralAgent = { ...previous };
+      for (const tool of stale.builtins) {
+        delete next[tool];
+      }
+      if (Array.isArray(next.mcp)) {
+        next.mcp = next.mcp.filter((name) => !stale.servers.includes(name));
+      }
+      return next;
+    };
+    if (switchableBuiltins.length === 0 && switchableServers.length === 0) {
+      if (stale) {
+        setEphemeralAgent(withoutStale);
+      }
+      return;
+    }
     /** A new chat that just received its real id already carries the user's
      *  choices, copied over from the submission; persist them instead of reseeding. */
     const carried =
@@ -65,16 +100,19 @@ export function useApplyAgentToolSwitches({
       convoId,
       isNewConvo: convoId === Constants.NEW_CONVO,
     });
-    setEphemeralAgent((previous) => ({
-      ...previous,
-      ...seeded,
-      ...(seeded.mcp && {
-        mcp: [
-          ...(previous?.mcp ?? []).filter((name) => !switchableServers.includes(name)),
-          ...seeded.mcp,
-        ],
-      }),
-    }));
+    setEphemeralAgent((current) => {
+      const previous = withoutStale(current);
+      return {
+        ...previous,
+        ...seeded,
+        ...(seeded.mcp && {
+          mcp: [
+            ...(previous?.mcp ?? []).filter((name) => !switchableServers.includes(name)),
+            ...seeded.mcp,
+          ],
+        }),
+      };
+    });
   }, [agentId, switchesKey, convoId, setEphemeralAgent, setMCPValues, getEphemeralAgent]);
 
   /** An explicit empty list overrides the creator's default-on servers, so it needs a
