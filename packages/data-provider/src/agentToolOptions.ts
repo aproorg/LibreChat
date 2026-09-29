@@ -1,4 +1,5 @@
-import { Constants } from './config';
+import type { TEphemeralAgent } from './types';
+import type { Agent } from './types/agents';
 import {
   Tools,
   actionDelimiter,
@@ -7,8 +8,7 @@ import {
   type AgentToolOptions,
   type AllowedCaller,
 } from './types/tools';
-import type { TEphemeralAgent } from './types';
-import type { Agent } from './types/agents';
+import { Constants } from './config';
 
 const actionDomainSeparatorRegex = new RegExp(actionDomainSeparator, 'g');
 
