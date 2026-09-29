@@ -614,7 +614,7 @@ export default function McpSection({ item }: Props) {
 
       <UserToggleSelect
         toolOptionKey={mcpServerToggleKey(serverName)}
-        labelId={`${serverName}-user-toggle-label`}
+        labelId={`${normalizeServerName(serverName)}-user-toggle-label`}
       />
 
       {configDialogProps && <MCPConfigDialog {...configDialogProps} />}

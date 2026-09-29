@@ -67,7 +67,7 @@ function OptionsProbe() {
   return <span data-testid="options">{JSON.stringify(value)}</span>;
 }
 
-function renderSection(toolOptions: AgentForm['tool_options']) {
+function renderSection(toolOptions: AgentForm['tool_options'], section: McpItem = item) {
   function Wrapper({ children }: { children: ReactNode }) {
     const methods = useForm<AgentForm>({
       defaultValues: { tools: [], tool_options: toolOptions } as unknown as AgentForm,
@@ -79,7 +79,7 @@ function renderSection(toolOptions: AgentForm['tool_options']) {
       </FormProvider>
     );
   }
-  return render(<McpSection item={item} />, { wrapper: Wrapper });
+  return render(<McpSection item={section} />, { wrapper: Wrapper });
 }
 
 const stored = () => JSON.parse(screen.getByTestId('options').textContent ?? 'null');
@@ -100,5 +100,20 @@ describe('McpSection user toggle', () => {
     renderSection(undefined);
     fireEvent.click(option('com_ui_tool_toggle_off'));
     expect(stored()).toEqual({ [key]: { user_toggle: 'off' } });
+  });
+
+  it('labels the setting and keys it by the configured name for a server name with spaces', () => {
+    const spaced: McpItem = {
+      ...item,
+      id: 'My Docs',
+      name: 'My Docs',
+      server: { serverName: 'My Docs', isConfigured: true, tools: [], metadata: {} } as never,
+    };
+    renderSection(undefined, spaced);
+    expect(
+      screen.getByRole('radiogroup', { name: 'com_ui_tool_toggle_label' }),
+    ).toBeInTheDocument();
+    fireEvent.click(option('com_ui_tool_toggle_on'));
+    expect(stored()).toEqual({ [mcpServerToggleKey('My Docs')]: { user_toggle: 'on' } });
   });
 });
