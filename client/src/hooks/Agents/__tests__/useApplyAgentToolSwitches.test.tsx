@@ -1,12 +1,15 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
+import { useSetRecoilState } from 'recoil';
 import { Provider, createStore } from 'jotai';
-import { render, waitFor } from '@testing-library/react';
-import { mcpServerToggleKey } from 'librechat-data-provider';
+import { act, render, waitFor } from '@testing-library/react';
+import { LocalStorageKeys, mcpServerToggleKey } from 'librechat-data-provider';
+import type { TEphemeralAgent } from 'librechat-data-provider';
 import type { Agent } from 'librechat-data-provider';
 import type { MCPServerDefinition } from '~/hooks/MCP/useMCPServerManager';
 import { useApplyAgentToolSwitches } from '../useApplyAgentToolSwitches';
 import { useMCPSelect } from '~/hooks/MCP/useMCPSelect';
+import { ephemeralAgentByConvoId } from '~/store';
 
 jest.mock('~/data-provider', () => ({
   ...jest.requireActual('~/data-provider'),
@@ -27,16 +30,28 @@ const withToggle = (toggle?: 'on' | 'off'): SavedAgent => ({
 });
 
 let selected: string[] = [];
+let select: (value: string[]) => void = () => undefined;
 
-function Picker() {
-  const { mcpValues } = useMCPSelect({ conversationId: null, servers, ownsChatSelection: true });
+function Picker({ conversationId }: { conversationId: string | null }) {
+  const { mcpValues, setMCPValues } = useMCPSelect({
+    conversationId,
+    servers,
+    ownsChatSelection: true,
+  });
   selected = mcpValues;
+  select = setMCPValues;
   return null;
 }
 
-function Chat({ agent }: { agent: SavedAgent }) {
-  useApplyAgentToolSwitches({ agent, conversationId: null });
-  return <Picker />;
+function Chat({
+  agent,
+  conversationId = null,
+}: {
+  agent: SavedAgent;
+  conversationId?: string | null;
+}) {
+  useApplyAgentToolSwitches({ agent, conversationId });
+  return <Picker conversationId={conversationId} />;
 }
 
 describe('useApplyAgentToolSwitches', () => {
@@ -77,4 +92,39 @@ describe('useApplyAgentToolSwitches', () => {
       await waitFor(() => expect(selected).toEqual([serverName]));
     },
   );
+
+  it('keeps a default-on server the user turned off once the new chat gets its real id', async () => {
+    const store = createStore();
+    let applyTemplate: (agent: TEphemeralAgent) => void = () => undefined;
+    function TemplateWriter() {
+      applyTemplate = useSetRecoilState(ephemeralAgentByConvoId('real1'));
+      return null;
+    }
+    const tree = (conversationId: string | null) => (
+      <RecoilRoot>
+        <Provider store={store}>
+          <TemplateWriter />
+          <Chat agent={withToggle('on')} conversationId={conversationId} />
+        </Provider>
+      </RecoilRoot>
+    );
+    const { rerender } = render(tree(null));
+    await waitFor(() => expect(selected).toEqual([serverName]));
+
+    act(() => select([]));
+    await waitFor(() => expect(selected).toEqual([]));
+
+    /** What the SSE handlers do on the first response: copy the submitted state to the real id. */
+    act(() => {
+      applyTemplate({ mcp: [] });
+      rerender(tree('real1'));
+    });
+    await waitFor(() =>
+      expect(localStorage.getItem(`${LocalStorageKeys.LAST_MCP_}real1`)).not.toBeNull(),
+    );
+    expect(selected).toEqual([]);
+    expect(
+      JSON.parse(localStorage.getItem(`${LocalStorageKeys.LAST_MCP_}real1`) ?? 'null'),
+    ).toEqual([]);
+  });
 });
