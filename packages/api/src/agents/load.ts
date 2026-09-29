@@ -7,7 +7,6 @@ import {
   getEphemeralSender,
   encodeEphemeralAgentId,
   applyAgentToolSwitches,
-  getAgentToolSwitches,
 } from 'librechat-data-provider';
 import type {
   AgentModelParameters,
@@ -250,14 +249,8 @@ export async function loadAgent(
   }
 
   agent.version ??= agent.versions?.length ?? 0;
-  if (userToolSwitches === undefined) {
-    return agent;
-  }
-  const hasSwitchableServer = Object.keys(getAgentToolSwitches(agent).mcp).length > 0;
-  agent.tools = applyAgentToolSwitches(agent, userToolSwitches).tools;
-  /** Context derivation prefers the request's server list over the agent's tools; drop it so the filtered tools decide. */
-  if (userToolSwitches != null && hasSwitchableServer) {
-    delete userToolSwitches.mcp;
+  if (userToolSwitches !== undefined) {
+    agent.tools = applyAgentToolSwitches(agent, userToolSwitches).tools;
   }
   return agent;
 }

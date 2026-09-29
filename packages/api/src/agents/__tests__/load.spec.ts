@@ -11,6 +11,7 @@ import type {
 } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { LoadAgentParams, LoadAgentDeps } from '../load';
+import { applyResumeContext, pickResumeContext } from '../hitl/policy';
 import { extractMCPServers } from '../context';
 import { loadAddedAgent } from '../added';
 import { loadAgent } from '../load';
@@ -1176,7 +1177,7 @@ describe('loadAgent', () => {
       [['C'], ['B']],
       [['A'], ['A', 'B']],
     ])(
-      'drops the request server list so context follows the filtered tools (%j)',
+      'leaves the request server list intact while the filtered tools name the servers (%j)',
       async (requestedServers, expectedServers) => {
         const agentId = `agent_${uuidv4()}`;
         await createAgent({
@@ -1190,9 +1191,38 @@ describe('loadAgent', () => {
         });
         const ephemeralAgent = { mcp: requestedServers };
         const result = await load(agentId, ephemeralAgent);
-        expect(ephemeralAgent).not.toHaveProperty('mcp');
+        expect(ephemeralAgent).toEqual({ mcp: requestedServers });
         const toolDefinitions = result!.tools!.map((name) => ({ name }));
         expect(extractMCPServers({ ...result, toolDefinitions } as never)).toEqual(expectedServers);
+      },
+    );
+
+    test.each([
+      ['on' as const, [], ['web_search']],
+      ['off' as const, ['A'], ['search_mcp_A', 'web_search']],
+    ])(
+      'rebuilds the same tools after a pause and resume (server starts %s, chat sends %j)',
+      async (userToggle, requestedServers, expectedTools) => {
+        const agentId = `agent_${uuidv4()}`;
+        await createAgent({
+          id: agentId,
+          name: 'Paused Agent',
+          provider: 'openai',
+          model: 'gpt-4',
+          author: new mongoose.Types.ObjectId(),
+          tools: ['search_mcp_A', 'web_search'],
+          tool_options: { sys__server__sys_mcp_A: { user_toggle: userToggle } },
+        });
+        const pausedBody: Record<string, unknown> = {
+          agent_id: agentId,
+          ephemeralAgent: { mcp: requestedServers },
+        };
+        const paused = await load(agentId, pausedBody.ephemeralAgent as TEphemeralAgent);
+        const resumedBody: Record<string, unknown> = { agent_id: agentId };
+        applyResumeContext(resumedBody, pickResumeContext(pausedBody));
+        const resumed = await load(agentId, resumedBody.ephemeralAgent as TEphemeralAgent);
+        expect(paused!.tools).toEqual(expectedTools);
+        expect(resumed!.tools).toEqual(expectedTools);
       },
     );
 
