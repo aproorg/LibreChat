@@ -3172,6 +3172,102 @@ describe('AgentClient - startup telemetry', () => {
     errorSpy.mockRestore();
   });
 
+  it.each([
+    [
+      'closed',
+      'SocketError',
+      ErrorTypes.MODEL_STREAM_CLOSED,
+      'stream_closed',
+      'The model provider closed the connection before the response finished. Try again.',
+    ],
+    [
+      'stalled',
+      'BodyTimeoutError',
+      ErrorTypes.MODEL_STREAM_STALLED,
+      'stream_stalled',
+      'The model provider stopped sending the response, and the request timed out. Try again.',
+    ],
+  ])(
+    'keeps partial content and a safe %s model error in the agent turn',
+    async (kind, causeName, type, errorType, prose) => {
+      jest.clearAllMocks();
+      const { logger } = require('@librechat/data-schemas');
+      const { errors: undiciErrors } = require('undici');
+      const privateValue = 'PRIVATE-TRANSPORT-DIAGNOSTIC';
+      const cause = new undiciErrors[causeName](privateValue);
+      const providerError = new TypeError('terminated', { cause });
+      const errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => logger);
+      mockCreateRun.mockImplementation(async (options) => {
+        const tracker = options.modelCallbacks.find(
+          (callback) => callback.name === 'librechat-upstream-model-error-tracker',
+        );
+        return {
+          Graph: null,
+          processStream: jest.fn(async () => {
+            tracker.handleLLMError(providerError);
+            throw new Error('graph failed', { cause: providerError });
+          }),
+          getCalibrationRatio: jest.fn(() => 0),
+        };
+      });
+      mockIsHITLEnabled.mockReturnValue(false);
+      const partial = { type: ContentTypes.TEXT, [ContentTypes.TEXT]: 'Partial findings' };
+      const client = new AgentClient({
+        req: {
+          user: { id: 'user-123' },
+          body: {},
+          config: {
+            endpoints: { [EModelEndpoint.agents]: {} },
+            filters: { messages: { pii: {} } },
+          },
+          _resumableStreamId: `conversation-stream-${kind}`,
+        },
+        res: {},
+        agent: {
+          id: 'agent-123',
+          endpoint: EModelEndpoint.openAI,
+          provider: EModelEndpoint.openAI,
+          model_parameters: { model: 'gpt-4' },
+          hide_sequential_outputs: false,
+        },
+        endpointTokenConfig: {},
+        eventHandlers: {},
+        contentParts: [partial],
+        collectedUsage: [],
+        artifactPromises: [],
+      });
+      client.conversationId = `conversation-stream-${kind}`;
+      client.responseMessageId = `response-stream-${kind}`;
+      client.parentMessageId = `parent-stream-${kind}`;
+      client.recordCollectedUsage = jest.fn().mockResolvedValue();
+
+      try {
+        await client.chatCompletion({ payload: [] });
+
+        expect(client.contentParts).toEqual(
+          expect.arrayContaining([
+            partial,
+            {
+              type: ContentTypes.ERROR,
+              [ContentTypes.ERROR]: `${prose}\n${JSON.stringify({ type })}`,
+            },
+          ]),
+        );
+        expect(JSON.stringify(client.contentParts)).not.toContain(privateValue);
+        expect(client.recordCollectedUsage).toHaveBeenCalledWith(
+          expect.objectContaining({ context: 'message' }),
+        );
+        expect(errorSpy).toHaveBeenCalledWith(
+          '[api/server/controllers/agents/client.js #sendCompletion] Upstream model error',
+          expect.objectContaining({ errorType }),
+        );
+        expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(privateValue);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+
   /** A compaction's only record of having been one is the marker on the part it
    *  produced, and Compact runs on whatever leaf the branch ends with. Without
    *  the marker on the failure, a compaction that failed on a user leaf keeps a
@@ -3547,9 +3643,9 @@ describe('AgentClient - startup telemetry', () => {
     client.contextMeta = {
       calibrationRatio: 1.25,
       encoding: client.getEncoding(),
-      fading: { v: 1, budgetTokens: 20_000, masked: true },
+      fading: { v: 2, budgetTokens: 20_000, masked: true },
       fadingTiers: [
-        { agentId: 'agent-123', v: 1, budgetTokens: 20_000, masked: true },
+        { agentId: 'agent-123', v: 2, budgetTokens: 20_000, masked: true },
         { agentId: 'agent-worker', v: 1, budgetTokens: 8_000, masked: false },
       ],
     };
@@ -3571,10 +3667,9 @@ describe('AgentClient - startup telemetry', () => {
         indexTokenCountMap: {},
         initialSummary: { text: 'summary of earlier turns', tokenCount: 40 },
         calibrationRatio: 1.25,
-        fadingTier: { v: 1, budgetTokens: 20_000, masked: true },
+        fadingTier: { v: 2, budgetTokens: 20_000, masked: true },
         fadingTiers: {
-          'agent-123': { v: 1, budgetTokens: 20_000, masked: true },
-          'agent-worker': { v: 1, budgetTokens: 8_000, masked: false },
+          'agent-123': { v: 2, budgetTokens: 20_000, masked: true },
         },
         compactionSemanticIndex: evolvedCompactionSemanticIndexSnapshot.entries,
       }),
