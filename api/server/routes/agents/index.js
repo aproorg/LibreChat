@@ -18,6 +18,7 @@ const {
   isAgentTriggerRequest,
   exemptAgentTriggerFromIpLimiter,
   captureScheduleFireContext,
+  OMIT_UNAVAILABLE_OPENID_HEADERS,
   exemptFromUserLimiter: exemptScheduleFromUserLimiter,
   detectGenerationRetry,
   isConfirmedGenerationRetry,
@@ -143,6 +144,13 @@ router.use(requireJwtAuth);
 router.use((req, _res, next) => {
   req._isAgentTrigger = isAgentTriggerRequest(req);
   captureScheduleFireContext(req);
+  if (
+    req._isScheduledFire &&
+    req.user &&
+    isEnabled(process.env.SCHEDULES_OMIT_UNAVAILABLE_OPENID_HEADERS)
+  ) {
+    req.user[OMIT_UNAVAILABLE_OPENID_HEADERS] = true;
+  }
   next();
 });
 router.use(checkBan);
