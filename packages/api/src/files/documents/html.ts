@@ -6,6 +6,7 @@ import {
   OFFICE_FILE_SHELL_MARKER,
 } from 'librechat-data-provider';
 import { tryLibreOfficePreview } from './libreoffice';
+import { METAFILE_KEY_JS, extractPptxMetafileSvgs } from './metafiles';
 import { assertSafeZipSize } from './zipSafety';
 
 /**
@@ -1115,7 +1116,14 @@ function buildPptxCdnDocument(
   base64: string,
   slideListFallbackBody: string,
   fileShell = false,
+  metafileSvgs: Record<string, string> = {},
 ): string {
+  /* Server-converted EMF/WMF → SVG map. `<` is escaped so a value can
+   * never close the script element. */
+  const metafileBlock =
+    Object.keys(metafileSvgs).length > 0
+      ? `<script id="lc-metafiles" type="application/json">${JSON.stringify(metafileSvgs).replace(/</g, '\\u003c')}</script>\n`
+      : '';
   /* PPTX-specific CSP relaxations vs DOCX:
    *   - `worker-src blob:` — pptx-preview's bundled echarts dep spins up
    *     Web Workers via blob: URLs for chart rendering. Without this,
@@ -1229,9 +1237,10 @@ ${PPTX_SLIDE_LIST_CSS}
   </details>
 </div>
 ${fileShell ? OFFICE_DOC_DATA_SLOT : `<script id="lc-doc-data" type="application/octet-stream;base64">${base64}</script>`}
-<script>
+${metafileBlock}<script>
 (function () {
   var settled = false;
+  var metafileKey = ${METAFILE_KEY_JS};
   function showFallback(reason) {
     if (settled) { return; }
     settled = true;
@@ -1428,6 +1437,16 @@ ${fileShell ? OFFICE_DOC_DATA_SLOT : `<script id="lc-doc-data" type="application
       return false;
     }
 
+    function swapMetafiles() {
+      try {
+        var m = JSON.parse(document.getElementById('lc-metafiles').textContent);
+        container.querySelectorAll('img[src^="data:image/x-emf;"],img[src^="data:image/x-wmf;"]').forEach(function (i) {
+          var u = m[metafileKey(i.getAttribute('src').split(',')[1])];
+          if (u) { i.src = u; }
+        });
+      } catch (e) {}
+    }
+
     function finalize() {
       /* previewer.preview() and the safety-net timer both call this; the
        * timer already guards on settled before calling it, but the
@@ -1435,6 +1454,7 @@ ${fileShell ? OFFICE_DOC_DATA_SLOT : `<script id="lc-doc-data" type="application
        * instead of at each call site. */
       if (settled) { return; }
       wrapSlides();
+      swapMetafiles();
       if (!hasRenderedContent()) {
         showFallback('renderer-empty-slide-list');
         return;
@@ -1499,11 +1519,13 @@ async function pptxToHtmlViaCdn(
   buffer: Buffer,
   slideListFallbackBody: string,
   fileShell = false,
+  metafileSvgs: Record<string, string> = {},
 ): Promise<string> {
   return buildPptxCdnDocument(
     fileShell ? '' : buffer.toString('base64'),
     slideListFallbackBody,
     fileShell,
+    metafileSvgs,
   );
 }
 
@@ -1550,8 +1572,13 @@ export async function pptxToHtml(
    * the empty-render case and reveals this slide-list fallback so the
    * user always gets readable content. Manual e2e on PR #12934. */
   const slideListBody = await renderPptxSlidesBodyForBuffer(buffer);
-  const cdnDoc = await pptxToHtmlViaCdn(buffer, slideListBody, fileShell);
+  const metafileSvgs = await extractPptxMetafileSvgs(buffer);
+  const cdnDoc = await pptxToHtmlViaCdn(buffer, slideListBody, fileShell, metafileSvgs);
   if (fileShell && Buffer.byteLength(cdnDoc, 'utf-8') > OFFICE_HTML_OUTPUT_CAP) {
+    const shellDoc = await pptxToHtmlViaCdn(buffer, '', true, metafileSvgs);
+    if (Buffer.byteLength(shellDoc, 'utf-8') <= OFFICE_HTML_OUTPUT_CAP) {
+      return shellDoc;
+    }
     return pptxToHtmlViaCdn(buffer, '', true);
   }
   /* Combined size budget: if base64 binary + slide-list fallback +
@@ -1559,6 +1586,13 @@ export async function pptxToHtml(
    * the slide-list standalone. Same pattern as the DOCX dispatcher's
    * size budget. */
   if (Buffer.byteLength(cdnDoc, 'utf-8') > OFFICE_HTML_OUTPUT_CAP) {
+    const plainDoc = await pptxToHtmlViaCdn(buffer, slideListBody, false);
+    if (
+      Object.keys(metafileSvgs).length > 0 &&
+      Buffer.byteLength(plainDoc, 'utf-8') <= OFFICE_HTML_OUTPUT_CAP
+    ) {
+      return plainDoc;
+    }
     return pptxToSlideListHtmlInternal(buffer);
   }
   return cdnDoc;
