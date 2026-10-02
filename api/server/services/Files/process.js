@@ -196,8 +196,17 @@ const createDeleteFileWithSecondaryStorage = ({ source, deleteFile, deletionMeth
       );
     }
     if (hasCodeEnvRef(file) && source !== FileSources.execute_code) {
-      secondaryDeleteMethods.push(
-        getDeleteMethod({ source: FileSources.execute_code, deletionMethods }),
+      const deleteCodeEnvCopy = getDeleteMethod({
+        source: FileSources.execute_code,
+        deletionMethods,
+      });
+      /* The sandbox copy is a cache of the primary bytes and expires on its own. A Code API
+       * that refuses the delete (wrong profile, unreachable route) must not leave the user
+       * with a record they can never remove. */
+      secondaryDeleteMethods.push((req, file) =>
+        deleteCodeEnvCopy(req, file).catch((err) => {
+          logger.warn('Could not delete code environment copy; removing the file anyway', err);
+        }),
       );
     }
 

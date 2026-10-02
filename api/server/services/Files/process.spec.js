@@ -2786,6 +2786,45 @@ describe('processDeleteRequest', () => {
     expect(db.deleteFiles).toHaveBeenCalledWith(['code-resource-file']);
     expect(result).toEqual({ deletedFileIds: ['code-resource-file'], failedFileIds: [] });
   });
+
+  it('removes metadata and agent references when the code environment rejects the delete', async () => {
+    const primaryDelete = jest.fn().mockRejectedValue(
+      Object.assign(new Error('no such file'), { code: 'ENOENT' }),
+    );
+    const codeDelete = jest.fn().mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { error: 'execution_profile_mismatch' } },
+      }),
+    );
+    getStrategyFunctions.mockImplementation((source) =>
+      source === FileSources.execute_code
+        ? { deleteFile: codeDelete }
+        : { deleteFile: primaryDelete },
+    );
+    db.deleteFiles.mockResolvedValue({ deletedCount: 1 });
+    const req = {
+      body: {},
+      config: {},
+      user: { id: 'user-123', tenantId: 'tenant-a' },
+    };
+    const file = {
+      file_id: 'stale-code-file',
+      filepath: '/uploads/user-123/stale.pptx',
+      source: FileSources.local,
+      metadata: {
+        codeEnvRef: { kind: 'agent', id: 'agent-abc', storage_session_id: 's', file_id: 'f' },
+      },
+    };
+
+    const result = await processDeleteRequest({ req, files: [file] });
+
+    expect(codeDelete).toHaveBeenCalledWith(req, file);
+    expect(db.deleteFiles).toHaveBeenCalledWith(['stale-code-file']);
+    expect(db.removeAgentResourceFilesFromAllAgents).toHaveBeenCalledWith({
+      file_ids: ['stale-code-file'],
+    });
+    expect(result).toEqual({ deletedFileIds: ['stale-code-file'], failedFileIds: [] });
+  });
 });
 
 describe('sweepExpiredFiles', () => {
