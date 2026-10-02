@@ -2,7 +2,10 @@ import path from 'path';
 import * as fs from 'fs';
 import { JSDOM } from 'jsdom';
 import type { DOMWindow } from 'jsdom';
+import JSZip from 'jszip';
+import { fillOfficeFileShell } from 'librechat-data-provider';
 import { _internal, pptxToHtml, wordDocToHtml } from './html';
+import { buildEmf } from './__tests__/emf.helper';
 
 /**
  * Options `pptxPreview.init` is called with, captured by the fake below so
@@ -31,6 +34,10 @@ interface RenderPptxLayoutOptions {
   /** Intercept the bootstrap's 8s safety-net timer instead of letting it
    *  schedule on the real clock; default false. */
   captureSafetyNet?: boolean;
+  /** Document to run instead of the default CDN bootstrap. */
+  html?: string;
+  /** <img> sources the fake renderer puts into every slide. */
+  slideImageSrcs?: string[];
 }
 
 interface RenderPptxLayoutResult {
@@ -63,12 +70,15 @@ async function renderPptxLayout(
     installRenderer = true,
     preview = 'resolve',
     captureSafetyNet = false,
+    slideImageSrcs = [],
   } = options;
 
-  const html = await _internal.pptxToHtmlViaCdn(
-    Buffer.from('fixture'),
-    '<ol class="lc-pptx-list"><li>fallback</li></ol>',
-  );
+  const html =
+    options.html ??
+    (await _internal.pptxToHtmlViaCdn(
+      Buffer.from('fixture'),
+      '<ol class="lc-pptx-list"><li>fallback</li></ol>',
+    ));
 
   let initializationOptions: FakePptxPreviewInitOptions | undefined;
   let currentRenderSlotWidth = renderSlotWidth;
@@ -153,6 +163,11 @@ async function renderPptxLayout(
                   slide.style.margin = '0px auto 10px';
                   if (!emptyWrappers) {
                     slide.textContent = `Slide ${index + 1}`;
+                    slideImageSrcs.forEach((src) => {
+                      const img = parsedWindow.document.createElement('img');
+                      img.setAttribute('src', src);
+                      slide.appendChild(img);
+                    });
                   }
                   wrapper.appendChild(slide);
                 }
@@ -497,6 +512,57 @@ describe('pptx CDN bootstrap — reserves the scrollbar gutter', () => {
       .getComputedStyle(window.document.documentElement)
       .getPropertyValue('scrollbar-gutter');
     expect(gutter).toBe('stable');
+  });
+});
+
+describe('pptx CDN bootstrap — EMF/WMF swap', () => {
+  const PNG_SRC = 'data:image/png;base64,iVBORw0KGgo=';
+  const emfBase64 = buildEmf().toString('base64');
+  const emfSrc = `data:image/x-emf;base64,${emfBase64}`;
+  const deck = async (withEmf: boolean): Promise<Buffer> => {
+    const zip = new JSZip();
+    zip.file('ppt/slides/slide1.xml', '<p:sld/>');
+    if (withEmf) {
+      zip.file('ppt/media/image1.emf', buildEmf());
+    }
+    return zip.generateAsync({ type: 'nodebuffer' });
+  };
+  const expectRendered = (document: Document) => {
+    expect((document.getElementById('lc-fallback') as HTMLElement).hidden).toBe(true);
+  };
+
+  test('swaps the EMF img src for an SVG data URI and leaves a png alone', async () => {
+    const html = await pptxToHtml(await deck(true));
+    const { document } = await renderPptxLayout(1, 768, {
+      html,
+      slideImageSrcs: [emfSrc, PNG_SRC],
+    });
+    const [emfImg, pngImg] = Array.from(document.querySelectorAll('.lc-slide-wrap img'));
+    expect(emfImg.getAttribute('src')).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(pngImg.getAttribute('src')).toBe(PNG_SRC);
+    expectRendered(document);
+  });
+
+  test('swaps in a file-shell deck filled client-side', async () => {
+    const buffer = await deck(true);
+    const shell = await pptxToHtml(buffer, { fileShell: true });
+    const html = fillOfficeFileShell(shell, buffer.toString('base64'));
+    const { document } = await renderPptxLayout(1, 768, {
+      html,
+      slideImageSrcs: [emfSrc, PNG_SRC],
+    });
+    const [emfImg, pngImg] = Array.from(document.querySelectorAll('.lc-slide-wrap img'));
+    expect(emfImg.getAttribute('src')).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(pngImg.getAttribute('src')).toBe(PNG_SRC);
+    expectRendered(document);
+  });
+
+  test('leaves emf-like srcs untouched without a metafile map', async () => {
+    const html = await pptxToHtml(await deck(false));
+    expect(html).not.toContain('id="lc-metafiles"');
+    const { document } = await renderPptxLayout(1, 768, { html, slideImageSrcs: [emfSrc] });
+    expect(document.querySelector('.lc-slide-wrap img')?.getAttribute('src')).toBe(emfSrc);
+    expectRendered(document);
   });
 });
 
