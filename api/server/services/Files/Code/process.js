@@ -34,6 +34,8 @@ const {
   executeWorkspaceTool,
   selectCodeFiles,
   getCodeFileInfo,
+  getCodeFileContextLine,
+  appendCodeFileContextLine,
   getUploadedCodeEnvFilename,
   checkCodeFileActive: checkIfActive,
   CODE_OUTPUT_PREFLIGHT_MAX_BYTES,
@@ -43,9 +45,7 @@ const {
   resolveDownloadPath,
 } = require('@librechat/api');
 const {
-  Tools,
   megabyte,
-  FileContext,
   FileSources,
   EToolResources,
   EModelEndpoint,
@@ -625,54 +625,6 @@ async function getSessionInfo(ref, req, route = {}, signal) {
   return (await getSessionFileInfo(ref, req, route, signal))?.lastModified ?? null;
 }
 
-const getPreviewContextSuffix = (file) => {
-  if (file.status === 'pending') {
-    return ' (preview not yet generated)';
-  }
-
-  if (file.status !== 'failed') {
-    return '';
-  }
-
-  return file.previewError
-    ? ` (preview unavailable: ${file.previewError})`
-    : ' (preview unavailable)';
-};
-
-/**
- * A generated output is normally left out — the model already knows what it
- * wrote. That only holds while the file is still where it wrote it: once a
- * newer same-named file takes the bare path, the output mounts under a
- * suffixed name the model has never seen, and silence would leave it reading
- * the newcomer or failing to find its own artifact.
- */
-const getVisibleCodeFileContextLine = (file, agentResourceIds, destination) => {
-  const displaced = destination !== file.filename;
-  if (file.context === FileContext.execute_code && !displaced) {
-    return '';
-  }
-
-  const origin =
-    file.context === FileContext.execute_code
-      ? ` (written earlier as ${file.filename})`
-      : `${agentResourceIds.has(file.file_id) ? '' : ' (attached by user)'}${
-          displaced ? ` (uploaded as ${file.filename})` : ''
-        }`;
-  return `\n\t- /mnt/data/${destination}${origin}${getPreviewContextSuffix(file)}`;
-};
-
-const appendVisibleCodeFileContext = (toolContext, contextLine) => {
-  if (!contextLine) {
-    return toolContext;
-  }
-
-  if (toolContext) {
-    return `${toolContext}${contextLine}`;
-  }
-
-  return `- Note: The following files are available in the "${Tools.execute_code}" tool environment:${contextLine}`;
-};
-
 class CodeResourceRecoveryError extends Error {
   constructor({ required, primed, failed }) {
     super(JSON.stringify({ type: ErrorTypes.RESOURCE_RECOVERY_REQUIRED }));
@@ -731,6 +683,7 @@ const getReuploadFailureCategory = (error) => {
  * @param {string} [options.agentId] - The agent ID for file access control
  * @param {string} [options.agentResourceType] - Permission resource type for the authorized agent route
  * @param {AbortSignal} [options.signal] - Effective run cancellation signal
+ * @param {import('@librechat/api').CodeFileLocation} [options.codeFileLocation] - Where the model can open primed files
  * @returns {Promise<{
  * files: Array<{ id: string; session_id: string; name: string }>,
  * toolContext: string,
@@ -746,6 +699,7 @@ const primeFiles = async (options) => {
     executionProfile = 'default',
     executionRouteKey = executionProfile,
     bridgeWorkerId,
+    codeFileLocation,
     signal,
   } = options;
   const codeApiRoute = { baseUrl: codeApiBaseUrl, executionProfile, bridgeWorkerId };
@@ -829,9 +783,10 @@ const primeFiles = async (options) => {
     const pushFile = (overrideSessionId, overrideId, destination = sandboxName) => {
       /* The sandbox holds the converted name, not the record's, so the mount path has
        * to follow the same rule provisioning uploaded under. */
-      toolContext = appendVisibleCodeFileContext(
+      toolContext = appendCodeFileContextLine(
         toolContext,
-        getVisibleCodeFileContextLine(file, agentResourceIds, destination),
+        getCodeFileContextLine(file, agentResourceIds, destination, codeFileLocation),
+        codeFileLocation,
       );
       /* `id` is the storage file_id (drives codeapi's upload-key
        * existence check), `resource_id` is the entity that owns
@@ -1115,6 +1070,7 @@ async function readSandboxFile({
  * @param {string} params.file_path
  * @param {string} params.workspace_id
  * @param {string} [params.workspace_instance_id]
+ * @param {boolean} [params.linked_worktrees]
  * @param {number} params.start_line
  * @param {number} params.max_lines
  * @param {string} params.codeApiBaseUrl
@@ -1127,6 +1083,7 @@ async function readWorkspaceFile({
   file_path,
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   start_line,
   max_lines,
   codeApiBaseUrl,
@@ -1135,10 +1092,16 @@ async function readWorkspaceFile({
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1164,6 +1127,7 @@ async function readWorkspaceFile({
  * @param {string} params.query
  * @param {string} params.workspace_id
  * @param {string} [params.workspace_instance_id]
+ * @param {boolean} [params.linked_worktrees]
  * @param {string} [params.path]
  * @param {number} params.max_results
  * @param {string} params.codeApiBaseUrl
@@ -1176,6 +1140,7 @@ async function searchWorkspace({
   query,
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   path,
   max_results,
   codeApiBaseUrl,
@@ -1184,10 +1149,16 @@ async function searchWorkspace({
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1212,6 +1183,7 @@ async function searchWorkspace({
  * @param {Object} params
  * @param {string} params.workspace_id
  * @param {string} [params.workspace_instance_id]
+ * @param {boolean} [params.linked_worktrees]
  * @param {string} [params.path]
  * @param {string} [params.after_path]
  * @param {number} params.max_results
@@ -1224,6 +1196,7 @@ async function searchWorkspace({
 async function listWorkspaceFiles({
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   path,
   after_path,
   max_results,
@@ -1233,10 +1206,16 @@ async function listWorkspaceFiles({
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1262,16 +1241,23 @@ async function writeWorkspaceFile({
   overwrite,
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   codeApiBaseUrl,
   executionProfile,
   bridgeWorkerId,
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1295,18 +1281,26 @@ async function editWorkspaceFile({
   file_path,
   edits,
   expected_base_sha256,
+  matching,
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   codeApiBaseUrl,
   executionProfile,
   bridgeWorkerId,
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1320,6 +1314,7 @@ async function editWorkspaceFile({
       path: file_path,
       edits,
       ...(expected_base_sha256 ? { expectedBaseSha256: expected_base_sha256 } : {}),
+      matching,
     },
     ...(signal ? { signal } : {}),
   });
@@ -1329,18 +1324,26 @@ async function editWorkspaceFile({
 async function previewWorkspaceEdit({
   file_path,
   edits,
+  matching,
   workspace_id,
   workspace_instance_id,
+  linked_worktrees,
   codeApiBaseUrl,
   executionProfile,
   bridgeWorkerId,
   req,
   signal,
   maxQueueWaitMs,
+  maxRequestTimeoutMs,
+  deadlineAtMs,
 }) {
   return executeWorkspaceTool({
     baseURL: codeApiBaseUrl,
+    linkedWorktrees: linked_worktrees,
     maxQueueWaitMs,
+    codeApiMaxRetryWaitMs: req?.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+    maxRequestTimeoutMs,
+    deadlineAtMs,
     /** Minted per admission attempt: a queued call outlives one token TTL. */
     authHeaders: async () => ({
       ...(await getCodeApiAuthHeaders(req, bridgeWorkerId)),
@@ -1353,6 +1356,7 @@ async function previewWorkspaceEdit({
       ...(workspace_instance_id ? { workspaceInstanceId: workspace_instance_id } : {}),
       path: file_path,
       edits,
+      matching,
     },
     ...(signal ? { signal } : {}),
   });

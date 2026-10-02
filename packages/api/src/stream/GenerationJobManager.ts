@@ -4,6 +4,7 @@ import {
   Constants,
   ContentTypes,
   StepTypes,
+  StepEvents,
   UsageEvents,
   ApprovalEvents,
   SteerEvents,
@@ -20,6 +21,7 @@ import type {
 import type { StandardGraph } from '@librechat/agents';
 import type {
   SerializableJobData,
+  GenerationSettlementState,
   CreatedJobData,
   IEventTransport,
   UsageMetadata,
@@ -442,6 +444,18 @@ function getReplayStepId(event: t.ServerSentEvent): unknown {
     const result = 'result' in event.data ? event.data.result : undefined;
     return result != null && typeof result === 'object' && 'id' in result ? result.id : undefined;
   }
+  if (event.event === StepEvents.ON_TOOL_PREPARATION) {
+    const marker = event.data as { id?: unknown; toolCallId?: unknown; index?: unknown };
+    return typeof marker.id === 'string'
+      ? `${marker.id}:${typeof marker.toolCallId === 'string' ? marker.toolCallId : `#${marker.index}`}`
+      : undefined;
+  }
+  if (event.event === StepEvents.ON_TOOL_CALLS_DISPATCHED) {
+    const calls = (event.data as { toolCalls?: unknown }).toolCalls;
+    return Array.isArray(calls)
+      ? JSON.stringify(calls.map((call) => [call?.stepId, call?.id]))
+      : undefined;
+  }
 
   if (event.event === 'on_elicitation') {
     const elicitation = 'elicitation' in event.data ? event.data.elicitation : undefined;
@@ -455,6 +469,28 @@ function getReplayStepId(event: t.ServerSentEvent): unknown {
   }
 
   return undefined;
+}
+
+function isToolTimingReplayEvent(event: t.ServerSentEvent): boolean {
+  if (!('event' in event) || event.data == null || typeof event.data !== 'object') return false;
+  if (event.event === StepEvents.ON_TOOL_PREPARATION) {
+    const marker = event.data as { id?: unknown; observed_at?: unknown };
+    return (
+      typeof marker.id === 'string' &&
+      marker.id !== '' &&
+      typeof marker.observed_at === 'number' &&
+      Number.isFinite(marker.observed_at)
+    );
+  }
+  if (event.event === StepEvents.ON_TOOL_CALLS_DISPATCHED) {
+    const dispatch = event.data as { dispatched_at?: unknown; toolCalls?: unknown };
+    return (
+      typeof dispatch.dispatched_at === 'number' &&
+      Number.isFinite(dispatch.dispatched_at) &&
+      Array.isArray(dispatch.toolCalls)
+    );
+  }
+  return false;
 }
 
 function isReplayEvent(event: t.ServerSentEvent): boolean {
@@ -585,10 +621,22 @@ export interface CreateGenerationJobOptions {
  * receiving this claim, then pass the same object to {@link finishTerminalJob}
  * from a `finally` block.
  */
+/** A generation reached a terminal state and released its runtime. */
+export interface GenerationSettledEvent {
+  streamId: string;
+  conversationId: string;
+  userId: string;
+  status: TerminalJobClaim['status'];
+}
+
+export type GenerationSettledListener = (event: GenerationSettledEvent) => void;
+
 export interface TerminalJobClaim {
   readonly streamId: string;
   readonly createdAt: number;
   readonly conversationId?: string;
+  /** The generation's owner, so settlement can be announced to that principal's waiters. */
+  readonly userId?: string;
   readonly status: 'complete' | 'error' | 'aborted';
   readonly error?: string;
   /** The winner must durably publish either its normal FINAL or a
@@ -803,6 +851,7 @@ class GenerationJobManagerClass {
 
   /** Makes terminal cleanup idempotent while keeping claims opaque to callers. */
   private terminalFinishPromises = new WeakMap<TerminalJobClaim, Promise<void>>();
+  private generationSettledListeners = new Set<GenerationSettledListener>();
 
   /** Exact local runtime observed when a claim won; never clean a later runtime. */
   private terminalClaimRuntimes = new WeakMap<TerminalJobClaim, RuntimeJobState | null>();
@@ -1095,6 +1144,7 @@ class GenerationJobManagerClass {
       createdAt,
       ...(job?.createdAt === createdAt &&
         job.conversationId != null && { conversationId: job.conversationId }),
+      ...(job?.createdAt === createdAt && job.userId != null && { userId: job.userId }),
       status: 'error' as const,
       error,
       drainedSteers: Object.freeze([...drainedSteers]),
@@ -2273,7 +2323,7 @@ class GenerationJobManagerClass {
     streamId: string,
     job: Pick<
       SerializableJobData,
-      'createdAt' | 'conversationId' | 'providerExecutionId' | 'agentEventDeliveryKey'
+      'createdAt' | 'conversationId' | 'providerExecutionId' | 'agentEventDeliveryKey' | 'userId'
     >,
     message: string,
   ): Promise<boolean> {
@@ -2305,6 +2355,13 @@ class GenerationJobManagerClass {
               expectCreatedAt: job.createdAt,
             })
           ) {
+            /** A direct terminal transition builds no claim, so it announces itself. */
+            this.notifyGenerationSettled({
+              streamId,
+              conversationId: job.conversationId,
+              userId: job.userId,
+              status: 'error',
+            });
             return true;
           }
         } catch (error) {
@@ -2315,6 +2372,15 @@ class GenerationJobManagerClass {
 
         try {
           const current = await this.jobStore.getJob(streamId);
+          if (current?.createdAt === job.createdAt && current.status === 'error') {
+            this.notifyGenerationSettled({
+              streamId,
+              conversationId: current.conversationId,
+              userId: current.userId,
+              status: 'error',
+            });
+            return true;
+          }
           if (
             current == null ||
             current.createdAt !== job.createdAt ||
@@ -2413,7 +2479,7 @@ class GenerationJobManagerClass {
       (options.recoveredSteerPayload != null &&
         !isRecoveredSteerPayload(options.recoveredSteerPayload))
     ) {
-      throw new RecoveredSteerPayloadMismatchError();
+      throw new RecoveredSteerPayloadMismatchError('invalid_payload');
     }
     // Capture the active epoch before the store atomically replaces it. A
     // subscriber attached to that predecessor filters events by generation,
@@ -3759,9 +3825,21 @@ class GenerationJobManagerClass {
     await this.jobStore.releaseIdempotencyKey(legacyKey, expectedClaim);
   }
 
-  /**
-   * Get job status.
-   */
+  /** Observes identity and final-save ownership without attaching a runtime or
+   * promoting a slow terminal writer to stale-owner recovery. */
+  async getGenerationSettlementState(
+    streamId: string,
+  ): Promise<GenerationSettlementState | undefined> {
+    const job = await this.jobStore.getJob(streamId);
+    if (job == null) return undefined;
+    return {
+      createdAt: job.createdAt,
+      status: job.status,
+      terminalPersistencePending: job.terminalPersistencePending,
+    };
+  }
+
+  /** Get job status. */
   async getJobStatus(streamId: string): Promise<t.GenerationJobStatus | undefined> {
     const jobData = await this.jobStore.getJob(streamId);
     return jobData?.status as t.GenerationJobStatus | undefined;
@@ -3918,6 +3996,7 @@ class GenerationJobManagerClass {
       ...(jobData.conversationId != null && {
         conversationId: jobData.conversationId,
       }),
+      ...(jobData.userId != null && { userId: jobData.userId }),
       status,
       ...(terminalError != null && { error: terminalError }),
       ...(options.persistencePending === true && {
@@ -4088,6 +4167,40 @@ class GenerationJobManagerClass {
    * claim is idempotent, and every local mutation is pinned to the runtime
    * object and generation epoch captured when the CAS won.
    */
+  /**
+   * Calls `listener` after each generation owned by this process reaches a
+   * terminal state and its runtime is released — by completion, error, or
+   * abort. Listeners run synchronously and must not throw; failures are logged
+   * and never affect terminal cleanup. Returns an unsubscribe function.
+   */
+  onGenerationSettled(listener: GenerationSettledListener): () => void {
+    this.generationSettledListeners.add(listener);
+    return () => {
+      this.generationSettledListeners.delete(listener);
+    };
+  }
+
+  private notifyGenerationSettled(
+    target: Pick<TerminalJobClaim, 'streamId' | 'conversationId' | 'userId' | 'status'>,
+  ): void {
+    if (target.userId == null || this.generationSettledListeners.size === 0) {
+      return;
+    }
+    const event: GenerationSettledEvent = {
+      streamId: target.streamId,
+      conversationId: target.conversationId ?? target.streamId,
+      userId: target.userId,
+      status: target.status,
+    };
+    for (const listener of this.generationSettledListeners) {
+      try {
+        listener(event);
+      } catch (listenerError) {
+        logger.error('[GenerationJobManager] Generation settled listener failed', listenerError);
+      }
+    }
+  }
+
   finishTerminalJob(claim: TerminalJobClaim): Promise<void> {
     const inFlight = this.terminalFinishPromises.get(claim);
     if (inFlight) {
@@ -4277,6 +4390,7 @@ class GenerationJobManagerClass {
         metricStatus = 'error';
       }
       recordGenerationJob(this.storeLabel, metricStatus);
+      this.notifyGenerationSettled(claim);
     }
 
     if (cleanupError != null) {
@@ -4633,6 +4747,7 @@ class GenerationJobManagerClass {
       ...(jobData.conversationId != null && {
         conversationId: jobData.conversationId,
       }),
+      ...(jobData.userId != null && { userId: jobData.userId }),
       status: 'aborted',
       persistencePending: true,
       drainedSteers: Object.freeze([...drainedSteers]),
@@ -7405,6 +7520,9 @@ class GenerationJobManagerClass {
     if (event.event === UsageEvents.ON_TOKEN_USAGE) {
       return this.trackTokenUsage(streamId, event, expectedCreatedAt);
     }
+    if (isToolTimingReplayEvent(event)) {
+      return this.trackReplayEvent(streamId, event, expectedCreatedAt);
+    }
     if (
       (event.event === 'on_run_step' ||
         event.event === 'on_run_step_delta' ||
@@ -7695,7 +7813,7 @@ class GenerationJobManagerClass {
     event: t.ServerSentEvent,
     expectedCreatedAt: number,
   ): Promise<void> {
-    if (!isReplayEvent(event)) {
+    if (!isReplayEvent(event) && !isToolTimingReplayEvent(event)) {
       return;
     }
 
@@ -8882,6 +9000,17 @@ class GenerationJobManagerClass {
 
     await this.runApprovalExpiredHandler(streamId, expiredJob);
     await this.notifyApprovalExpiredRuntime(streamId, expiredJob.createdAt, observedRuntime);
+    /** Expiry is a direct `requires_action -> aborted` transition that never builds a
+     * terminal claim, so it announces settlement itself. */
+    this.notifyGenerationSettled({
+      streamId,
+      conversationId: expiredJob.conversationId,
+      userId: expiredJob.userId,
+      status: 'aborted',
+    });
+    /** Terminal now; releasing ownership keeps the sweep's relay branch from
+     * announcing this generation a second time. */
+    this.releaseJobOwnership(streamId, expiredJob.createdAt);
     return true;
   }
 
@@ -9072,7 +9201,17 @@ class GenerationJobManagerClass {
           await this.runApprovalExpiredHandler(streamId, job);
         }
         await this.notifyApprovalExpiredRuntime(streamId, job.createdAt, runtime);
-        changed = this.releaseJobOwnership(streamId, job.createdAt) || changed;
+        const released = this.releaseJobOwnership(streamId, job.createdAt);
+        if (released) {
+          /** The store won the expiry CAS, so no local claim announced it. */
+          this.notifyGenerationSettled({
+            streamId,
+            conversationId: job.conversationId,
+            userId: job.userId,
+            status: 'aborted',
+          });
+        }
+        changed = released || changed;
         continue;
       }
       if (

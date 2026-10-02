@@ -54,6 +54,7 @@ import { processMCPEnv, isPluginSourced } from '~/utils/env';
 import { OAuthLifecycleRelay } from './oauth/pending';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { isOwnedAbortError } from '~/utils/errors';
+import { withMCPRequestSignal } from './signal';
 import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
 import { mcpConfig } from './mcpConfig';
@@ -100,6 +101,8 @@ function createOboToolCallErrorMessage(
     failureSuffix = 'Re-authenticate the user or verify the configured OBO scopes and retry.';
   } else if (error.reason === 'session_refresh_failed') {
     failureSuffix = 'Please sign in again.';
+  } else if (error.reason === 'missing_upstream_provider') {
+    failureSuffix = 'Configure a renewable upstream credential provider before retrying.';
   }
 
   return `${logPrefix} ${error.userMessage} Cannot execute tool ${toolName}. ${failureSuffix}`;
@@ -1248,7 +1251,6 @@ Please follow these instructions when using tools from the respective MCP server
      *  `on_elicitation_resolved` onto the right step from the completion route. */
     elicitationStepId?: string;
   }): Promise<t.FormattedToolResponse> {
-
     const userId = user?.id;
     const logPrefix = userId ? `[MCP][User: ${userId}][${serverName}]` : `[MCP][${serverName}]`;
     this.bindRequestScopedConnectionStore(requestScopedConnections);
@@ -1318,7 +1320,7 @@ Please follow these instructions when using tools from the respective MCP server
             signal: options?.signal,
             customUserVars,
             requestBody,
-requestScopedConnections,
+            requestScopedConnections,
             serverConfig: providedConfig,
             directBearerRecoveryState,
           });
@@ -1428,11 +1430,16 @@ requestScopedConnections,
             );
           }
           if (!oboUpstreamTokenProvider) {
-            throw new McpError(
-              ErrorCode.InternalError,
-              `${logPrefix} Internal: upstreamTokenProvider not plumbed for OBO tool call. ` +
-                'OBO requires a live upstream-token closure; the caller must construct one via ' +
-                'createOpenIDSessionTokenProvider() and forward it through callTool().',
+            const missing = new OboTokenResolutionError(
+              'missing_upstream_provider',
+              'No upstream credential provider is configured for this OBO MCP tool.',
+            );
+            throw Object.assign(
+              new McpError(
+                ErrorCode.InternalError,
+                createOboToolCallErrorMessage(logPrefix, toolName, missing),
+              ),
+              { cause: missing },
             );
           }
           const oboTrusted = oboTrustChecker
@@ -1466,10 +1473,14 @@ requestScopedConnections,
             );
           } catch (error) {
             if (error instanceof OboTokenResolutionError) {
-              throw new McpError(
+              const failure = new McpError(
                 ErrorCode.InternalError,
                 createOboToolCallErrorMessage(logPrefix, toolName, error),
               );
+              if (error.reason === 'missing_upstream_provider') {
+                throw Object.assign(failure, { cause: error });
+              }
+              throw failure;
             }
             throw error;
           }
@@ -1650,7 +1661,12 @@ requestScopedConnections,
                 return { action: 'decline' };
               }
               try {
-                const flowId = generateElicitationFlowId(userId, serverName, toolName, getTenantId());
+                const flowId = generateElicitationFlowId(
+                  userId,
+                  serverName,
+                  toolName,
+                  getTenantId(),
+                );
                 logger.debug(
                   `${logPrefix}[${toolName}] Elicitation requested (${isUrlMode ? 'url' : 'form'}), flowId: ${flowId}`,
                 );
@@ -1674,7 +1690,9 @@ requestScopedConnections,
                   },
                   combineAbortSignals(options?.signal, elicitationSignal),
                 );
-                logger.debug(`${logPrefix}[${toolName}] Elicitation resolved: ${flowResult.action}`);
+                logger.debug(
+                  `${logPrefix}[${toolName}] Elicitation resolved: ${flowResult.action}`,
+                );
                 return {
                   action: toElicitResultAction(flowResult.action),
                   content: flowResult.content,
@@ -1692,20 +1710,23 @@ requestScopedConnections,
         );
 
         const requestTool = () =>
-          connection!.client.request(
-            {
-              method: 'tools/call',
-              params: {
-                name: toolName,
-                arguments: toolArguments,
+          withMCPRequestSignal(options?.signal, (signal) =>
+            connection!.client.request(
+              {
+                method: 'tools/call',
+                params: {
+                  name: toolName,
+                  arguments: toolArguments,
+                },
               },
-            },
-            CallToolResultSchema,
-            {
-              timeout: elicitationStart ? elicitationTimeout : connection!.timeout,
-              resetTimeoutOnProgress: true,
-              ...options,
-            },
+              CallToolResultSchema,
+              {
+                timeout: elicitationStart ? elicitationTimeout : connection!.timeout,
+                resetTimeoutOnProgress: true,
+                ...options,
+                signal,
+              },
+            ),
           );
 
         const requestedCredentialSetId = connection.getOAuthCredentialSetId?.();
@@ -1713,93 +1734,97 @@ requestScopedConnections,
         try {
           try {
             result = await requestTool();
-        } catch (error) {
-          if (directBearerRecovery && user && isMCPTransportAuthenticationError(error)) {
-            if (directBearerRecoveryState.attempted) {
-              throw new MCPAuthenticationRejectedError(serverName, false, error);
+          } catch (error) {
+            if (directBearerRecovery && user && isMCPTransportAuthenticationError(error)) {
+              if (directBearerRecoveryState.attempted) {
+                throw new MCPAuthenticationRejectedError(serverName, false, error);
+              }
+              directBearerRecoveryState.attempted = true;
+              const recovery = this.recoverDirectOpenIDBearerConnection({
+                connection,
+                serverName,
+                serverConfig: declaredConfig,
+                user,
+                flowManager,
+                tokenMethods,
+                oauthStart,
+                oauthEnd,
+                customUserVars,
+                requestBody,
+                requestScopedConnections,
+                graphTokenResolver,
+                upstreamTokenProvider,
+                upstreamTokenProviderResolver,
+                oboIdentityContext,
+                onOAuthCredentialsChanged,
+                onOAuthCredentialsChanging,
+                signal: options?.signal,
+                directBearerRecoveryState,
+              });
+              await releaseConnectionLease();
+              await recovery;
+              throw new MCPAuthenticationRejectedError(serverName, true, error);
             }
-            directBearerRecoveryState.attempted = true;
-            const recovery = this.recoverDirectOpenIDBearerConnection({
-              connection,
-              serverName,
-              serverConfig: declaredConfig,
-              user,
-              flowManager,
-              tokenMethods,
-              oauthStart,
-              oauthEnd,
-              customUserVars,
-              requestBody,
-              requestScopedConnections,
-              graphTokenResolver,
-              upstreamTokenProvider,
-              upstreamTokenProviderResolver,
-              oboIdentityContext,
-              onOAuthCredentialsChanged,
-              onOAuthCredentialsChanging,
-              signal: options?.signal,
-              directBearerRecoveryState,
-            });
-            await releaseConnectionLease();
-            await recovery;
-            throw new MCPAuthenticationRejectedError(serverName, true, error);
-          }
-          /**
-           * An OBO server rejecting the bearer mid-session is recoverable here and
-           * nowhere else: the downstream token is minted from the upstream session
-           * this request still holds, and `attachSharedOAuthHandler` is never set for
-           * an OBO-only config, so the OAuth recovery below would rethrow untouched.
-           * Without this the rejected token is re-served from cache on every later
-           * call until it expires.
-           */
-          if (usesObo && connection.isOAuthAuthenticationError(error)) {
-            logger.info(
-              `${logPrefix}[${toolName}] OBO token rejected by server; re-exchanging and retrying once`,
-            );
-            await applyOboAuthorization(true);
-            connection.setRequestHeaders(resolvedHeaders);
-            result = await requestTool();
-          } else {
-            const requestOAuthHandler = attachSharedOAuthHandler;
-            if (!requestOAuthHandler || !userId) {
-              throw error;
-            }
-
-            if (!connection.isOAuthAuthenticationError(error)) {
-              throw error;
-            }
-
-            try {
-              await waitForRecoveryWithoutLease(() =>
-                this.recoverOAuthConnection(
-                  connection!,
-                  error,
-                  serverName,
-                  userId,
-                  requestOAuthHandler,
-                  oauthStart,
-                  oauthEnd,
-                  flowManager,
-                  options?.signal,
-                  !recoveryTakeoverConsumed,
-                  requestedCredentialSetId,
-                ),
+            /**
+             * An OBO server rejecting the bearer mid-session is recoverable here and
+             * nowhere else: the downstream token is minted from the upstream session
+             * this request still holds, and `attachSharedOAuthHandler` is never set for
+             * an OBO-only config, so the OAuth recovery below would rethrow untouched.
+             * Without this the rejected token is re-served from cache on every later
+             * call until it expires.
+             */
+            if (usesObo && connection.isOAuthAuthenticationError(error)) {
+              logger.info(
+                `${logPrefix}[${toolName}] OBO token rejected by server; re-exchanging and retrying once`,
               );
-            } catch (recoveryError) {
-              if (recoveryError instanceof OAuthRecoveryTakeoverRequired) {
-                throw recoveryError;
+              await applyOboAuthorization(true);
+              connection.setRequestHeaders(resolvedHeaders);
+              result = await requestTool();
+            } else {
+              const requestOAuthHandler = attachSharedOAuthHandler;
+              if (!requestOAuthHandler || !userId) {
+                throw error;
               }
-              if (options?.signal?.aborted) {
-                throw recoveryError;
+
+              if (!connection.isOAuthAuthenticationError(error)) {
+                throw error;
               }
-              logger.warn(`${logPrefix}[${toolName}] Runtime OAuth recovery failed`, recoveryError);
-              throw error;
+
+              try {
+                await waitForRecoveryWithoutLease(() =>
+                  this.recoverOAuthConnection(
+                    connection!,
+                    error,
+                    serverName,
+                    userId,
+                    requestOAuthHandler,
+                    oauthStart,
+                    oauthEnd,
+                    flowManager,
+                    options?.signal,
+                    !recoveryTakeoverConsumed,
+                    requestedCredentialSetId,
+                  ),
+                );
+              } catch (recoveryError) {
+                if (recoveryError instanceof OAuthRecoveryTakeoverRequired) {
+                  throw recoveryError;
+                }
+                if (options?.signal?.aborted) {
+                  throw recoveryError;
+                }
+                logger.warn(
+                  `${logPrefix}[${toolName}] Runtime OAuth recovery failed`,
+                  recoveryError,
+                );
+                throw error;
+              }
+              result = await requestTool();
             }
-            result = await requestTool();
           }
-        }
-      } catch (toolCallError) {
-          const first = elicitationStart && userId ? extractUrlElicitation(toolCallError) : undefined;
+        } catch (toolCallError) {
+          const first =
+            elicitationStart && userId ? extractUrlElicitation(toolCallError) : undefined;
           if (!first) {
             throw toolCallError;
           }
@@ -1861,7 +1886,9 @@ requestScopedConnections,
               );
             }
 
-            logger.debug(`${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`);
+            logger.debug(
+              `${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`,
+            );
             result = await requestTool();
           } finally {
             this.releaseElicitation(userId!, serverName);

@@ -19,6 +19,7 @@ const {
   buildImageToolContext,
   buildToolClassification,
   supportsProgrammaticCodeExecution,
+  getCodeFileLocation,
   getMissingCustomUserVars,
   buildWebSearchDynamicContext,
   getCodeApiAuthHeaders,
@@ -52,6 +53,7 @@ const {
   createRepositoryInstructionLoader,
   resolveAttachedWorkspaceCommandTimeoutMax,
   resolveAttachedWorkspaceQueueWaitMs,
+  resolveAttachedWorkspaceRequestTimeoutMs,
   createContextProgrammaticBashTool,
   resolveCodeExecutionContext,
   resolveCodeExecutionWorkspaceContext,
@@ -1191,6 +1193,8 @@ async function loadToolDefinitionsWrapper({
     const result = await reinitMCPServer({
       signal,
       user: req.user,
+      streamId,
+      jobCreatedAt,
       oauthStart,
       flowManager,
       serverName,
@@ -1222,6 +1226,8 @@ async function loadToolDefinitionsWrapper({
     const result = await reinitMCPServer({
       signal,
       user: req.user,
+      streamId,
+      jobCreatedAt,
       forceNew: true,
       oauthStart,
       flowManager,
@@ -1391,6 +1397,8 @@ async function loadToolDefinitionsWrapper({
         const result = await reinitMCPServer({
           signal,
           user: req.user,
+          streamId,
+          jobCreatedAt,
           serverName,
           configServers,
           userMCPAuthMap,
@@ -1500,6 +1508,7 @@ async function loadToolDefinitionsWrapper({
         codeApiBaseUrl: resolvedCodeExecutionContext.baseUrl,
         executionProfile: resolvedCodeExecutionContext.executionProfile,
         executionRouteKey: resolvedCodeExecutionContext.executionRouteKey,
+        codeFileLocation: getCodeFileLocation(resolvedCodeExecutionContext),
         ...(resolvedCodeExecutionContext.bridgeWorkerId
           ? { bridgeWorkerId: resolvedCodeExecutionContext.bridgeWorkerId }
           : {}),
@@ -1587,6 +1596,7 @@ async function loadToolDefinitionsWrapper({
       enabled: codeExecutionEnabled,
       context: resolvedCodeExecutionContext,
       principalId: JSON.stringify([getTenantId(), req.user.id]),
+      codeApiMaxRetryWaitMs: req.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
       getAuthHeaders: (workerId) => getCodeApiAuthHeaders(req, workerId),
     }),
   };
@@ -1790,6 +1800,7 @@ async function loadAgentTools({
     enabled: codeExecutionEnabled,
     context: codeExecutionContext,
     principalId: JSON.stringify([getTenantId(), req.user.id]),
+    codeApiMaxRetryWaitMs: req.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
     getAuthHeaders: (workerId) => getCodeApiAuthHeaders(req, workerId),
   });
   const { loadedTools, toolContextMap, dynamicToolContextMap, primedCodeFiles } = await loadTools({
@@ -2315,6 +2326,7 @@ async function loadToolsForExecution({
               baseUrl: codeExecutionContext.baseUrl,
               workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
               workspaceInstanceId: codeExecutionContext.codeWorkspace.workspaceInstanceId,
+              linkedWorktrees: codeExecutionContext.codeWorkspace.linkedWorktrees,
               environment: codeExecutionContext.codeWorkspace.environment,
               gitIdentity: agent?.git_identity,
               maxTimeoutMs: resolveAttachedWorkspaceCommandTimeoutMax(
@@ -2324,6 +2336,12 @@ async function loadToolsForExecution({
               maxQueueWaitMs: resolveAttachedWorkspaceQueueWaitMs(
                 codeExecutionContext.codeEnvironmentConfigSchema,
               ),
+              codeApiMaxRetryWaitMs: req.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+              maxRequestTimeoutMs: resolveAttachedWorkspaceRequestTimeoutMs(
+                codeExecutionContext.codeEnvironmentConfigSchema,
+              ),
+              minCommandAdmissionMs:
+                codeExecutionContext.codeEnvironmentConfigSchema?.limits?.minCommandAdmissionMs,
             })
           : createBashExecutionTool({
               authHeaders,
