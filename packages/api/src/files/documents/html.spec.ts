@@ -21,6 +21,51 @@ import {
   wordDocToHtml,
 } from './html';
 import { ZipBombError } from './zipSafety';
+import * as metafiles from './metafiles';
+
+/** Minimal valid little-endian EMF: header, brush, select, rectangle, EOF. */
+function buildEmf(): Buffer {
+  const parts: Buffer[] = [];
+  const rec = (type: number, size: number, ...ints: number[]): Buffer => {
+    const b = Buffer.alloc(size);
+    b.writeUInt32LE(type, 0);
+    b.writeUInt32LE(size, 4);
+    ints.forEach((v, i) => b.writeInt32LE(v | 0, 8 + i * 4));
+    return b;
+  };
+  const header = rec(
+    1,
+    108,
+    0,
+    0,
+    99,
+    49, // bounds
+    0,
+    0,
+    2645,
+    1322, // frame
+    0x464d4520, // signature
+    0x10000, // version
+    0, // bytes (patched below)
+    5, // records
+    2, // handles (u32 + reserved u16 packed)
+    0, // nDescription
+    0, // offDescription
+    0, // nPalEntries
+    1920,
+    1080, // device
+    508,
+    286, // millimeters
+  );
+  parts.push(header);
+  parts.push(rec(39, 24, 1, 0, 0x00ff0000, 0));
+  parts.push(rec(37, 12, 1));
+  parts.push(rec(43, 24, 0, 0, 99, 49));
+  parts.push(rec(14, 20, 0, 16, 20));
+  const out = Buffer.concat(parts);
+  out.writeUInt32LE(out.length, 48);
+  return out;
+}
 
 const fixturesDir = __dirname;
 const readFixture = (name: string): Buffer => fs.readFileSync(path.join(fixturesDir, name));
@@ -418,6 +463,49 @@ describe('Office HTML producers', () => {
       zip.file('docProps/core.xml', '<core/>');
       return zip.generateAsync({ type: 'nodebuffer' });
     };
+
+    describe('EMF/WMF metafile swap', () => {
+      const withEmf = async (): Promise<Buffer> => {
+        const zip = await JSZip.loadAsync(await buildPptx([{ title: 'T' }]));
+        zip.file('ppt/media/image1.emf', buildEmf());
+        return zip.generateAsync({ type: 'nodebuffer' });
+      };
+
+      afterEach(() => jest.restoreAllMocks());
+
+      test('embeds converted SVGs for pptx metafiles', async () => {
+        const html = await pptxToHtml(await withEmf());
+        expect(html).toContain('id="lc-metafiles"');
+        expect(html).toContain(metafiles.metafileKey(buildEmf().toString('base64')));
+        expect(html).toContain('swapMetafiles');
+      });
+
+      test('escapes < in the JSON block so </script> cannot break out', async () => {
+        const html = await _internal.pptxToHtmlViaCdn(
+          await buildPptx([{ title: 'X' }]),
+          '',
+          false,
+          { k: 'data:x</script><b>' },
+        );
+        const block = html.split('id="lc-metafiles"')[1].split('</script>')[0];
+        expect(block).toContain('\\u003c/script>');
+        expect(block).not.toContain('</script>');
+        expect(html).toContain('\\u003c/script>');
+      });
+
+      test('omits the block when there are no metafiles', async () => {
+        const html = await pptxToHtml(await buildPptx([{ title: 'T' }]));
+        expect(html).not.toContain('id="lc-metafiles"');
+      });
+
+      test('drops the map, keeping the CDN doc, when it would exceed the output cap', async () => {
+        const huge = { k: 'a'.repeat(_internal.OFFICE_HTML_OUTPUT_CAP) };
+        jest.spyOn(metafiles, 'extractPptxMetafileSvgs').mockResolvedValue(huge);
+        const html = await pptxToHtml(await buildPptx([{ title: 'T' }]));
+        expect(html).toContain('cdn.jsdelivr.net/npm/pptx-preview@');
+        expect(html).not.toContain('id="lc-metafiles"');
+      });
+    });
 
     test('routes a small pptx (≤ cap) through the CDN-rendered path', async () => {
       const pptx = await buildPptx([{ title: 'Hello', body: ['First slide'] }]);
