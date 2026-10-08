@@ -70,7 +70,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
  */
 type LibreOfficeFormatEnablement = 'all' | ReadonlySet<string> | null;
 
-const IN_PROCESS_LIBREOFFICE_DISABLED: boolean = true;
+/* APRÓ fork: re-enabled after upstream's pause (#16583); still gated by OFFICE_PREVIEW_LIBREOFFICE. */
+const IN_PROCESS_LIBREOFFICE_DISABLED: boolean = false;
 
 function parseLibreOfficeEnablement(value: string | undefined): LibreOfficeFormatEnablement {
   if (value == null) {
