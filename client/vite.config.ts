@@ -151,11 +151,11 @@ export default defineConfig(({ command }) => ({
       },
       includeAssets: [],
       manifest: {
-        name: 'LibreChat',
-        short_name: 'LibreChat',
+        name: 'APRÓ Spjallið',
+        short_name: 'APRÓ Spjallið',
         display: 'standalone',
         background_color: '#000000',
-        theme_color: '#009688',
+        theme_color: '#092B3F',
         icons: [
           {
             src: 'assets/favicon-32x32.png',

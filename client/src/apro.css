@@ -1,0 +1,24 @@
+/* APRÓ brand: accent tokens only, on top of the stock palette in style.css.
+ * Surfaces, text, status and syntax colours stay stock. High-contrast mode wins (more specific). */
+html {
+  --accent-primary: 38 132 101; /* green deep #268465 */
+  --accent-primary-hover: 9 43 63; /* midnight sky #092B3F */
+  --ring-primary: 9 43 63;
+  --link: 38 132 101;
+  --link-hover: 9 43 63;
+  --surface-submit: 9 43 63;
+  --surface-submit-hover: 18 61 86;
+  --surface-inverted: 9 43 63; /* send button, switches, primary buttons */
+  --surface-inverted-hover: 18 61 86;
+  --brand-purple: 73 48 124; /* summer sun #49307C */
+}
+.dark {
+  --accent-primary: 80 193 155; /* aurora green #50C19B */
+  --accent-primary-hover: 199 227 218; /* secondary green #C7E3DA */
+  --link: 80 193 155;
+  --link-hover: 199 227 218;
+  --ring-primary: 80 193 155; /* light block's navy ring would vanish on dark surfaces */
+  --surface-submit: 38 132 101;
+  --surface-submit-hover: 30 107 82;
+  --surface-inverted: 239 239 239; /* bright mist #EFEFEF */
+}
