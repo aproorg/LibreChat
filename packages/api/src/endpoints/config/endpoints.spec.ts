@@ -303,6 +303,38 @@ describe('createEndpointsConfigService', () => {
       },
     );
 
+    describe('codeDefaultProfile', () => {
+      const original = process.env.LIBRECHAT_CODE_DEFAULT_PROFILE;
+      afterEach(() => {
+        if (original === undefined) delete process.env.LIBRECHAT_CODE_DEFAULT_PROFILE;
+        else process.env.LIBRECHAT_CODE_DEFAULT_PROFILE = original;
+      });
+
+      const profileFor = async () => {
+        const deps = createMockDeps({
+          loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
+            [EModelEndpoint.agents]: { userProvide: false, order: 0 },
+          }),
+          getAppConfig: jest
+            .fn()
+            .mockResolvedValue(appConfig({ endpoints: { [EModelEndpoint.agents]: {} } })),
+        });
+        const { getEndpointsConfig } = createEndpointsConfigService(deps);
+        const result = await getEndpointsConfig(fakeReq());
+        return result?.[EModelEndpoint.agents]?.codeDefaultProfile;
+      };
+
+      it("is 'stateful' when the deployment runs code stateful", async () => {
+        process.env.LIBRECHAT_CODE_DEFAULT_PROFILE = 'stateful';
+        expect(await profileFor()).toBe('stateful');
+      });
+
+      it("is 'default' when the setting is unset", async () => {
+        delete process.env.LIBRECHAT_CODE_DEFAULT_PROFILE;
+        expect(await profileFor()).toBe('default');
+      });
+    });
+
     describe('linkedInstructions.langfuse.enabled', () => {
       it('defaults to false when omitted from the agents config', async () => {
         const deps = createMockDeps({
