@@ -4308,3 +4308,86 @@ describe('ToolService - Action Capability Gating', () => {
     });
   });
 });
+
+describe('ToolService - LIBRECHAT_CODE_DEFAULT_PROFILE call sites', () => {
+  const capabilities = [
+    AgentCapabilities.tools,
+    AgentCapabilities.execute_code,
+    AgentCapabilities.stateful_code_sessions,
+  ];
+  const flagOffAgent = {
+    id: 'flag-off-agent',
+    tools: [Tools.execute_code],
+    stateful_code_sessions: false,
+  };
+  const sites = {
+    loadToolDefinitionsWrapper: (req) =>
+      loadAgentTools({ req, res: {}, agent: { ...flagOffAgent }, definitionsOnly: true }),
+    loadAgentTools: (req) =>
+      loadAgentTools({ req, res: {}, agent: { ...flagOffAgent }, definitionsOnly: false }),
+    loadToolsForExecution: (req) =>
+      loadToolsForExecution({ req, res: {}, agent: { ...flagOffAgent }, toolNames: [] }),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadToolDefinitions.mockResolvedValue({
+      toolDefinitions: [],
+      toolRegistry: new Map(),
+      hasDeferredTools: false,
+    });
+    mockLoadToolsUtil.mockResolvedValue({ loadedTools: [], toolContextMap: {} });
+    mockLoadActionSets.mockResolvedValue([]);
+    mockGetMCPServerTools.mockResolvedValue(null);
+    mockGetCachedTools.mockResolvedValue(null);
+    mockGetUserMCPAuthMap.mockResolvedValue({});
+    mockGetRoleByName.mockResolvedValue(buildRole());
+    mockResolveConfigServers.mockResolvedValue({});
+    mockResolveMcpServerNames.mockResolvedValue([]);
+    mockPrimeSearchFiles.mockResolvedValue({});
+    mockPrimeCodeFiles.mockResolvedValue({});
+    mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(capabilities));
+    process.env.LIBRECHAT_CODE_BASEURL_STATEFUL = 'http://code-stateful.test/v1';
+  });
+
+  afterEach(() => {
+    delete process.env.LIBRECHAT_CODE_DEFAULT_PROFILE;
+    delete process.env.LIBRECHAT_CODE_BASEURL_STATEFUL;
+  });
+
+  const statefulFlagPassedOn = async (site, { setting, caps = capabilities }) => {
+    if (setting != null) process.env.LIBRECHAT_CODE_DEFAULT_PROFILE = setting;
+    const req = createMockReq(caps);
+    mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig(caps));
+    await sites[site](req);
+    expect(mockResolveCodeExecutionContext).toHaveBeenCalledTimes(1);
+    return mockResolveCodeExecutionContext.mock.calls[0][0].statefulSessions;
+  };
+
+  it.each(Object.keys(sites))(
+    '%s runs a flag-off agent on the stateful profile when the setting is stateful',
+    async (site) => {
+      expect(await statefulFlagPassedOn(site, { setting: 'stateful' })).toBe(true);
+    },
+  );
+
+  it.each(Object.keys(sites))('%s stays off stateful when the setting is unset', async (site) => {
+    expect(await statefulFlagPassedOn(site, {})).toBe(false);
+  });
+
+  it.each(Object.keys(sites))(
+    '%s stays off stateful when the capability is off despite the setting',
+    async (site) => {
+      const caps = [AgentCapabilities.tools, AgentCapabilities.execute_code];
+      expect(await statefulFlagPassedOn(site, { setting: 'stateful', caps })).toBe(false);
+    },
+  );
+
+  it('loadToolsForExecution hands the stateful profile to the run configurable', async () => {
+    process.env.LIBRECHAT_CODE_DEFAULT_PROFILE = 'stateful';
+    const result = await sites.loadToolsForExecution(createMockReq(capabilities));
+    expect(result.configurable.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'stateful', statefulSessions: true }),
+    );
+  });
+});

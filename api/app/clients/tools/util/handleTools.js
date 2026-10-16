@@ -28,6 +28,7 @@ const {
   codeExecutionAuthHeaders,
   getCodeFileLocation,
   resolveCodeExecutionContext,
+  isStatefulDefaultEligible,
 } = require('@librechat/api');
 const {
   AuthType,
@@ -374,8 +375,14 @@ const loadTools = async ({
 
     if (tool === Tools.execute_code) {
       requestedTools[tool] = async () => {
+        const statefulCodeConfig = options.req?.config?.endpoints?.agents?.statefulCodeSessions;
         const statefulSessions =
-          agent?.stateful_code_sessions === true &&
+          (agent?.stateful_code_sessions === true ||
+            isStatefulDefaultEligible(
+              agent,
+              statefulCodeConfig?.environments,
+              statefulCodeConfig?.allowedEnvironments,
+            )) &&
           (await checkCapability(options.req, AgentCapabilities.stateful_code_sessions));
         const codeExecutionContext =
           options.codeExecutionContext ??
@@ -383,8 +390,7 @@ const loadTools = async ({
             statefulSessions,
             environment: agent?.stateful_code_environment,
             environmentId: agent?.code_environment_id,
-            environments:
-              options.req?.config?.endpoints?.agents?.statefulCodeSessions?.environments,
+            environments: statefulCodeConfig?.environments,
             userId: user,
             agentId: agent?.id,
             conversationId: options.req?.body?.conversationId,
