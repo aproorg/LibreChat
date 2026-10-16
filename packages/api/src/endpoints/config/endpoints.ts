@@ -12,6 +12,7 @@ import type { ServerRequest, TCustomEndpointsConfig } from '~/types';
 import type { GetAppConfigOptions } from '~/app/service';
 import { loadCustomEndpointsConfig as defaultLoadCustomEndpoints } from '~/endpoints/custom';
 import { getAppConfigOptionsFromUser } from '~/app/service';
+import { getCodeDefaultProfile } from '~/code/config';
 import { getResponsesApiRouting } from './responses';
 
 type PartialEndpointEntry = Partial<TConfig> & Record<string, unknown>;
@@ -129,6 +130,7 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
         disableBuilder,
         capabilities,
         statefulCodeSessions: clientStatefulCodeSessions,
+        codeDefaultProfile: getCodeDefaultProfile(),
         maxSubagents,
         fileSharing,
       };
