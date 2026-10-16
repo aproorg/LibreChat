@@ -6,12 +6,13 @@ import {
   CODE_WORKSPACE_RECOVERY_VERSION,
   EModelEndpoint,
 } from 'librechat-data-provider';
-import type { TStartupConfig } from 'librechat-data-provider';
+import type { Agent, TStartupConfig } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type {
   AccessibleCodeEnvironmentConfiguration,
   CodeEnvironmentPrincipalContext,
 } from './environments';
+import { normalizeStatefulCodeEnvironment } from '~/agents/execution';
 
 type ConfigurationRegistry = {
   listAccessibleConfigurations: (
@@ -35,6 +36,67 @@ export function resolveCodeEnvironmentDecisionVersion(
   return configuredVersion === String(CODE_ENVIRONMENT_DECISION_VERSION)
     ? CODE_ENVIRONMENT_DECISION_VERSION
     : undefined;
+}
+
+export type CodeDefaultProfile = 'default' | 'stateful';
+
+const warnedCodeDefaultProfiles = new Set<string>();
+
+export function resolveCodeDefaultProfile(configured?: string): CodeDefaultProfile {
+  const trimmedProfile = configured?.trim() ?? '';
+  if (trimmedProfile === 'stateful') return 'stateful';
+  if (
+    trimmedProfile !== '' &&
+    trimmedProfile !== 'default' &&
+    !warnedCodeDefaultProfiles.has(trimmedProfile)
+  ) {
+    warnedCodeDefaultProfiles.add(trimmedProfile);
+    logger.warn(
+      `[resolveCodeDefaultProfile] Unknown LIBRECHAT_CODE_DEFAULT_PROFILE "${trimmedProfile}"; using "default"`,
+    );
+  }
+  return 'default';
+}
+
+export function getCodeDefaultProfile(
+  configured: string | undefined = process.env.LIBRECHAT_CODE_DEFAULT_PROFILE,
+): CodeDefaultProfile {
+  return resolveCodeDefaultProfile(configured);
+}
+
+export function isStatefulCodeDefaultProfile(
+  configured: string | undefined = process.env.LIBRECHAT_CODE_DEFAULT_PROFILE,
+): boolean {
+  return getCodeDefaultProfile(configured) === 'stateful';
+}
+
+/**
+ * Whether the stateful default setting puts this agent on stateful sessions: the setting is
+ * `stateful`, its resolved code machine is neither attached nor a missing id, and its stateful
+ * scope is allowed. Callers still require the capability and `execute_code`, and keep
+ * `stateful_code_sessions === true` as the explicit opt-in.
+ */
+export function isStatefulDefaultEligible(
+  agent:
+    | Partial<Pick<Agent, 'code_environment_id' | 'stateful_code_environment'>>
+    | null
+    | undefined,
+  environments: readonly CodeEnvironmentConfig[] | undefined,
+  allowedEnvironments?: readonly string[] | null,
+): boolean {
+  if (agent == null || !isStatefulCodeDefaultProfile()) return false;
+  if (
+    allowedEnvironments != null &&
+    !allowedEnvironments.includes(normalizeStatefulCodeEnvironment(agent.stateful_code_environment))
+  ) {
+    return false;
+  }
+  const configured = agent.code_environment_id
+    ? environments?.find(({ id }) => id === agent.code_environment_id)
+    : environments?.find(({ default: isDefault }) => isDefault === true);
+  return (
+    configured?.type !== 'attached' && !(configured == null && Boolean(agent.code_environment_id))
+  );
 }
 
 function conversationMovesEnabled(appConfig?: Pick<AppConfig, 'endpoints'> | null): boolean {

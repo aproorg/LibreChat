@@ -66,6 +66,7 @@ const {
   getTransactionsConfig,
   checkToolRolePermission,
   resolveToolRolePermissions,
+  isStatefulDefaultEligible,
 } = require('@librechat/api');
 const {
   Time,
@@ -849,7 +850,12 @@ async function loadToolDefinitionsWrapper({
       statefulSessions:
         codeExecutionEnabled &&
         enabledCapabilities.has(AgentCapabilities.stateful_code_sessions) &&
-        agent.stateful_code_sessions === true,
+        (agent.stateful_code_sessions === true ||
+          isStatefulDefaultEligible(
+            agent,
+            req.config?.endpoints?.agents?.statefulCodeSessions?.environments,
+            req.config?.endpoints?.agents?.statefulCodeSessions?.allowedEnvironments,
+          )),
       environment: agent.stateful_code_environment,
       environmentId: agent.code_environment_id,
       environments: req.config?.endpoints?.agents?.statefulCodeSessions?.environments,
@@ -1775,7 +1781,12 @@ async function loadAgentTools({
   const statefulCodeSessions =
     codeExecutionEnabled &&
     enabledCapabilities.has(AgentCapabilities.stateful_code_sessions) &&
-    agent.stateful_code_sessions === true;
+    (agent.stateful_code_sessions === true ||
+      isStatefulDefaultEligible(
+        agent,
+        req.config?.endpoints?.agents?.statefulCodeSessions?.environments,
+        req.config?.endpoints?.agents?.statefulCodeSessions?.allowedEnvironments,
+      ));
   const baseCodeExecutionContext =
     providedCodeExecutionContext ??
     resolveCodeExecutionContext({
@@ -2209,7 +2220,12 @@ async function loadToolsForExecution({
   const statefulCodeSessions =
     codeExecutionEnabled &&
     enabledCapabilities?.has(AgentCapabilities.stateful_code_sessions) === true &&
-    agent?.stateful_code_sessions === true;
+    (agent?.stateful_code_sessions === true ||
+      isStatefulDefaultEligible(
+        agent,
+        req.config?.endpoints?.agents?.statefulCodeSessions?.environments,
+        req.config?.endpoints?.agents?.statefulCodeSessions?.allowedEnvironments,
+      ));
   const baseCodeExecutionContext = resolveCodeExecutionContext({
     statefulSessions: statefulCodeSessions,
     environment: agent?.stateful_code_environment,

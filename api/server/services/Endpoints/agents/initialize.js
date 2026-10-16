@@ -41,6 +41,7 @@ const {
   encodeAndFormatVideos,
   extractFileContext,
   createScheduleUpstreamTokenProviderResolver,
+  isStatefulDefaultEligible,
 } = require('@librechat/api');
 const {
   ResourceType,
@@ -1111,7 +1112,12 @@ const initializeClientWithProvider = async ({
     const statefulCodeSessions =
       statefulSessionsAvailable === true &&
       lazyCodeEnvAvailable &&
-      agent.stateful_code_sessions === true &&
+      (agent.stateful_code_sessions === true ||
+        isStatefulDefaultEligible(
+          agent,
+          configuredCodeEnvironments,
+          allowedStatefulCodeEnvironments,
+        )) &&
       agent.tools?.includes(Tools.execute_code) === true;
     const statefulCodeEnvironment = agent.stateful_code_environment ?? 'user';
     if (

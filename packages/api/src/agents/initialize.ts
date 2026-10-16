@@ -105,12 +105,12 @@ import {
   createStatefulCodeEnvironmentPolicyError,
   isFatalAgentInitializationError,
 } from './errors';
+import { isImplicitStatefulCodeRouteAvailable, isStatefulDefaultEligible } from '../code/config';
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
 import { createConfiguredContentInspector, inspectContent } from '../protection/runtime';
 import { assertAgentAttachmentLimits, isModelBoundAttachmentFile } from './attachments';
 import { resolveAttachedWorkspaceCommandTimeoutMax } from '~/code/command';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
-import { isImplicitStatefulCodeRouteAvailable } from '../code/config';
 import { registerMemoryTools, memoryToolUsageGuard } from './memory';
 import { applyIntentLabels, sanitizeIntentLabels } from './intent';
 import { ContentFilterError } from '../middleware/contentFilter';
@@ -1394,7 +1394,13 @@ export async function initializeAgent(
   const effectiveStatefulSessions =
     effectiveCodeEnvAvailable &&
     params.statefulSessionsAvailable === true &&
-    agent.stateful_code_sessions === true;
+    (agent.stateful_code_sessions === true ||
+      isStatefulDefaultEligible(
+        agent,
+        configuredCodeEnvironments,
+        params.allowedStatefulCodeEnvironments ??
+          appConfig?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.allowedEnvironments,
+      ));
   const statefulCodeEnvironment = normalizeStatefulCodeEnvironment(agent.stateful_code_environment);
   if (effectiveStatefulSessions) {
     const allowedStatefulCodeEnvironments = resolveAllowedStatefulCodeEnvironments(

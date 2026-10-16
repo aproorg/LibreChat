@@ -5107,3 +5107,113 @@ describe('initializeAgent turn delivery routing', () => {
     expect(filesOrder).toBeLessThan(toolsOrder);
   });
 });
+
+describe('initializeAgent — LIBRECHAT_CODE_DEFAULT_PROFILE call site', () => {
+  const attachedEnvironments = [
+    {
+      id: 'personal-vm',
+      name: 'Personal VM',
+      type: 'attached',
+      owner: 'deployment',
+      baseURL: 'https://code.example.com/v1',
+      workerId: 'worker-1',
+      default: true,
+    },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.LIBRECHAT_CODE_BASEURL_STATEFUL = 'https://stateful-code.example.com/v1/';
+  });
+
+  afterEach(() => {
+    delete process.env.LIBRECHAT_CODE_DEFAULT_PROFILE;
+    delete process.env.LIBRECHAT_CODE_BASEURL_STATEFUL;
+  });
+
+  async function profileFor(
+    agentOverrides: Record<string, unknown>,
+    { setting, capability = true, environments }: Record<string, unknown> = {},
+  ) {
+    if (setting != null) process.env.LIBRECHAT_CODE_DEFAULT_PROFILE = setting as string;
+    const { agent, req, res, loadTools, db } = createMocks();
+    Object.assign(agent, { tools: ['execute_code'] }, agentOverrides);
+    if (environments != null) {
+      req.config = {
+        endpoints: { [EModelEndpoint.agents]: { statefulCodeSessions: { environments } } },
+      } as unknown as NonNullable<typeof req.config>;
+    }
+    const result = await initializeAgent(
+      {
+        req,
+        res,
+        agent,
+        loadTools,
+        endpointOption: { endpoint: EModelEndpoint.agents },
+        allowedProviders: new Set([Providers.OPENAI]),
+        isInitialAgent: true,
+        codeEnvAvailable: true,
+        statefulSessionsAvailable: capability === true,
+      },
+      db,
+    );
+    return { result, loadTools };
+  }
+
+  it('runs a saved agent with the flag off on the stateful profile (FR-02/FR-05)', async () => {
+    const { result, loadTools } = await profileFor(
+      { stateful_code_sessions: false },
+      { setting: 'stateful' },
+    );
+
+    expect(result.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'stateful', statefulSessions: true }),
+    );
+    expect(loadTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codeExecutionContext: expect.objectContaining({ executionProfile: 'stateful' }),
+      }),
+    );
+  });
+
+  it('runs an ephemeral agent shape with no saved flag on the stateful profile (FR-03)', async () => {
+    const { result } = await profileFor(
+      { id: Constants.EPHEMERAL_AGENT_ID, stateful_code_sessions: undefined },
+      { setting: 'stateful' },
+    );
+
+    expect(result.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'stateful' }),
+    );
+  });
+
+  it('keeps the default profile when the setting is unset', async () => {
+    const { result } = await profileFor({ stateful_code_sessions: false });
+
+    expect(result.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'default', statefulSessions: false }),
+    );
+  });
+
+  it('keeps the default profile when the stateful capability is off', async () => {
+    const { result } = await profileFor(
+      { stateful_code_sessions: false },
+      { setting: 'stateful', capability: false },
+    );
+
+    expect(result.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'default', statefulSessions: false }),
+    );
+  });
+
+  it('keeps the default profile for an attached default machine', async () => {
+    const { result } = await profileFor(
+      { stateful_code_sessions: false },
+      { setting: 'stateful', environments: attachedEnvironments },
+    );
+
+    expect(result.codeExecutionContext).toEqual(
+      expect.objectContaining({ executionProfile: 'default', statefulSessions: false }),
+    );
+  });
+});
