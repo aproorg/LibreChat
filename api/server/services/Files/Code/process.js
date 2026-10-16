@@ -47,6 +47,7 @@ const {
   normalizeArtifactDeliveryFailure,
   processCodeOutput: processCodeOutputWithDeps,
   resolveDownloadPath,
+  isStatefulCodeDefaultProfile,
 } = require('@librechat/api');
 const {
   megabyte,
@@ -362,6 +363,8 @@ const createDownloadFallback = ({
   const query = new URLSearchParams();
   if (executionProfile === 'stateful') {
     query.set('execution_profile', 'stateful');
+  } else if (executionProfile === 'default' && isStatefulCodeDefaultProfile()) {
+    query.set('execution_profile', 'default');
   }
   if (executionRouteKey && executionRouteKey !== executionProfile) {
     query.set('execution_route_key', executionRouteKey);
