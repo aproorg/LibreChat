@@ -53,7 +53,10 @@ export default function CodeSettings() {
     formState: { errors },
   } = methods;
 
-  const enabled = watch(AgentCapabilities.stateful_code_sessions) ?? false;
+  const statefulByDeployment = agentsConfig?.codeDefaultProfile === 'stateful';
+  const statefulHeadingId = useId();
+  const enabled =
+    statefulByDeployment || (watch(AgentCapabilities.stateful_code_sessions) ?? false);
   const codeEnabled = watch(AgentCapabilities.execute_code);
   const environment = watch('stateful_code_environment') ?? 'user';
   const codeEnvironmentId = watch('code_environment_id');
@@ -121,20 +124,36 @@ export default function CodeSettings() {
     );
   };
 
+  const personalizedEnvironment = user?.personalization?.statefulCodeEnvironment ?? 'user';
+  const ensureEnvironment = useCallback(
+    (shouldDirty: boolean) => {
+      const currentEnvironment = getValues('stateful_code_environment');
+      if (
+        !currentEnvironment ||
+        !resolveAllowedStatefulCodeEnvironments(configuredEnvironments).includes(currentEnvironment)
+      ) {
+        setValue(
+          'stateful_code_environment',
+          resolveStatefulCodeEnvironment(personalizedEnvironment, configuredEnvironments) ?? 'user',
+          { shouldDirty },
+        );
+      }
+    },
+    [getValues, setValue, configuredEnvironments, personalizedEnvironment],
+  );
+
   const handleChange = (value: boolean) => {
     setValue(AgentCapabilities.stateful_code_sessions, value, { shouldDirty: true });
-    const currentEnvironment = watch('stateful_code_environment');
-    if (value && (!currentEnvironment || !allowedEnvironments.includes(currentEnvironment))) {
-      setValue(
-        'stateful_code_environment',
-        resolveStatefulCodeEnvironment(
-          user?.personalization?.statefulCodeEnvironment ?? 'user',
-          configuredEnvironments,
-        ) ?? 'user',
-        { shouldDirty: true },
-      );
-    }
+    if (value) ensureEnvironment(true);
   };
+
+  const savedStateful = watch(AgentCapabilities.stateful_code_sessions);
+  const forceStateful = statefulSessionsAvailable && statefulByDeployment && codeEnabled === true;
+  useEffect(() => {
+    if (!forceStateful || savedStateful === true) return;
+    setValue(AgentCapabilities.stateful_code_sessions, true, { shouldDirty: false });
+    ensureEnvironment(false);
+  }, [forceStateful, savedStateful, setValue, ensureEnvironment]);
 
   if (!statefulSessionsAvailable) {
     return null;
@@ -142,38 +161,40 @@ export default function CodeSettings() {
 
   return (
     <div className="space-y-3">
-      <HoverCard openDelay={50}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className={codeEnabled ? 'text-sm' : 'text-text-tertiary text-sm'}>
-              {localize('com_ui_stateful_sessions')}
-            </div>
-            <HoverCardTrigger>
-              <span className="text-text-tertiary">
-                <CircleHelpIcon className="h-4 w-4" />
-              </span>
-            </HoverCardTrigger>
-          </div>
-          <HoverCardPortal>
-            <HoverCardContent side={ESide.Top} className="w-80">
-              <div className="space-y-2">
-                <p className="text-text-secondary text-sm">
-                  {localize('com_nav_info_stateful_sessions')}
-                </p>
+      {!statefulByDeployment && (
+        <HoverCard openDelay={50}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <div className={codeEnabled ? 'text-sm' : 'text-text-tertiary text-sm'}>
+                {localize('com_ui_stateful_sessions')}
               </div>
-            </HoverCardContent>
-          </HoverCardPortal>
-          <Switch
-            id="stateful-code-sessions"
-            checked={enabled && codeEnabled === true}
-            onCheckedChange={handleChange}
-            className="ms-4"
-            data-testid="stateful-code-sessions"
-            disabled={codeEnabled !== true}
-            aria-label={localize('com_ui_stateful_sessions')}
-          />
-        </div>
-      </HoverCard>
+              <HoverCardTrigger>
+                <span className="text-text-tertiary">
+                  <CircleHelpIcon className="h-4 w-4" />
+                </span>
+              </HoverCardTrigger>
+            </div>
+            <HoverCardPortal>
+              <HoverCardContent side={ESide.Top} className="w-80">
+                <div className="space-y-2">
+                  <p className="text-text-secondary text-sm">
+                    {localize('com_nav_info_stateful_sessions')}
+                  </p>
+                </div>
+              </HoverCardContent>
+            </HoverCardPortal>
+            <Switch
+              id="stateful-code-sessions"
+              checked={enabled && codeEnabled === true}
+              onCheckedChange={handleChange}
+              className="ms-4"
+              data-testid="stateful-code-sessions"
+              disabled={codeEnabled !== true}
+              aria-label={localize('com_ui_stateful_sessions')}
+            />
+          </div>
+        </HoverCard>
+      )}
       {additionalMachines
         .filter((id) => !executionEnvironments.some((candidate) => candidate.id === id))
         .map((machineId) => (
@@ -199,7 +220,19 @@ export default function CodeSettings() {
           </div>
         ))}
       {enabled && codeEnabled === true && (
-        <div className="space-y-2 ps-1">
+        <div
+          className={statefulByDeployment ? 'space-y-2' : 'space-y-2 ps-1'}
+          role={statefulByDeployment ? 'group' : undefined}
+          aria-labelledby={statefulByDeployment ? statefulHeadingId : undefined}
+        >
+          {statefulByDeployment && (
+            <span
+              id={statefulHeadingId}
+              className="text-text-primary block pb-1 text-sm font-medium"
+            >
+              {localize('com_ui_stateful_sessions')}
+            </span>
+          )}
           {executionEnvironments.length > 0 && (
             <>
               <span
