@@ -8,8 +8,8 @@ import {
   normalizeStatefulCodeEnvironment,
   resolveCodeExecutionWorkspaceSelections,
 } from '~/agents/execution';
+import { isImplicitStatefulCodeRouteAvailable, isStatefulDefaultEligible } from './config';
 import { createStatefulCodeEnvironmentPolicyError } from '~/agents/errors';
-import { isImplicitStatefulCodeRouteAvailable } from './config';
 
 /** The saved agent fields that decide where an agent runs code. */
 export type AgentCodeRouteAgent = Partial<
@@ -69,6 +69,11 @@ export interface AgentCodeFlagsParams {
   environments?: readonly CodeEnvironmentConfig[];
   /** Enforced when present: a stateful agent outside this list is refused. */
   allowedStatefulCodeEnvironments?: readonly StatefulCodeEnvironment[];
+  /**
+   * The configured `allowedEnvironments`, which scopes the `LIBRECHAT_CODE_DEFAULT_PROFILE`
+   * fallback when no enforced list is passed.
+   */
+  statefulDefaultAllowedEnvironments?: readonly string[] | null;
   /** Whether the deployment's versioned implicit stateful route is live. */
   implicitStatefulRouteAvailable?: boolean;
   /**
@@ -111,7 +116,14 @@ export function resolveAgentCodeFlags(params: AgentCodeFlagsParams): AgentCodeFl
     agent?.tools?.includes(Tools.execute_code) === true &&
     !attachedEnvironmentOptOut;
   const statefulSessions =
-    codeEnvAvailable && params.statefulSessionsAvailable && agent?.stateful_code_sessions === true;
+    codeEnvAvailable &&
+    params.statefulSessionsAvailable &&
+    (agent?.stateful_code_sessions === true ||
+      isStatefulDefaultEligible(
+        agent,
+        params.environments,
+        params.allowedStatefulCodeEnvironments ?? params.statefulDefaultAllowedEnvironments,
+      ));
   const statefulCodeEnvironment = normalizeStatefulCodeEnvironment(
     agent?.stateful_code_environment,
   );
@@ -205,6 +217,7 @@ export function withRequestCodeInputs({
     allowEnvironmentSelection: statefulCodeSessions?.allowEnvironmentSelection,
     inheritedEnvironments: req.codeWorkspaceInheritance,
     environments: statefulCodeSessions?.environments,
+    statefulDefaultAllowedEnvironments: statefulCodeSessions?.allowedEnvironments,
     userId: params.userId ?? req.user?.id,
     implicitStatefulRouteAvailable: isImplicitStatefulCodeRouteAvailable(
       process.env.CODE_ENVIRONMENT_DECISION_VERSION,

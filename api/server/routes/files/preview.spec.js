@@ -50,6 +50,7 @@ jest.mock('~/server/controllers/assistants/helpers', () => ({
   getOpenAIClient: jest.fn(),
 }));
 
+jest.mock('~/server/services/Config', () => ({ checkCapability: jest.fn() }));
 jest.mock('~/server/middleware/roles/capabilities', () => ({
   hasCapability: jest.fn(() => (_req, _res, next) => next()),
 }));
