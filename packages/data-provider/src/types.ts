@@ -676,6 +676,8 @@ export type TConfig = {
     /** Approval modes the endpoint policy permits the client to offer. */
     approvalModes?: CodeApprovalMode[];
   };
+  /** Deployment default code profile from `LIBRECHAT_CODE_DEFAULT_PROFILE`. */
+  codeDefaultProfile?: 'default' | 'stateful';
   /** Effective subagents-per-agent cap served from `endpoints.agents.maxSubagents`. */
   maxSubagents?: number;
   fileSharing?: TAgentsEndpoint['fileSharing'];
