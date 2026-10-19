@@ -7,6 +7,7 @@ import type { Options } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import type { ElementType } from 'react';
 import { ArtifactProvider, CodeBlockProvider } from '~/Providers';
+import { sandboxUrlTransform } from '~/utils';
 
 type SharedProps = {
   remarkPlugins: PluggableList;
@@ -73,6 +74,7 @@ const MarkdownBlock = memo(
             /** @ts-ignore */
             rehypePlugins={blockRehypePlugins}
             components={components}
+            urlTransform={sandboxUrlTransform}
           >
             {content}
           </ReactMarkdown>
