@@ -39,6 +39,7 @@ import {
   getPartKeyIndex,
   attachmentRenderKey,
   buildAttachmentsByName,
+  buildFilesByName,
   filterAttachmentsForPart,
   groupSequentialToolCalls,
 } from '~/utils';
@@ -1620,7 +1621,11 @@ const ContentParts = memo(function ContentParts(props: ContentPartsProps) {
    *  itself referentially stable there, so a churning array cannot push a new
    *  value at every markdown block in the message. */
   const attachmentsByName = useMemo(() => buildAttachmentsByName(attachments), [attachments]);
-  const media = useMemo(() => ({ attachmentsByName }), [attachmentsByName]);
+  const filesByName = useMemo(() => buildFilesByName(attachments), [attachments]);
+  const media = useMemo(
+    () => ({ attachmentsByName, filesByName }),
+    [attachmentsByName, filesByName],
+  );
   return (
     <MessageContext.Provider value={messageContext}>
       <MediaContext.Provider value={media}>
