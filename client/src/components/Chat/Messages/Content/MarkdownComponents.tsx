@@ -2,10 +2,12 @@ import React, { memo, useMemo, useRef, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useToastContext } from '@librechat/client';
 import { PermissionTypes, Permissions, apiBaseUrl } from 'librechat-data-provider';
+import type { TFile } from 'librechat-data-provider';
 import {
   handleDoubleClick,
   triggerDownload,
   resolveInlineMedia,
+  resolveSandboxLink,
   toAbsoluteFilePath,
 } from '~/utils';
 import Mermaid, { MermaidErrorBoundary } from '~/components/Messages/Content/Mermaid';
@@ -14,6 +16,7 @@ import CodeBlock from '~/components/Messages/Content/CodeBlock';
 import useHasAccess from '~/hooks/Roles/useHasAccess';
 import { useFileDownload } from '~/data-provider';
 import { useLocalize } from '~/hooks';
+import LogLink from './Parts/LogLink';
 import store from '~/store';
 
 type TCodeProps = {
@@ -118,6 +121,8 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
   const user = useRecoilValue(store.user);
   const { showToast } = useToastContext();
   const localize = useLocalize();
+  const { filesByName } = useMediaContext();
+  const sandbox = resolveSandboxLink(href, filesByName);
 
   const {
     file_id = '',
@@ -138,6 +143,28 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
 
   const { refetch: downloadFile } = useFileDownload(user?.id ?? '', file_id, { direct: false });
   const props: { target?: string; onClick?: React.MouseEventHandler } = { target: '_blank' };
+
+  /** `/mnt/data/…` exists only inside the sandbox, so the browser would request
+   *  it from this app and land on the SPA's 404. Link the attachment the run
+   *  produced, or leave plain text when there is none. */
+  if (sandbox.isSandboxPath) {
+    const { attachment } = sandbox;
+    if (!attachment?.filepath) {
+      return <span>{children}</span>;
+    }
+    const file = attachment as TFile;
+    return (
+      <LogLink
+        href={attachment.filepath}
+        filename={attachment.filename ?? ''}
+        file_id={file.file_id}
+        user={file.user}
+        source={file.source}
+      >
+        {children}
+      </LogLink>
+    );
+  }
 
   if (!file_id || !filename) {
     return (
