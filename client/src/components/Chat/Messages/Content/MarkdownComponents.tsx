@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useRef, useEffect } from 'react';
+import React, { memo, useMemo, useRef, useEffect, useContext } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useToastContext } from '@librechat/client';
 import { PermissionTypes, Permissions, apiBaseUrl } from 'librechat-data-provider';
@@ -11,6 +11,7 @@ import {
   toAbsoluteFilePath,
 } from '~/utils';
 import Mermaid, { MermaidErrorBoundary } from '~/components/Messages/Content/Mermaid';
+import { ConversationFilesContext } from '~/Providers/MediaContext';
 import { useCodeBlockContext, useMediaContext } from '~/Providers';
 import CodeBlock from '~/components/Messages/Content/CodeBlock';
 import useHasAccess from '~/hooks/Roles/useHasAccess';
@@ -122,7 +123,8 @@ export const a: React.ElementType = memo(function MarkdownAnchor({ href, childre
   const { showToast } = useToastContext();
   const localize = useLocalize();
   const { filesByName } = useMediaContext();
-  const sandbox = resolveSandboxLink(href, filesByName);
+  const conversationFiles = useContext(ConversationFilesContext);
+  const sandbox = resolveSandboxLink(href, filesByName, conversationFiles);
 
   const {
     file_id = '',

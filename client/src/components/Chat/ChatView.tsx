@@ -19,6 +19,7 @@ import {
 } from '~/hooks';
 import { ChatContext, AddedChatContext, ChatFormProvider, useFileMapContext } from '~/Providers';
 import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
+import { ConversationFilesProvider } from '~/Providers/MediaContext';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
 import { pendingApprovalActionFamily } from './approval/state';
@@ -187,7 +188,9 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                             : 'h-full overflow-y-auto',
                         )}
                       >
-                        {content}
+                        <ConversationFilesProvider messages={messages}>
+                          {content}
+                        </ConversationFilesProvider>
                         {/* Named + opaque so a view transition (the ask_user_question
                         popover ⇄ chat-card morph) paints the whole composer band
                         over the travelling card instead of letting it show
