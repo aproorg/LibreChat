@@ -246,7 +246,8 @@ export async function convertOfficeToPdf(buffer: Buffer, extensionHint: string):
   try {
     const inputPath = join(tempDir, `input.${safeExt}`);
     await writeFile(inputPath, buffer);
-    await runConversion(probe.binary, inputPath, tempDir);
+    const binary = probe.binary;
+    await runOneAtATime(() => runConversion(binary, inputPath, tempDir));
     const outputPath = join(tempDir, 'input.pdf');
     const pdf = await readFile(outputPath);
     if (pdf.length > MAX_LIBREOFFICE_PDF_BYTES) {
@@ -260,6 +261,18 @@ export async function convertOfficeToPdf(buffer: Buffer, extensionHint: string):
      * unmounts), the OS will reclaim the dir on next reboot. */
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/* One soffice at a time: a conversion peaks around 200 MB and LibreChat
+ * tasks run with 2 GB, so parallel previews could OOM the whole server.
+ * ponytail: one process-wide queue; a pool or UNO-driven soffice if
+ * preview wait times become a complaint. */
+let conversionQueue: Promise<unknown> = Promise.resolve();
+
+function runOneAtATime<T>(task: () => Promise<T>): Promise<T> {
+  const run = conversionQueue.then(task, task);
+  conversionQueue = run.catch(() => undefined);
+  return run;
 }
 
 function runConversion(binary: string, inputPath: string, tempDir: string): Promise<void> {

@@ -7,7 +7,7 @@ RUN apk upgrade --no-cache
 RUN apk add --no-cache jemalloc
 RUN apk add --no-cache python3 py3-pip uv
 # LibreOffice for high-fidelity PPTX previews (OFFICE_PREVIEW_LIBREOFFICE)
-RUN apk add --no-cache libreoffice-impress font-liberation
+RUN apk add --no-cache libreoffice-impress libreoffice-writer font-liberation
 
 # Set environment variable to use jemalloc
 ENV LD_PRELOAD=/usr/lib/libjemalloc.so.2
