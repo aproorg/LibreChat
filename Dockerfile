@@ -7,9 +7,11 @@ RUN apk upgrade --no-cache
 RUN apk add --no-cache jemalloc
 RUN apk add --no-cache python3 py3-pip uv
 # LibreOffice for high-fidelity PPTX previews (OFFICE_PREVIEW_LIBREOFFICE).
-# font-carlito is metric-compatible with Calibri, the default PPTX font; without
-# it text renders with gaps after narrow letters ("Cof f ee").
-RUN apk add --no-cache libreoffice-impress libreoffice-writer font-liberation font-carlito
+# With only font-liberation, any font without a Liberation twin (Calibri, Aptos,
+# Cambria, Verdana, Segoe UI...) falls back to Liberation Mono and renders with
+# gaps after narrow letters ("Cof f ee"). font-dejavu gives fontconfig a real
+# sans/serif default; font-carlito matches Calibri's widths exactly.
+RUN apk add --no-cache libreoffice-impress libreoffice-writer font-liberation font-carlito font-dejavu
 
 # Set environment variable to use jemalloc
 ENV LD_PRELOAD=/usr/lib/libjemalloc.so.2
