@@ -8,6 +8,7 @@ const mockParams = jest.fn();
 const mockConversation = jest.fn();
 const mockChatFormProps = jest.fn();
 const mockAskHostSaveDrafts = jest.fn();
+let mockMessages: unknown = null;
 
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
@@ -42,10 +43,10 @@ jest.mock('@librechat/chat/react', () => {
     ChatSessionProvider: ({
       children,
     }: {
-      children: (session: { messages: null; isLoading: boolean }) => React.ReactNode;
+      children: (session: { messages: unknown; isLoading: boolean }) => React.ReactNode;
     }) => (
       <actual.ChatContext.Provider value={{ conversation: mockConversation() }}>
-        {children({ messages: null, isLoading: false })}
+        {children({ messages: mockMessages, isLoading: false })}
       </actual.ChatContext.Provider>
     ),
   };
@@ -79,6 +80,15 @@ jest.mock('../Input/ChatForm', () => ({
     mockChatFormProps(props);
     mockAskHostSaveDrafts(jest.requireActual('@librechat/chat/react').useAskAnswerHost());
     return <div />;
+  },
+}));
+jest.mock('../Messages/load', () => ({
+  preloadMessages: jest.fn(() => Promise.resolve({ default: () => null })),
+  renderMessages: function MessagesViewMock() {
+    const { useContext } = jest.requireActual('react');
+    const { ConversationFilesContext } = jest.requireActual('~/Providers/MediaContext');
+    const files = useContext(ConversationFilesContext) as ReadonlyMap<string, unknown> | undefined;
+    return <div data-testid="conversation-files">{[...(files?.keys() ?? [])].join(',')}</div>;
   },
 }));
 jest.mock('../Input/ConversationStarters', () => ({ __esModule: true, default: () => <div /> }));
@@ -314,5 +324,35 @@ describe('ChatView project badge', () => {
 
     expect(screen.queryByTestId(/^project-/)).not.toBeInTheDocument();
     expect(container.querySelector('[data-chat-pane="0"]')).not.toHaveClass('pt-9');
+  });
+});
+
+describe('ChatView conversation files', () => {
+  afterEach(() => {
+    mockMessages = null;
+  });
+
+  test('publishes files from earlier messages to the content subtree', () => {
+    mockParams.mockReturnValue({ conversationId: 'convo-1' });
+    mockConversation.mockReturnValue({ conversationId: 'convo-1' });
+    mockMessages = [
+      {
+        messageId: 'm1',
+        parentMessageId: '00000000-0000-0000-0000-000000000000',
+        conversationId: 'convo-1',
+        text: 'make a deck',
+        attachments: [{ filename: 'deck.pptx', filepath: '/api/files/d/deck.pptx', file_id: 'a' }],
+      },
+      {
+        messageId: 'm2',
+        parentMessageId: 'm1',
+        conversationId: 'convo-1',
+        text: 'thanks',
+      },
+    ];
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId('conversation-files')).toHaveTextContent('deck.pptx');
   });
 });
