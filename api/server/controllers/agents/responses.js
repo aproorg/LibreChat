@@ -384,6 +384,7 @@ const createResponse = async (req, res) => {
       getUserKeyValues: db.getUserKeyValues,
       getUserCodeFiles: db.getUserCodeFiles,
       getToolFilesByIds: db.getToolFilesByIds,
+      getRoleByName: db.getRoleByName,
       getCodeGeneratedFiles: db.getCodeGeneratedFiles,
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
