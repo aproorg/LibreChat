@@ -5,8 +5,8 @@ import {
   OFFICE_DOC_DATA_SLOT,
   OFFICE_FILE_SHELL_MARKER,
 } from 'librechat-data-provider';
-import { tryLibreOfficePreview } from './libreoffice';
 import { METAFILE_KEY_JS, extractPptxMetafileSvgs } from './metafiles';
+import { tryLibreOfficePreview } from './libreoffice';
 import { assertSafeZipSize } from './zipSafety';
 
 /**
@@ -636,7 +636,7 @@ function isOfficePreviewCdnDisabled(): boolean {
  */
 export async function wordDocToHtml(
   buffer: Buffer,
-  options: { fileShell?: boolean } = {},
+  options: { fileShell?: boolean; pdfShell?: boolean } = {},
 ): Promise<string> {
   const fileShell = options.fileShell === true;
   await assertSafeZipSize(buffer, { name: 'docx' });
@@ -646,7 +646,9 @@ export async function wordDocToHtml(
    * binary missing, conversion failed, or output exceeds the cache
    * cap — falls through to the existing pipeline in any of those
    * cases so a misconfiguration doesn't break previews. */
-  const lo = await tryLibreOfficePreview(buffer, 'docx', OFFICE_HTML_OUTPUT_CAP);
+  const lo = await tryLibreOfficePreview(buffer, 'docx', OFFICE_HTML_OUTPUT_CAP, {
+    pdfShell: options.pdfShell === true || fileShell,
+  });
   if (lo) {
     return lo;
   }
@@ -1550,7 +1552,7 @@ async function pptxToHtmlViaCdn(
  */
 export async function pptxToHtml(
   buffer: Buffer,
-  options: { fileShell?: boolean } = {},
+  options: { fileShell?: boolean; pdfShell?: boolean } = {},
 ): Promise<string> {
   const fileShell = options.fileShell === true;
   await assertSafeZipSize(buffer, { name: 'pptx' });
@@ -1558,7 +1560,9 @@ export async function pptxToHtml(
    * fonts, charts, and embedded objects far better than the slide-list
    * fallback or even pptx-preview's canvas approach. Falls through on
    * any error per the contract in `tryLibreOfficePreview`. */
-  const lo = await tryLibreOfficePreview(buffer, 'pptx', OFFICE_HTML_OUTPUT_CAP);
+  const lo = await tryLibreOfficePreview(buffer, 'pptx', OFFICE_HTML_OUTPUT_CAP, {
+    pdfShell: options.pdfShell === true || fileShell,
+  });
   if (lo) {
     return lo;
   }
@@ -1766,17 +1770,18 @@ export async function bufferToOfficeHtml(
   buffer: Buffer,
   name: string,
   mimeType: string,
+  options: { pdfShell?: boolean } = {},
 ): Promise<string | null> {
   const bucket = officeHtmlBucket(name, mimeType);
   switch (bucket) {
     case 'docx':
-      return wordDocToHtml(buffer);
+      return wordDocToHtml(buffer, options);
     case 'csv':
       return csvToHtml(buffer);
     case 'spreadsheet':
       return excelSheetToHtml(buffer);
     case 'presentation':
-      return pptxToHtml(buffer);
+      return pptxToHtml(buffer, options);
     default:
       return null;
   }
