@@ -23,6 +23,7 @@ const {
   checkToolResourceUploadPermission,
   resolveAssistantToolPermissions,
   resolveDownloadPath,
+  sendOfficePdfPreview,
 } = require('@librechat/api');
 const {
   Time,
@@ -714,7 +715,7 @@ router.get('/download/:userId/:file_id', fileAccess, async (req, res) => {
 
       stream.pipe(res);
     } else {
-      if (getDownloadURL && req.query.direct === 'true') {
+      if (getDownloadURL && req.query.direct === 'true' && req.query.preview !== 'pdf') {
         try {
           const downloadURL = await getDirectDownloadURL({ req, file });
           if (downloadURL) {
@@ -737,6 +738,15 @@ router.get('/download/:userId/:file_id', fileAccess, async (req, res) => {
       }
 
       const fileStream = await getDownloadStream(req, resolveDownloadPath(file));
+
+      if (req.query.preview === 'pdf') {
+        return await sendOfficePdfPreview({
+          res,
+          stream: fileStream,
+          file,
+          fileConfig: req.config?.fileConfig,
+        });
+      }
 
       fileStream.on('error', (streamError) => {
         logger.error('[DOWNLOAD ROUTE] Stream error:', streamError);
