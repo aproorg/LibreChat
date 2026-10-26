@@ -737,13 +737,12 @@ describe('Environment Variable Extraction (MCP)', () => {
       ]);
     });
 
-    it('should prioritize customUserVars over user fields and system env vars if placeholders are the same (though not recommended)', () => {
-      // This tests the order of operations: customUserVars -> userFields -> systemEnv
-      // BUt it's generally not recommended to have overlapping placeholder names.
-      process.env.LIBRECHAT_USER_EMAIL = 'system-email-should-be-overridden';
-      const user = createTestUser({ email: 'user-email-should-be-overridden' });
+    it('should resolve reserved LIBRECHAT_* placeholders from the user even when customUserVars reuse the name', () => {
+      // customUserVars must not pre-empt trusted LIBRECHAT_USER_* values
+      process.env.LIBRECHAT_USER_EMAIL = 'system-email-should-be-ignored';
+      const user = createTestUser({ email: 'user-email-wins' });
       const customUserVars = {
-        LIBRECHAT_USER_EMAIL: 'custom-email-wins',
+        LIBRECHAT_USER_EMAIL: 'custom-email-should-be-ignored',
       };
       const options: MCPOptions = {
         type: 'sse',
@@ -754,7 +753,7 @@ describe('Environment Variable Extraction (MCP)', () => {
       };
 
       const result = processMCPEnv({ options, user, customUserVars });
-      expect('headers' in result && result.headers?.['Test-Email']).toBe('custom-email-wins');
+      expect('headers' in result && result.headers?.['Test-Email']).toBe('user-email-wins');
 
       // Clean up env var
       delete process.env.LIBRECHAT_USER_EMAIL;
