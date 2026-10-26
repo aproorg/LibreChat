@@ -281,7 +281,7 @@ describe('resolveHeaders', () => {
     });
   });
 
-  it('should prioritize custom user variables over user fields', () => {
+  it('should not let custom user variables override user fields', () => {
     const user = createTestUser({
       id: 'user-123',
       email: 'user-email@example.com',
@@ -297,7 +297,7 @@ describe('resolveHeaders', () => {
     const result = resolveHeaders({ headers, user, customUserVars });
 
     expect(result).toEqual({
-      'Test-Email': 'custom-email@example.com',
+      'Test-Email': 'user-email@example.com',
     });
   });
 
@@ -2712,5 +2712,56 @@ describe('resolveHeaders with unavailable OpenID tokens for unattended requests'
     });
 
     expect(result).toEqual({ 'x-openid-access-token': 'live-access-token' });
+  });
+});
+
+describe('processMCPEnv - customUserVars cannot shadow reserved LIBRECHAT_* placeholders (yaml servers)', () => {
+  const user = createTestUser({ id: 'u1', email: 'real@example.com' });
+
+  it('should resolve reserved placeholders from the real user, not a customUserVar with the same name', () => {
+    const options: MCPOptions = {
+      type: 'streamable-http',
+      url: 'https://api.example.com',
+      headers: {
+        'X-User-Email': '{{LIBRECHAT_USER_EMAIL}}',
+        'X-User-Id': '{{LIBRECHAT_USER_ID}}',
+      },
+    };
+
+    const result = processMCPEnv({
+      options,
+      user,
+      customUserVars: { LIBRECHAT_USER_EMAIL: 'other@example.com', LIBRECHAT_USER_ID: 'other-id' },
+    });
+
+    if (!isStreamableHTTPOptions(result)) {
+      throw new Error('Expected streamable-http options');
+    }
+    expect(result.headers?.['X-User-Email']).toBe('real@example.com');
+    expect(result.headers?.['X-User-Id']).toBe('u1');
+  });
+
+  it('should keep declared customUserVars working while reserved placeholders stay real', () => {
+    const options: MCPOptions = {
+      type: 'streamable-http',
+      url: 'https://api.example.com',
+      customUserVars: { API_KEY: { title: 'API Key', description: 'Your key' } },
+      headers: {
+        'X-Api-Key': '{{API_KEY}}',
+        'X-User-Email': '{{LIBRECHAT_USER_EMAIL}}',
+      },
+    };
+
+    const result = processMCPEnv({
+      options,
+      user,
+      customUserVars: { API_KEY: 'k', LIBRECHAT_USER_EMAIL: 'other@example.com' },
+    });
+
+    if (!isStreamableHTTPOptions(result)) {
+      throw new Error('Expected streamable-http options');
+    }
+    expect(result.headers?.['X-Api-Key']).toBe('k');
+    expect(result.headers?.['X-User-Email']).toBe('real@example.com');
   });
 });

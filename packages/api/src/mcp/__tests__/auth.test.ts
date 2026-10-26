@@ -1,7 +1,9 @@
-import type { PluginAuthMethods } from '@librechat/data-schemas';
+import type { IUser, PluginAuthMethods } from '@librechat/data-schemas';
+import type { MCPOptions } from 'librechat-data-provider';
 import type { GenericTool } from '@librechat/agents';
 import { getUserMCPAuthMap, getServerCustomUserVars } from '../auth';
 import { getPluginAuthMap } from '~/agents/auth';
+import { processMCPEnv } from '~/utils/env';
 
 jest.mock('~/agents/auth', () => ({
   getPluginAuthMap: jest.fn(),
@@ -337,5 +339,34 @@ describe('getServerCustomUserVars', () => {
       getServerCustomUserVars({ 'mcp_my-server': { API_KEY: 'sk-123' } }, 'absent'),
     ).toBeUndefined();
     expect(getServerCustomUserVars(undefined, 'my-server')).toBeUndefined();
+  });
+});
+
+describe('getUserMCPAuthMap -> processMCPEnv: stored auth field with a reserved name', () => {
+  it('should not let a stored LIBRECHAT_USER_EMAIL auth row override the real user email on a yaml server', async () => {
+    /** getPluginAuthMap is mocked; this is the map it builds from the row
+     *  {authField:'LIBRECHAT_USER_EMAIL', pluginKey:'mcp_docs', value:'other@example.com'} */
+    mockGetPluginAuthMap.mockResolvedValue({
+      mcp_docs: { LIBRECHAT_USER_EMAIL: 'other@example.com' },
+    });
+
+    const authMap = await getUserMCPAuthMap({
+      userId: 'u1',
+      servers: ['docs'],
+      findPluginAuthsByKeys: mockFindPluginAuthsByKeys,
+    });
+
+    const options = {
+      type: 'streamable-http',
+      url: 'https://api.example.com',
+      headers: { 'X-User-Email': '{{LIBRECHAT_USER_EMAIL}}' },
+    } as MCPOptions;
+    const result = processMCPEnv({
+      options,
+      user: { id: 'u1', email: 'real@example.com' } as IUser,
+      customUserVars: getServerCustomUserVars(authMap, 'docs'),
+    }) as { headers?: Record<string, string> };
+
+    expect(result.headers?.['X-User-Email']).toBe('real@example.com');
   });
 });
