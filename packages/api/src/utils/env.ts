@@ -347,6 +347,10 @@ function processSingleValue({
   /** Runs for both dbSourced and non-dbSourced — it is the only resolution DB-stored servers get */
   if (customUserVars) {
     for (const [varName, varVal] of Object.entries(customUserVars)) {
+      /** `LIBRECHAT_*` placeholders are resolved from trusted sources below; a stored user var must not pre-empt them */
+      if (varName.startsWith('LIBRECHAT_')) {
+        continue;
+      }
       const escapedVarName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const placeholderRegex = new RegExp(`\\{\\{${escapedVarName}\\}\\}`, 'g');
       value = value.replace(placeholderRegex, varVal);
