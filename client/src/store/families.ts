@@ -3,7 +3,6 @@ import { createSearchParams } from 'react-router-dom';
 import { LocalStorageKeys, isEphemeralAgentId, Constants } from 'librechat-data-provider';
 import {
   atom,
-  selector,
   atomFamily,
   DefaultValue,
   selectorFamily,
@@ -11,8 +10,7 @@ import {
   useSetRecoilState,
   useRecoilCallback,
 } from 'recoil';
-import type { EModelEndpoint, TConversation, TSubmission, TPreset } from 'librechat-data-provider';
-import type { TOptionSettings, ExtendedFile } from '~/common';
+import type { EModelEndpoint, TConversation } from 'librechat-data-provider';
 import {
   clearModelForNonEphemeralAgent,
   createChatSearchParams,
@@ -20,19 +18,6 @@ import {
   logger,
 } from '~/utils';
 import { useSetConvoContext } from '~/Providers/SetConvoContext';
-
-const submissionByIndex = atomFamily<TSubmission | null, string | number>({
-  key: 'submissionByIndex',
-  default: null,
-});
-
-const submissionKeysSelector = selector<(string | number)[]>({
-  key: 'submissionKeysSelector',
-  get: ({ get }) => {
-    const keys = get(conversationKeysAtom);
-    return keys.filter((key) => get(submissionByIndex(key)) !== null);
-  },
-});
 
 const conversationByIndex = atomFamily<TConversation | null, string | number>({
   key: 'conversationByIndex',
@@ -104,11 +89,6 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
   ] as const,
 });
 
-const filesByIndex = atomFamily<Map<string, ExtendedFile>, string | number>({
-  key: 'filesByIndex',
-  default: new Map(),
-});
-
 const conversationKeysAtom = atom<(string | number)[]>({
   key: 'conversationKeys',
   default: [],
@@ -173,21 +153,6 @@ const conversationAssistantIdByIndex = selectorFamily<string | null, string | nu
       get(conversationByIndex(index))?.assistant_id ?? null,
 });
 
-const presetByIndex = atomFamily<TPreset | null, string | number>({
-  key: 'presetByIndex',
-  default: null,
-});
-
-const optionSettingsFamily = atomFamily<TOptionSettings, string | number>({
-  key: 'optionSettingsByIndex',
-  default: {},
-});
-
-const showPopoverFamily = atomFamily({
-  key: 'showPopoverByIndex',
-  default: false,
-});
-
 const activePromptByIndex = atomFamily<string | undefined, string | number | null>({
   key: 'activePromptByIndex',
   default: undefined,
@@ -240,11 +205,6 @@ const globalAudioFetchingFamily = atomFamily<boolean, string | number | null>({
 const globalAudioPlayingFamily = atomFamily<boolean, string | number | null>({
   key: 'globalAudioisPlayingByIndex',
   default: false,
-});
-
-const activeRunFamily = atomFamily<string | null, string | number | null>({
-  key: 'activeRunByIndex',
-  default: null,
 });
 
 const audioRunFamily = atomFamily<string | null, string | number | null>({
@@ -305,28 +265,6 @@ function useClearConvoState() {
 
 const conversationByKeySelector = conversationByIndex;
 
-function useClearSubmissionState() {
-  const clearAllSubmissions = useRecoilCallback(
-    ({ reset, snapshot }) =>
-      async (skipFirst?: boolean) => {
-        const submissionKeys = await snapshot.getPromise(submissionKeysSelector);
-        logger.log('submissionKeys', submissionKeys);
-
-        for (const key of submissionKeys) {
-          if (skipFirst === true && key == 0) {
-            continue;
-          }
-
-          logger.log('resetting submission', key);
-          reset(submissionByIndex(key));
-        }
-      },
-    [],
-  );
-
-  return clearAllSubmissions;
-}
-
 const updateConversationSelector = selectorFamily({
   key: 'updateConversationSelector',
   get: () => () => null as Partial<TConversation> | null,
@@ -355,11 +293,6 @@ const updateConversationSelector = selectorFamily({
 export default {
   conversationKeysAtom,
   conversationByIndex,
-  filesByIndex,
-  presetByIndex,
-  submissionByIndex,
-  optionSettingsFamily,
-  showPopoverFamily,
   conversationIdByIndex,
   conversationEndpointByIndex,
   effectiveEndpointByIndex,
@@ -373,13 +306,11 @@ export default {
   useSetConversationAtom,
   showMentionPopoverFamily,
   globalAudioURLFamily,
-  activeRunFamily,
   audioRunFamily,
   globalAudioPlayingFamily,
   globalAudioFetchingFamily,
   showPlusPopoverFamily,
   activePromptByIndex,
-  useClearSubmissionState,
   showPromptsPopoverFamily,
   pendingComposerTextByConvoId,
   updateConversationSelector,
