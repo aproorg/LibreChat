@@ -1,3 +1,4 @@
+import { isEmptyContentPart } from '@librechat/chat/react';
 import { QueryKeys, Constants, buildTree, ContentTypes } from 'librechat-data-provider';
 import {
   hasStreamStartFailed,
@@ -10,6 +11,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { LocalizeFunction, TMessageProps } from '~/common';
 
 export {
+  isEmptyContentPart,
   hasStreamStartFailed,
   stripStreamedIndexStamps,
   createDualMessageContent,
@@ -75,24 +77,21 @@ export const getMessageBranchSiblingParentIds = (
   }
 
   const parentIds = new Set<string | null>();
-  const collectBranchParents = (
-    siblings: TMessage[] | undefined,
-    parentMessageId: string | null | undefined,
-  ) => {
-    if (!siblings?.length) {
-      return;
+  const stack = [{ siblings: messagesTree, parentMessageId: rootSiblingKey, index: 0 }];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.index === 0 && frame.siblings.length > 1) {
+      parentIds.add(frame.parentMessageId ?? null);
     }
-
-    if (siblings.length > 1) {
-      parentIds.add(parentMessageId ?? null);
+    const message = frame.siblings[frame.index++];
+    if (!message) {
+      stack.pop();
+      continue;
     }
-
-    for (const message of siblings) {
-      collectBranchParents(message.children, message.messageId);
+    if (message.children?.length) {
+      stack.push({ siblings: message.children, parentMessageId: message.messageId, index: 0 });
     }
-  };
-
-  collectBranchParents(messagesTree, rootSiblingKey);
+  }
   return Array.from(parentIds);
 };
 
@@ -111,38 +110,37 @@ export const getBranchSiblingIndexesForTarget = (
   }
 
   const branchIndexes: BranchSiblingIndex[] = [];
-  const findTargetPath = (
-    siblings: TMessage[] | undefined,
-    parentMessageId: string | null | undefined,
-  ): boolean => {
-    if (!siblings?.length) {
-      return false;
+  const stack = [
+    { siblings: messagesTree, parentMessageId: rootSiblingKey, index: 0, branchCount: 0 },
+  ];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    const index = frame.index++;
+    const message = frame.siblings[index];
+    if (!message) {
+      stack.pop();
+      continue;
     }
-
-    for (let index = 0; index < siblings.length; index++) {
-      const message = siblings[index];
-      if (!message) {
-        continue;
-      }
-
-      const isTarget = message.messageId === targetMessageId;
-      const childHasTarget = findTargetPath(message.children, message.messageId);
-      if (isTarget || childHasTarget) {
-        if (siblings.length > 1) {
-          branchIndexes.unshift({
-            parentMessageId,
-            siblingIdx: siblings.length - index - 1,
-          });
-        }
-        return true;
-      }
+    branchIndexes.length = frame.branchCount;
+    if (frame.siblings.length > 1) {
+      branchIndexes.push({
+        parentMessageId: frame.parentMessageId,
+        siblingIdx: frame.siblings.length - index - 1,
+      });
     }
-
-    return false;
-  };
-
-  findTargetPath(messagesTree, rootSiblingKey);
-  return branchIndexes;
+    if (message.messageId === targetMessageId) {
+      return branchIndexes;
+    }
+    if (message.children?.length) {
+      stack.push({
+        siblings: message.children,
+        parentMessageId: message.messageId,
+        index: 0,
+        branchCount: branchIndexes.length,
+      });
+    }
+  }
+  return [];
 };
 
 export const getLatestText = (message?: TMessage | null, includeIndex?: boolean): string => {
@@ -206,25 +204,6 @@ const getPartToolCall = (part: TMessageContentParts): Agents.ToolCall | undefine
   part.type === ContentTypes.TOOL_CALL
     ? (part[ContentTypes.TOOL_CALL] as Agents.ToolCall | undefined)
     : undefined;
-
-/** Slots the persistence compaction leaves nothing behind for: the
- * dual-message `type: ''` placeholders, text/think parts that never received a
- * delta, and tool calls missing their `tool_call` payload. */
-export const isEmptyContentPart = (part: TMessageContentParts): boolean => {
-  if (!part.type) {
-    return true;
-  }
-  if (part.type === ContentTypes.TEXT) {
-    return getPartTextValue(part.text).length === 0;
-  }
-  if (part.type === ContentTypes.THINK) {
-    return getPartTextValue(part.think).length === 0;
-  }
-  if (part.type === ContentTypes.TOOL_CALL) {
-    return getPartToolCall(part) == null;
-  }
-  return false;
-};
 
 /** One side extending the other is the same part observed at two moments —
  * a flushed tail or a server-side trim — while divergent content is a
