@@ -109,7 +109,11 @@ export {
   shouldRollbackReveal,
   buildRevealedMessage,
 } from './react/steering/useQueuedTurnReveal';
+export { useCoreChat } from './react/core';
+export { useSnapshot } from './react/snapshot';
 export { ReactQueryChatState } from './react/state';
+export type { Subscribe, SnapshotOptions } from './react/snapshot';
+export type { UseCoreChatOptions, CoreChatHelpers } from './react/core';
 export type { ReactQueryChatStateOptions } from './react/state';
 export { composerLiftFamily } from './react/lift';
 export { showSkillsPopoverFamily } from './react/skills';

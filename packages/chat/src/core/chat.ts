@@ -557,16 +557,22 @@ export class Chat {
   private disposed = false;
   /** Set while the chat writes the state, whose own report of that write the chat announces itself. */
   private writing = false;
+  private revision = 0;
   /**
    * The conversation this chat runs under: its id, until the server names the one it created for
    * a chat started under `new`. Every later turn addresses that one.
    */
-  private conversationId: string;
+  private conversation: string;
 
   constructor(init: ChatInit) {
     this.id = init.id;
-    this.conversationId = init.id;
+    this.conversation = init.id;
     this.init = init;
+  }
+
+  /** The conversation this chat runs under: its id, or the one the server created under `new`. */
+  get conversationId(): string {
+    return this.conversation;
   }
 
   get status(): ChatStatus {
@@ -583,6 +589,28 @@ export class Chat {
 
   get messages(): TMessage[] {
     return this.init.state.messages;
+  }
+
+  /**
+   * Counts the changes reported to subscribers, writes made to the state outside the chat
+   * included. A write can keep the same list while a message in it changed, so a snapshot keyed
+   * by this sees every write.
+   */
+  get version(): number {
+    return this.revision;
+  }
+
+  /**
+   * Replaces the message list after the writes already queued. AI SDK: the `messages` setter. A
+   * function receives the list current when it is written. The rollback of an optimistic write
+   * treats it as it treats any write made after its own.
+   */
+  setMessages(messages: TMessage[] | ((current: TMessage[]) => TMessage[])): Promise<void> {
+    return this.executor.run(() => {
+      if (!this.disposed) {
+        this.write(typeof messages === 'function' ? messages(this.messages) : messages);
+      }
+    });
   }
 
   /** Submits a user turn. Rejects while another turn of this chat is in flight. */
@@ -686,7 +714,7 @@ export class Chat {
       const prepared = await untilAborted(
         this.init.prepareRequest({
           ...request,
-          chatId: this.conversationId,
+          chatId: this.conversation,
           messages: this.messages,
         }),
         active.controller.signal,
@@ -724,7 +752,7 @@ export class Chat {
         this.init.transport.sendMessages({
           ...options,
           trigger: request.trigger,
-          chatId: this.conversationId,
+          chatId: this.conversation,
           messageId: request.messageId,
           payload: prepared.payload,
           abortSignal: signal,
@@ -955,9 +983,9 @@ export class Chat {
     if (
       conversationId &&
       conversationId !== Constants.NEW_CONVO &&
-      this.conversationId === Constants.NEW_CONVO
+      this.conversation === Constants.NEW_CONVO
     ) {
-      this.conversationId = conversationId;
+      this.conversation = conversationId;
     }
   }
 
@@ -1067,6 +1095,7 @@ export class Chat {
   }
 
   private notify(): void {
+    this.revision += 1;
     for (const listener of this.listeners) {
       try {
         listener();
