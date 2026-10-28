@@ -404,3 +404,64 @@ describe('URL elicitation (-32042) integration', () => {
     expect(server.state.authorized).toBe(false);
   });
 });
+
+describe('URL elicitation (-32042) integration: concurrent calls sharing one link', () => {
+  let server: MockElicitationServer;
+  let connection: MCPConnection | undefined;
+
+  beforeAll(async () => {
+    server = await startMockElicitationServer();
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  beforeEach(() => {
+    jest
+      .spyOn(MCPServersRegistry, 'getInstance')
+      .mockReturnValue({} as unknown as MCPServersRegistry);
+  });
+
+  afterEach(async () => {
+    if (connection) {
+      await connection.disconnect();
+      connection = undefined;
+    }
+  });
+
+  it('shows one card for two concurrent calls that get the same link, and both succeed after one consent', async () => {
+    // An aggregating gateway serves one single-use authorization link per (user,
+    // provider) to every concurrent call; a second card would carry a dead link.
+    server.reset({ authorized: false, wireShape: 'jsonrpc-200' });
+    const built = await connectToMock(server);
+    connection = built.connection;
+    const elicitationStart = jest.fn(async () => undefined);
+    const { manager: flowManager, createFlow } = consentingFlowManager(server);
+
+    const [a, b] = await Promise.all([
+      callGetSecret(built.manager, server, built.serverName, { flowManager, elicitationStart }),
+      callGetSecret(built.manager, server, built.serverName, { flowManager, elicitationStart }),
+    ]);
+
+    expect(JSON.stringify(a)).toContain('s3cr3t');
+    expect(JSON.stringify(b)).toContain('s3cr3t');
+    expect(elicitationStart).toHaveBeenCalledTimes(1);
+    expect(createFlow).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a link that still needs consent after "complete" as incomplete authorization, not a raw -32042', async () => {
+    server.reset({ authorized: false, wireShape: 'jsonrpc-200' });
+    const built = await connectToMock(server);
+    connection = built.connection;
+    const elicitationStart = jest.fn(async () => undefined);
+    // The user clicks "I've authorized" without having completed consent.
+    const createFlow = jest.fn(async () => ({ action: 'complete' as const }));
+    const flowManager = { createFlow } as unknown as FlowStateManager<never>;
+
+    await expect(
+      callGetSecret(built.manager, server, built.serverName, { flowManager, elicitationStart }),
+    ).rejects.toThrow(/Authorization did not complete/);
+    expect(elicitationStart).toHaveBeenCalledTimes(1);
+  });
+});

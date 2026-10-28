@@ -175,6 +175,13 @@ export class MCPManager extends UserConnectionManager {
    *  (user, server) — see {@link MAX_PENDING_ELICITATIONS}. */
   private readonly pendingElicitations = new Map<string, number>();
 
+  /** In-flight URL elicitations keyed by `${userId}:${serverName}:${url}`. An
+   *  aggregating gateway serves one single-use authorization link per (user,
+   *  provider) to every concurrent call, so later calls join the first call's
+   *  card instead of raising their own: one click authorizes them all, and no
+   *  dead duplicate links reach the user. */
+  private readonly inflightUrlElicitations = new Map<string, Promise<ElicitationFlowResult>>();
+
   /** Reserves an elicitation slot for `(userId, serverName)`, returning `false`
    *  when the cap is already reached so the caller can decline without spawning a
    *  flow. A successful reservation must be paired with {@link releaseElicitation}. */
@@ -1838,30 +1845,62 @@ Please follow these instructions when using tools from the respective MCP server
             );
           }
 
-          const flowId = generateElicitationFlowId(userId!, serverName, toolName, getTenantId());
-          if (!this.reserveElicitation(userId!, serverName)) {
-            throw new McpError(
-              ErrorCode.InvalidRequest,
-              `${first.message} Too many pending authorizations for ${serverName}; complete or cancel one, then retry. Open ${first.url} to authorize.`,
-            );
-          }
-          try {
-            logger.info(
-              `${logPrefix}[${toolName}] URL elicitation required (-32042), flowId: ${flowId}`,
-            );
-            await elicitationStart!({
-              flowId,
-              mode: 'url',
-              message: first.message,
-              serverName,
-              toolName,
-              url: first.url,
-              elicitationId: first.elicitationId,
-            });
-
-            let flowResult: ElicitationFlowResult;
+          /** The retry after consent: a link that still needs consent (the
+           *  user never finished, or a stale card) must read as that, not as a
+           *  raw -32042 with a dead link. */
+          const retryAuthorized = async () => {
             try {
-              flowResult = await elicitationFlowManager.createFlow(
+              return await requestTool();
+            } catch (retryError) {
+              const again = extractUrlElicitation(retryError);
+              if (!again) {
+                throw retryError;
+              }
+              throw new McpError(
+                ErrorCode.InvalidRequest,
+                `${again.message} Authorization did not complete. Open ${again.url} to authorize, then retry.`,
+              );
+            }
+          };
+
+          const joinKey = `${userId}:${serverName}:${first.url}`;
+          const joined = this.inflightUrlElicitations.get(joinKey);
+          if (joined) {
+            logger.info(
+              `${logPrefix}[${toolName}] URL elicitation required (-32042); joining the pending authorization for the same link`,
+            );
+            const joinedResult = await joined.catch(() => undefined);
+            if (!joinedResult || !isElicitationSuccess(joinedResult.action)) {
+              throw new McpError(
+                ErrorCode.InvalidRequest,
+                `${first.message} Authorization was cancelled. Open ${first.url} to authorize, then retry.`,
+              );
+            }
+            result = await retryAuthorized();
+          } else {
+            const flowId = generateElicitationFlowId(userId!, serverName, toolName, getTenantId());
+            if (!this.reserveElicitation(userId!, serverName)) {
+              throw new McpError(
+                ErrorCode.InvalidRequest,
+                `${first.message} Too many pending authorizations for ${serverName}; complete or cancel one, then retry. Open ${first.url} to authorize.`,
+              );
+            }
+            try {
+              logger.info(
+                `${logPrefix}[${toolName}] URL elicitation required (-32042), flowId: ${flowId}`,
+              );
+              await elicitationStart!({
+                flowId,
+                mode: 'url',
+                message: first.message,
+                serverName,
+                toolName,
+                url: first.url,
+                elicitationId: first.elicitationId,
+              });
+
+              let flowResult: ElicitationFlowResult;
+              const flow = elicitationFlowManager.createFlow(
                 flowId,
                 'mcp_elicit',
                 {
@@ -1871,27 +1910,32 @@ Please follow these instructions when using tools from the respective MCP server
                 },
                 options?.signal,
               );
-            } catch (flowError) {
-              const reason = flowError instanceof Error ? flowError.message : String(flowError);
-              throw new McpError(
-                ErrorCode.InvalidRequest,
-                `${first.message} Open ${first.url} to authorize, then retry. (${reason})`,
-              );
-            }
+              this.inflightUrlElicitations.set(joinKey, flow);
+              try {
+                flowResult = await flow;
+              } catch (flowError) {
+                const reason = flowError instanceof Error ? flowError.message : String(flowError);
+                throw new McpError(
+                  ErrorCode.InvalidRequest,
+                  `${first.message} Open ${first.url} to authorize, then retry. (${reason})`,
+                );
+              }
 
-            if (!isElicitationSuccess(flowResult.action)) {
-              throw new McpError(
-                ErrorCode.InvalidRequest,
-                `${first.message} Authorization was cancelled. Open ${first.url} to authorize, then retry.`,
-              );
-            }
+              if (!isElicitationSuccess(flowResult.action)) {
+                throw new McpError(
+                  ErrorCode.InvalidRequest,
+                  `${first.message} Authorization was cancelled. Open ${first.url} to authorize, then retry.`,
+                );
+              }
 
-            logger.debug(
-              `${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`,
-            );
-            result = await requestTool();
-          } finally {
-            this.releaseElicitation(userId!, serverName);
+              logger.debug(
+                `${logPrefix}[${toolName}] URL elicitation authorized, retrying tools/call`,
+              );
+              result = await retryAuthorized();
+            } finally {
+              this.inflightUrlElicitations.delete(joinKey);
+              this.releaseElicitation(userId!, serverName);
+            }
           }
         }
         const hasPersistentUserConnections =
