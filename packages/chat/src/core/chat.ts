@@ -491,23 +491,36 @@ const recordOptimisticWrite = (
 /**
  * Undoes an optimistic write on the list as it stands now: rows it added go, rows it replaced or
  * removed come back as they were, and any other row, or one of its rows someone else wrote since,
- * stays as it is.
+ * stays as it is. A row that stays keeps the rows the write added above it, so the tree never loses
+ * the parent of a row it still lists.
  */
 const undoOptimisticWrite = (record: OptimisticWrite, current: TMessage[]): TMessage[] => {
-  const next: TMessage[] = [];
-  const kept = new Set<string>();
-  for (const message of current) {
+  const dropped = new Map<string, TMessage>();
+  const undone = current.map((message) => {
     if (record.committed.get(message.messageId) !== message) {
-      next.push(message);
-      kept.add(message.messageId);
-      continue;
+      return message;
     }
     const was = record.replaced.get(message.messageId);
-    if (was != null) {
-      next.push(was);
-      kept.add(message.messageId);
+    if (was == null) {
+      dropped.set(message.messageId, message);
+    }
+    return was;
+  });
+  for (const row of undone) {
+    let parent = row != null ? dropped.get(row.parentMessageId ?? '') : undefined;
+    while (parent != null && dropped.delete(parent.messageId)) {
+      parent = dropped.get(parent.parentMessageId ?? '');
     }
   }
+  const next: TMessage[] = [];
+  const kept = new Set<string>();
+  current.forEach((message, index) => {
+    const row = dropped.has(message.messageId) ? undefined : (undone[index] ?? message);
+    if (row != null) {
+      next.push(row);
+      kept.add(row.messageId);
+    }
+  });
   record.before.forEach((message, index) => {
     if (record.removed.has(message.messageId) && !kept.has(message.messageId)) {
       next.splice(getRestoreIndex(record.before, index, next), 0, message);
@@ -861,6 +874,10 @@ export class Chat {
       if (this.markStreaming()) {
         this.notify();
       }
+      /** A listener told of that status may have disposed the chat too. */
+      if (this.disposed) {
+        return undefined;
+      }
     } else if (event.type === 'final') {
       outcome = getFinalOutcome(event.data);
     } else if (event.type === 'abort') {
@@ -953,13 +970,24 @@ export class Chat {
   ): void {
     const { state } = this.init;
     const status: ChatStatus = outcome.kind === 'error' ? 'error' : 'ready';
-    if (state.connection !== 'idle') {
-      state.connection = 'idle';
+    /**
+     * One terminal state, with the chat's listeners told once it is all set. A store subscriber
+     * told of a field may start the next turn, which then owns the fields this one has not set.
+     */
+    this.writing = true;
+    try {
+      if (state.connection !== 'idle') {
+        state.connection = 'idle';
+      }
+      if (!this.active && state.status !== status) {
+        state.status = status;
+      }
+      if (!this.active) {
+        state.error = outcome.kind === 'error' ? outcome.error : undefined;
+      }
+    } finally {
+      this.writing = false;
     }
-    if (state.status !== status) {
-      state.status = status;
-    }
-    state.error = outcome.kind === 'error' ? outcome.error : undefined;
     const messages = this.messages;
     let message: TMessage | undefined;
     if (responseId !== undefined) {
