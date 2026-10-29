@@ -22,3 +22,5 @@ export * from './ptc';
 export * from './branch';
 export * from './subagents';
 export { strongDirection } from './direction';
+export * from './shortcuts';
+export * from './pane';
