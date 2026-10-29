@@ -1,8 +1,12 @@
+/**
+ * @jest-environment jsdom
+ */
 import React from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
 import { act, renderHook } from '@testing-library/react';
 import { ContentTypes, QueryKeys, StepEvents } from 'librechat-data-provider';
-import type { ActiveSubagentPanel } from '~/components/Chat/Subagents/state';
+import { createStore, useAtomValue, useSetAtom, Provider as JotaiProvider } from 'jotai';
+import type { ActiveSubagentPanel } from '../state';
+import type { StreamHost } from '../../stream/host';
 import {
   reduceSubagentProgress,
   closeParentSubagentProgress,
@@ -10,9 +14,10 @@ import {
   subagentProgressByToolCallId,
   subagentProgressKey,
   takeRegisteredSubagentProgressKeys,
-} from '~/components/Chat/Subagents/state';
-import useSubagentActivityStream from './useSubagentActivityStream';
-import { IsolatedAtomStore } from 'test/harness';
+} from '../state';
+import { createSSETransport } from '../../../core/transport';
+import { StreamHostProvider } from '../../stream/host';
+import { useSubagentActivityStream } from '../stream';
 
 type Listener = (event: MessageEvent) => void;
 type MockStream = {
@@ -21,27 +26,38 @@ type MockStream = {
   listeners: Record<string, Listener>;
   close: jest.Mock;
   emit: (type: string, data: unknown) => void;
+  /** The connection failed with an HTTP status (sse.js reports it on `error`). */
+  refuse: (status: number) => void;
+  /** The response body ended; sse.js reports only the closed ready state. */
+  end: () => void;
 };
 
 const streams: MockStream[] = [];
 jest.mock('sse.js', () => ({
-  SSE: jest.fn().mockImplementation((url: string, options: MockStream['options']) => {
-    const listeners: Record<string, Listener> = {};
-    const stream: MockStream = {
-      url,
-      options,
-      listeners,
-      close: jest.fn(),
-      emit: (type, data) => listeners[type]?.({ data: JSON.stringify(data) } as MessageEvent),
-    };
-    streams.push(stream);
-    return {
-      addEventListener: (type: string, listener: Listener) => {
-        listeners[type] = listener;
-      },
-      close: stream.close,
-    };
-  }),
+  SSE: Object.assign(
+    jest.fn().mockImplementation((url: string, options: MockStream['options']) => {
+      const listeners: Record<string, Listener> = {};
+      const stream: MockStream = {
+        url,
+        options,
+        listeners,
+        close: jest.fn(),
+        emit: (type, data) => listeners[type]?.({ data: JSON.stringify(data) } as MessageEvent),
+        refuse: (status) =>
+          listeners.error?.({ data: '', responseCode: status } as unknown as MessageEvent),
+        end: () => listeners.readystatechange?.({ readyState: 2 } as unknown as MessageEvent),
+      };
+      streams.push(stream);
+      return {
+        addEventListener: (type: string, listener: Listener) => {
+          listeners[type] = listener;
+        },
+        close: stream.close,
+        stream: jest.fn(),
+      };
+    }),
+    { CLOSED: 2 },
+  ),
 }));
 
 const mockInvalidateQueries = jest.fn();
@@ -55,9 +71,14 @@ jest.mock('@tanstack/react-query', () => ({
   useQueryClient: () => mockQueryClient,
 }));
 
-jest.mock('~/hooks/AuthContext', () => ({
-  useAuthContext: () => ({ token: 'token-1', isAuthenticated: true }),
-}));
+const host: StreamHost = {
+  useResumableServices: () => () => {
+    throw new Error('the activity feed attaches without a resumable binding');
+  },
+  useLegacyStream: () => undefined,
+  useTransport: () => transport,
+};
+const transport = createSSETransport({ token: 'token-1' });
 
 const selection: ActiveSubagentPanel = {
   host: 'conversation',
@@ -71,9 +92,15 @@ const selection: ActiveSubagentPanel = {
   durable: { threadId: 'child/thread', taskId: 'task?1' },
 };
 
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <IsolatedAtomStore>{children}</IsolatedAtomStore>
-);
+function Wrapper({ children }: { children: React.ReactNode }) {
+  const [store] = React.useState(createStore);
+  return (
+    <JotaiProvider store={store}>
+      <StreamHostProvider host={host}>{children}</StreamHostProvider>
+    </JotaiProvider>
+  );
+}
+const wrapper = Wrapper;
 
 describe('useSubagentActivityStream', () => {
   beforeEach(() => {
@@ -731,11 +758,96 @@ describe('useSubagentActivityStream', () => {
     jest.useRealTimers();
   });
 
+  it('keeps replayed history, the ready boundary and a live steer in wire order across a reconnect', () => {
+    jest.useFakeTimers();
+    const { result, unmount } = renderHook(
+      () => {
+        useSubagentActivityStream(selection);
+        return useAtomValue(
+          subagentProgressByToolCallId(
+            subagentProgressKey(
+              selection.parentMessageId,
+              selection.toolCallId,
+              selection.partIndex,
+            ),
+          ),
+        );
+      },
+      { wrapper },
+    );
+    const update = (sequence: number, phase: string, data: unknown) => ({
+      event: StepEvents.ON_SUBAGENT_UPDATE,
+      data: {
+        runId: 'parent',
+        subagentRunId: 'child',
+        subagentType: 'researcher',
+        subagentAgentId: 'agent-1',
+        parentToolCallId: selection.toolCallId,
+        activityEventId: `task:${sequence}`,
+        activitySequence: sequence,
+        phase,
+        timestamp: '2026-09-29T00:00:00.000Z',
+        data,
+      },
+    });
+    const text = (sequence: number) =>
+      update(sequence, 'message_delta', {
+        delta: { content: [{ type: ContentTypes.TEXT, text: `text-${sequence}` }] },
+      });
+    const steer = update(3, 'steer_applied', {
+      index: 1,
+      part: { type: ContentTypes.STEER, steer: 'parent guidance', steerId: 'steer-1' },
+    });
+    const summary = () =>
+      result.current?.contentParts.map((part) =>
+        part?.type === ContentTypes.STEER ? 'steer' : (part as { text?: string })?.text,
+      );
+
+    act(() => {
+      streams[0].emit('message', {
+        event: 'subagent_activity_replay',
+        data: [text(0), text(1)],
+      });
+      streams[0].emit('message', { ready: true, contentRecovery: true });
+      streams[0].emit('message', text(2));
+      streams[0].emit('message', steer);
+      streams[0].emit('message', text(4));
+    });
+    expect(result.current?.contentParts.map((part) => part?.type)).toEqual([
+      ContentTypes.TEXT,
+      ContentTypes.STEER,
+      ContentTypes.TEXT,
+    ]);
+    const live = summary();
+    expect(live).toEqual(['text-0text-1text-2', 'steer', 'text-4']);
+
+    act(() => {
+      streams[0].emit('error', {});
+    });
+    act(() => jest.advanceTimersByTime(500));
+    expect(streams).toHaveLength(2);
+    act(() => {
+      streams[1].emit('message', {
+        event: 'subagent_activity_replay',
+        data: [text(0), text(1), text(2), steer, text(4)],
+      });
+      streams[1].emit('message', { ready: true, contentRecovery: true });
+      streams[1].emit('message', text(5));
+    });
+    expect(summary()).toEqual(['text-0text-1text-2', 'steer', 'text-4text-5']);
+    expect(result.current?.lastActivitySequence).toBe(5);
+
+    unmount();
+    jest.useRealTimers();
+  });
+
   it('reconnects with bounded backoff after a transient stream error', () => {
     jest.useFakeTimers();
     const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
 
-    act(() => streams[0]?.emit('error', {}));
+    act(() => {
+      streams[0]?.emit('error', {});
+    });
     expect(streams[0]?.close).toHaveBeenCalledTimes(1);
     expect(streams).toHaveLength(1);
 
@@ -751,7 +863,9 @@ describe('useSubagentActivityStream', () => {
     jest.useFakeTimers();
     const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
 
-    act(() => streams[0]?.emit('error', {}));
+    act(() => {
+      streams[0]?.emit('error', {});
+    });
     act(() => jest.advanceTimersByTime(500));
     expect(streams).toHaveLength(2);
 
@@ -764,6 +878,143 @@ describe('useSubagentActivityStream', () => {
 
     act(() => jest.advanceTimersByTime(1));
     expect(streams).toHaveLength(3);
+
+    unmount();
+    jest.useRealTimers();
+  });
+
+  it.each([403, 410])(
+    'stops for good when the activity route refuses the task with %s',
+    (status) => {
+      jest.useFakeTimers();
+      const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+
+      act(() => {
+        streams[0].refuse(status);
+      });
+      expect(streams[0].close).toHaveBeenCalled();
+      act(() => jest.advanceTimersByTime(60_000));
+      expect(streams).toHaveLength(1);
+
+      unmount();
+      jest.useRealTimers();
+    },
+  );
+
+  it('keeps attaching through 404s while the child thread is still being reserved', () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const before = streams.length;
+      act(() => {
+        streams[before - 1].refuse(404);
+      });
+      act(() => jest.advanceTimersByTime(5_000));
+      expect(streams).toHaveLength(before + 1);
+    }
+
+    unmount();
+    jest.useRealTimers();
+  });
+
+  it('stops on a 404 once the readiness window has passed', () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+
+    act(() => jest.advanceTimersByTime(60_000));
+    act(() => {
+      streams[0].refuse(404);
+    });
+    act(() => jest.advanceTimersByTime(60_000));
+    expect(streams).toHaveLength(1);
+
+    unmount();
+    jest.useRealTimers();
+  });
+
+  it('still retries a rate-limited or timed-out attach', () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+
+    act(() => {
+      streams[0].refuse(429);
+    });
+    act(() => jest.advanceTimersByTime(500));
+    expect(streams).toHaveLength(2);
+    act(() => {
+      streams[1].refuse(408);
+    });
+    act(() => jest.advanceTimersByTime(1_000));
+    expect(streams).toHaveLength(3);
+
+    unmount();
+    jest.useRealTimers();
+  });
+
+  it('bounds reconnects when the feed keeps ending as unavailable before any live update', () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+    const unavailable = (index: number) => {
+      act(() => {
+        streams[index].emit('message', { error: 'Subagent activity stream unavailable' });
+        streams[index].end();
+      });
+    };
+
+    unavailable(0);
+    const delays: number[] = [];
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const before = streams.length;
+      let waited = 0;
+      while (streams.length === before && waited < 60_000) {
+        act(() => jest.advanceTimersByTime(100));
+        waited += 100;
+      }
+      if (streams.length === before) break;
+      delays.push(waited);
+      unavailable(streams.length - 1);
+    }
+
+    expect(delays).toEqual([500, 1_000, 2_000, 4_000, 5_000, 5_000, 5_000, 5_000]);
+    expect(streams).toHaveLength(9);
+
+    unmount();
+    jest.useRealTimers();
+  });
+
+  it('resets the reconnect budget once a live update arrives', () => {
+    jest.useFakeTimers();
+    const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
+    const live = {
+      event: StepEvents.ON_SUBAGENT_UPDATE,
+      data: {
+        runId: 'parent',
+        subagentRunId: 'child',
+        subagentType: 'researcher',
+        subagentAgentId: 'agent-1',
+        parentToolCallId: selection.toolCallId,
+        activityEventId: 'task:0',
+        activitySequence: 0,
+        phase: 'message_delta',
+        timestamp: '2026-09-29T00:00:00.000Z',
+        data: { delta: { content: [{ type: ContentTypes.TEXT, text: 'alive' }] } },
+      },
+    };
+
+    for (let index = 0; index < 8; index++) {
+      act(() => {
+        streams[index].end();
+      });
+      act(() => jest.advanceTimersByTime(5_000));
+    }
+    expect(streams).toHaveLength(9);
+    act(() => {
+      streams[8].emit('message', live);
+      streams[8].end();
+    });
+    act(() => jest.advanceTimersByTime(500));
+    expect(streams).toHaveLength(10);
 
     unmount();
     jest.useRealTimers();
@@ -802,7 +1053,7 @@ describe('useSubagentActivityStream', () => {
 
 it('treats content watermarks as invalidation only after the subscribed ready boundary', () => {
   const { result } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
-  const stream = streams.at(-1)!;
+  const stream = streams[streams.length - 1];
   expect(result.current.isReady).toBe(false);
   act(() => stream.emit('message', { ready: true, contentRecovery: true }));
   expect(result.current.isReady).toBe(true);
@@ -831,7 +1082,7 @@ it('treats content watermarks as invalidation only after the subscribed ready bo
 it('skips already committed content notifications but still refreshes a newer revision or sequence', () => {
   mockGetQueryData.mockReturnValue({ revision: 3, throughSequence: 118 });
   const { unmount } = renderHook(() => useSubagentActivityStream(selection), { wrapper });
-  const stream = streams.at(-1)!;
+  const stream = streams[streams.length - 1];
   mockInvalidateQueries.mockClear();
   const notify = (revision: number, throughSequence: number) =>
     act(() =>

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { SSE } from 'sse.js';
 import { atomFamily, selectAtom } from 'jotai/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { QueryKeys, StepEvents, apiBaseUrl } from 'librechat-data-provider';
-import type { SubagentTaskContentSnapshot, SubagentUpdateEvent } from 'librechat-data-provider';
-import type { ActiveSubagentPanel } from '~/components/Chat/Subagents/state';
+import type {
+  ChatEvent,
+  SubagentUpdateEvent,
+  SubagentTaskContentSnapshot,
+} from 'librechat-data-provider';
+import type { ActiveSubagentPanel } from './state';
 import {
   closeParentSubagentProgress,
   reduceSubagentProgress,
@@ -14,8 +17,8 @@ import {
   subagentParentStreamOpenByToolCallId,
   subagentProgressByToolCallId,
   subagentProgressKey,
-} from '~/components/Chat/Subagents/state';
-import { useAuthContext } from '~/hooks/AuthContext';
+} from './state';
+import { useStreamHost } from '../stream/host';
 
 type ActivityEnvelope = {
   event?: unknown;
@@ -23,7 +26,6 @@ type ActivityEnvelope = {
   final?: unknown;
   subagentActivity?: unknown;
   droppedCount?: unknown;
-  ready?: unknown;
 };
 
 const contentReady = atomFamily((_key: string) => atom(false));
@@ -31,6 +33,18 @@ const readyReaders = new Map<string, number>();
 
 const INITIAL_RECONNECT_MS = 500;
 const MAX_RECONNECT_MS = 5_000;
+/** Reconnects in a row that deliver no live update before the feed gives up; the durable
+ *  thread query keeps polling, so the panel still converges on the stored transcript.
+ *  Internal retry hygiene with that fallback, not an operator lever, so not in configSchema. */
+const MAX_IDLE_RECONNECTS = 8;
+/** A child opened before its thread is reserved answers 404 until preparation finishes; the
+ *  durable thread query treats that as pending for the same window, so the feed does too. */
+const CHILD_READY_WINDOW_MS = 60_000;
+
+/** A refusal no retry can clear: the task is gone or not the viewer's. 401 arrives here only
+ *  after the transport's own refresh failed; 408 and 429 are worth retrying. */
+const isRefusal = (status?: number): boolean =>
+  status != null && status >= 400 && status < 500 && status !== 408 && status !== 429;
 
 const isSubagentUpdate = (value: unknown): value is SubagentUpdateEvent => {
   if (value == null || typeof value !== 'object') return false;
@@ -46,12 +60,16 @@ const isSubagentUpdate = (value: unknown): value is SubagentUpdateEvent => {
   );
 };
 
-/** Replay-then-live enhancement for the selected durable child; the durable query remains canonical. */
-export default function useSubagentActivityStream(
+/**
+ * Replay-then-live enhancement for the selected durable child; the durable query remains
+ * canonical. The feed attaches through the host's transport, which owns the connection,
+ * framing and token refresh.
+ */
+export function useSubagentActivityStream(
   selection: ActiveSubagentPanel,
   enabled = true,
 ): { isReady: boolean } {
-  const { token, isAuthenticated } = useAuthContext();
+  const transport = useStreamHost().useTransport();
   const queryClient = useQueryClient();
   const key = subagentProgressKey(
     selection.parentMessageId,
@@ -120,8 +138,7 @@ export default function useSubagentActivityStream(
       threadId == null ||
       taskId == null ||
       !enabled ||
-      !isAuthenticated ||
-      token == null
+      transport == null
     ) {
       return;
     }
@@ -138,39 +155,49 @@ export default function useSubagentActivityStream(
     };
     if ((readyReaders.get(readyKey) ?? 0) <= 1) setReady(false);
     const endpoint = `${apiBaseUrl()}/api/convos/${encodeURIComponent(selection.parentConversationId)}/subagents/${encodeURIComponent(threadId)}/tasks/${encodeURIComponent(taskId)}/activity`;
-    let stream: SSE | undefined;
+    let stream: AbortController | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let retryAttempt = 0;
+    let idleReconnects = 0;
+    const readinessDeadline = Date.now() + CHILD_READY_WINDOW_MS;
     let disposed = false;
     let terminal = false;
 
     const closeCurrent = () => {
       const current = stream;
       stream = undefined;
-      current?.close();
+      current?.abort();
     };
     const connect = () => {
       retryTimer = undefined;
       if (disposed || terminal) return;
-      const next = new SSE(endpoint, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const next = new AbortController();
       stream = next;
 
-      next.addEventListener('message', (message: MessageEvent) => {
+      const onEvent = (event: ChatEvent) => {
         if (stream !== next || disposed) return;
-        let envelope: ActivityEnvelope;
-        try {
-          envelope = JSON.parse(message.data) as ActivityEnvelope;
-        } catch {
+        if (event.type === 'error') {
+          setReady(true);
+          refreshContent();
+          if (event.status === 404 && Date.now() < readinessDeadline) {
+            reconnect(true);
+            return;
+          }
+          if (isRefusal(event.status)) {
+            terminal = true;
+            closeCurrent();
+            return;
+          }
+          reconnect();
           return;
         }
-        if (envelope.ready === true) {
+        if (event.type === 'ready') {
           setReady(true);
           refreshContent();
           return;
         }
+        if (event.type !== 'step' && event.type !== 'final') return;
+        const envelope: ActivityEnvelope = event.data;
         if (envelope.event === 'subagent_content_available') {
           const watermark = envelope.data as
             | {
@@ -224,25 +251,26 @@ export default function useSubagentActivityStream(
           retryAttempt = 0;
           return;
         }
-        const event = envelope.data;
-        if (envelope.event !== StepEvents.ON_SUBAGENT_UPDATE || !isSubagentUpdate(event)) {
+        const update = envelope.data;
+        if (envelope.event !== StepEvents.ON_SUBAGENT_UPDATE || !isSubagentUpdate(update)) {
           return;
         }
         if (
           selection.event == null &&
-          event.parentToolCallId != null &&
-          event.parentToolCallId !== selection.toolCallId
+          update.parentToolCallId != null &&
+          update.parentToolCallId !== selection.toolCallId
         ) {
           return;
         }
         retryAttempt = 0;
+        idleReconnects = 0;
         registerSubagentProgressKey(key);
         setProgress((previous) =>
           reduceSubagentProgress(
             previous,
             [
               {
-                ...event,
+                ...update,
                 activityDroppedCount:
                   Number.isSafeInteger(envelope.droppedCount) &&
                   (envelope.droppedCount as number) > 0
@@ -254,18 +282,18 @@ export default function useSubagentActivityStream(
             parentStreamOpenRef.current || previous?.activityReplayFrom != null,
           ),
         );
-      });
-      next.addEventListener('error', () => {
-        if (stream !== next) return;
-        setReady(true);
-        refreshContent();
-        reconnect();
-      });
+      };
+      transport.reconnectToStream({ url: endpoint }, { signal: next.signal, onEvent });
     };
 
-    const reconnect = () => {
+    const reconnect = (pending = false) => {
       if (disposed || terminal || retryTimer != null) return;
       closeCurrent();
+      if (!pending && idleReconnects >= MAX_IDLE_RECONNECTS) {
+        terminal = true;
+        return;
+      }
+      if (!pending) idleReconnects += 1;
       const delay = Math.min(INITIAL_RECONNECT_MS * 2 ** retryAttempt, MAX_RECONNECT_MS);
       retryAttempt += 1;
       retryTimer = setTimeout(connect, delay);
@@ -280,7 +308,6 @@ export default function useSubagentActivityStream(
     };
   }, [
     enabled,
-    isAuthenticated,
     key,
     queryClient,
     readyKey,
@@ -294,7 +321,7 @@ export default function useSubagentActivityStream(
     setReady,
     taskId,
     threadId,
-    token,
+    transport,
   ]);
   return { isReady };
 }

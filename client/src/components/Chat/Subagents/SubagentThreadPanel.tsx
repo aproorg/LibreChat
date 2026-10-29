@@ -12,6 +12,15 @@ import {
   useMediaQuery,
   useToastContext,
 } from '@librechat/client';
+import {
+  activeSubagentPanel,
+  subagentPanelFocusRequest,
+  subagentControlStateByTask,
+  subagentControlStateKey,
+  subagentProgressKey,
+  useSubagentProgress,
+  useSubagentActivityStream,
+} from '@librechat/chat/react';
 import type {
   ParentSubagentTaskSummary,
   SubagentControlAction,
@@ -19,8 +28,8 @@ import type {
   SubagentControlRequest,
 } from 'librechat-data-provider';
 import type { ComposerKeyVerdict, ComposerStopProps, SendAction } from '@librechat/client';
+import type { ActiveSubagentPanel, SubagentControlUiState } from '@librechat/chat/react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import type { ActiveSubagentPanel, SubagentControlUiState } from './state';
 import type { ComposerKeyAction } from '~/utils/shortcuts';
 import type { OptionWithIcon } from '~/common';
 import {
@@ -39,14 +48,6 @@ import {
   retainBoundedMovingWindowTurns,
 } from './adapters';
 import {
-  activeSubagentPanel,
-  subagentPanelFocusRequest,
-  subagentControlStateByTask,
-  subagentControlStateKey,
-  subagentProgressKey,
-  useSubagentProgress,
-} from './state';
-import {
   agentAuthor,
   resolveSubagentAuthor,
   isSelfSpawn as isSelfSpawnType,
@@ -54,7 +55,6 @@ import {
   readableSubagentType,
   useParentAuthor,
 } from './author';
-import useSubagentActivityStream from '~/data-provider/Subagents/useSubagentActivityStream';
 import SubagentActivity, { SubagentActivityScrollSurface } from './SubagentActivity';
 import ApprovalProvider from '~/components/Chat/Messages/Content/ApprovalContext';
 import { TaskContentScopeContext } from '~/data-provider/Subagents/content';
