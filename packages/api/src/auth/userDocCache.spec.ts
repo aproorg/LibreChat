@@ -7,6 +7,9 @@ import {
   buildAuthUserDocReverseIndexKey,
   getAuthUserDocCacheMode,
   getCachedAuthUserDoc,
+  getCurrentCachedAuthUserDoc,
+  isAuthUserAdmissible,
+  AUTH_USER_FRESHNESS_PROJECTION,
   invalidateCachedAuthUserDoc,
   setCachedAuthUserDoc,
   timeAuthUserLookup,
@@ -498,5 +501,86 @@ describe('auth user document cache helpers', () => {
       '[authUserDocCache] Cache read failed; falling back to user lookup',
       { error: 'redis unavailable' },
     );
+  });
+
+  it('serves a cached document only while the stored updatedAt and fence still match', async () => {
+    const store = makeStore();
+    const updatedAt = '2026-10-20T00:00:00.000Z';
+    store.values.set('key', {
+      version: 2,
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      user: { _id: 'user-1', id: 'user-1', updatedAt },
+    });
+    const readStored = jest.fn();
+
+    readStored.mockResolvedValueOnce({ _id: 'user-1', updatedAt: new Date(updatedAt) });
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toMatchObject({
+      _id: 'user-1',
+    });
+    expect(readStored).toHaveBeenCalledWith({ _id: 'user-1' }, AUTH_USER_FRESHNESS_PROJECTION);
+
+    /** A mutation after the cached read moved updatedAt. */
+    readStored.mockResolvedValueOnce({ _id: 'user-1', updatedAt: new Date('2026-10-27') });
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+
+    readStored.mockResolvedValueOnce({
+      _id: 'user-1',
+      updatedAt: new Date(updatedAt),
+      agentTriggerDeletionStartedAt: new Date(),
+    });
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+
+    readStored.mockResolvedValueOnce(null);
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+
+    /** A password reset stamped in the same millisecond as the write before it. */
+    readStored.mockResolvedValueOnce({
+      _id: 'user-1',
+      updatedAt: new Date(updatedAt),
+      credentialsChangedAt: new Date(updatedAt),
+    });
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+
+    readStored.mockResolvedValueOnce({
+      _id: 'user-1',
+      updatedAt: new Date(updatedAt),
+      role: 'ADMIN',
+    });
+    await expect(
+      getCurrentCachedAuthUserDoc(store, 'key', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('skips the freshness read on a cache miss', async () => {
+    const readStored = jest.fn();
+    await expect(
+      getCurrentCachedAuthUserDoc(makeStore(), 'missing', { findUser: readStored }),
+    ).resolves.toBeUndefined();
+    expect(readStored).not.toHaveBeenCalled();
+  });
+
+  it('reads the deletion fence only for users the cache did not vouch for', async () => {
+    const isPrincipalActive = jest.fn(async () => false);
+
+    await expect(
+      isAuthUserAdmissible('user-1', { fenceChecked: true, isPrincipalActive }),
+    ).resolves.toBe(true);
+    expect(isPrincipalActive).not.toHaveBeenCalled();
+
+    await expect(
+      isAuthUserAdmissible('user-1', { fenceChecked: false, isPrincipalActive }),
+    ).resolves.toBe(false);
+    expect(isPrincipalActive).toHaveBeenCalledWith('user-1');
   });
 });
