@@ -17,6 +17,7 @@ const {
   removeNullishValues,
   isAssistantsEndpoint,
   getEndpointFileConfig,
+  isAutomaticLLMDelivery,
   resolveUploadLLMDeliveryPath,
   isNativelyReadableText,
   resolveUploadDestination,
@@ -40,6 +41,7 @@ const {
   getFileExtractionLogDetails,
   getUploadExtractedTextPlan,
   resolveUploadFallbackText,
+  measurePdf,
   UPLOAD_EXTRACTED_TEXT_PLANS,
   MAX_STORED_EXTRACTED_TEXT_BYTES,
   inspectContent,
@@ -1220,6 +1222,22 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     filters: appConfig?.filters,
   });
 
+  /* Prices the PDF if a turn sends it to the provider (estimateAttachmentTokens). Uploads sent
+   * to text/context return earlier and are not measured (priced by size). Fallback text for a PDF is
+   * the parser's, one line per page, so it already gives both numbers. */
+  let pdfMeasure;
+  if (
+    file.mimetype === 'application/pdf' &&
+    messageAttachment &&
+    !uploadChoiceMetadata.destinationChosen &&
+    isAutomaticLLMDelivery(endpointConfig)
+  ) {
+    pdfMeasure =
+      fallbackText != null
+        ? { pageCount: fallbackText.split('\n').length - 1, textChars: fallbackText.length }
+        : await measurePdf(file);
+  }
+
   // Dual storage pattern for RAG files: Storage + Vector DB
   let storageResult, embeddingResult;
   let storedType = file.mimetype;
@@ -1438,6 +1456,7 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
       metadata: {
         ...(fileInfoMetadata ?? {}),
         ...uploadChoiceMetadata,
+        ...(pdfMeasure ?? {}),
         /* The route was resolved against the upload's own type, and delivery re-resolves
          * it later. Conversion changes `type`, so without this the second answer is drawn
          * from a format the administrator never configured a route for. */

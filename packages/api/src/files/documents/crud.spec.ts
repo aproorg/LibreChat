@@ -1,7 +1,23 @@
 import path from 'path';
 import * as fs from 'fs';
 import JSZip from 'jszip';
-import { parseDocument } from './crud';
+import { parseDocument, measurePdf } from './crud';
+
+jest.mock(
+  'pdfjs-dist/legacy/build/pdf.mjs',
+  () => ({
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage: async (i: number) => ({
+          getTextContent: async () => ({ items: [{ str: `page ${i}` }] }),
+        }),
+        destroy: async () => undefined,
+      }),
+    }),
+  }),
+  { virtual: true },
+);
 
 describe('Document Parser', () => {
   test('parseDocument() parses text from docx', async () => {
@@ -236,5 +252,34 @@ describe('Document Parser', () => {
     const { read, utils } = await import('xlsx');
     expect(typeof read).toBe('function');
     expect(typeof utils?.sheet_to_csv).toBe('function');
+  });
+
+  test('measurePdf() counts pages and characters', async () => {
+    const file = {
+      path: path.join(__dirname, 'sample.docx'),
+      size: 100,
+      originalname: 'a.pdf',
+      mimetype: 'application/pdf',
+    } as Express.Multer.File;
+    await expect(measurePdf(file)).resolves.toEqual({ pageCount: 2, textChars: 14 });
+  });
+
+  test('measurePdf() skips a PDF over the parser limit', async () => {
+    const file = {
+      path: path.join(__dirname, 'sample.docx'),
+      size: 15 * 1024 * 1024 + 1,
+      originalname: 'a.pdf',
+      mimetype: 'application/pdf',
+    } as Express.Multer.File;
+    await expect(measurePdf(file)).resolves.toBeUndefined();
+  });
+
+  test('measurePdf() returns undefined when the PDF cannot be read', async () => {
+    const file = {
+      path: path.join(__dirname, 'missing.pdf'),
+      originalname: 'a.pdf',
+      mimetype: 'application/pdf',
+    } as Express.Multer.File;
+    await expect(measurePdf(file)).resolves.toBeUndefined();
   });
 });

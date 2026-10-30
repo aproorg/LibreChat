@@ -16,6 +16,9 @@ import {
   replaceSpecialVars,
   providerEndpointMap,
   normalizeEndpointName,
+  isAutomaticLLMDelivery,
+  resolveTurnLLMDeliveryPath,
+  hasInferredLLMDeliveryPath,
 } from 'librechat-data-provider';
 import type {
   AgentToolResources,
@@ -127,7 +130,12 @@ import { assertChatProjectInstructions, ChatProjectResourcesChangedError } from 
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
 import { selectCodeFileGenerations, planCodeSnapshotMounts } from '~/files/code/destinations';
 import { createConfiguredContentInspector, inspectContent } from '../protection/runtime';
-import { assertAgentAttachmentLimits, isModelBoundAttachmentFile } from './attachments';
+import {
+  assertAgentAttachmentLimits,
+  isModelBoundAttachmentFile,
+  planInlineAttachmentBudget,
+  INLINE_ATTACHMENT_CONTEXT_SHARE,
+} from './attachments';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
 import { resolveAttachedWorkspaceReadFileLines } from '~/code/workspace';
 import { isValidInstructionsPromptLink } from './instructions/linked';
@@ -494,6 +502,43 @@ export function resolveResendToolResources({
     }
   }
   return toolResourceSet;
+}
+
+/**
+ * Names this turn's queued File Search files in `file_search.files` so the tool's prompt note
+ * lists them before the first search embeds them. Only user-scoped files the predicate accepts
+ * qualify: an agent's own resource files are already named by `file_ids`.
+ */
+function addQueuedFilesToFileSearch(
+  resources: AgentToolResources | undefined,
+  provisionState: ProvisionState | undefined,
+  isToolOnly: (file: TFile) => boolean,
+): AgentToolResources | undefined {
+  if (provisionState == null || provisionState.vectorDBFiles.length === 0) {
+    return resources;
+  }
+  const current = resources?.[EToolResources.file_search] ?? {};
+  const currentFiles = current.files ?? [];
+  const seen = new Set([...currentFiles.map((file) => file.file_id), ...(current.file_ids ?? [])]);
+  const added: TFile[] = [];
+  for (const file of provisionState.vectorDBFiles) {
+    if (
+      seen.has(file.file_id) ||
+      provisionState.agentScopedFileIds.has(file.file_id) ||
+      !isToolOnly(file)
+    ) {
+      continue;
+    }
+    seen.add(file.file_id);
+    added.push(file);
+  }
+  if (added.length === 0) {
+    return resources;
+  }
+  return {
+    ...(resources ?? {}),
+    [EToolResources.file_search]: { ...current, files: currentFiles.concat(added) },
+  };
 }
 
 function getMaxCatalogSkills(runtime: AgentExecutionContext): number | undefined {
@@ -1616,13 +1661,14 @@ export async function initializeAgent(
     llmConfig?.maxTokens as number | undefined,
     0,
   );
+  const modelContextTokens = getModelMaxTokens(
+    tokensModel ?? '',
+    providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
+    options.endpointTokenConfig,
+  );
   const agentMaxContextTokens = optionalChainWithEmptyCheck(
     maxContextTokens,
-    getModelMaxTokens(
-      tokensModel ?? '',
-      providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
-      options.endpointTokenConfig,
-    ),
+    modelContextTokens,
     DEFAULT_MAX_CONTEXT_TOKENS,
   );
 
@@ -1925,6 +1971,32 @@ export async function initializeAgent(
   } else if (requestFiles.length > 0 || toolFileIds.length > 0) {
     currentFiles = requestUsageFiles.concat(toolUsageFiles);
   }
+  const automaticDelivery = isAutomaticLLMDelivery(deliveryRouting.endpointConfig);
+  /* An unresolved window falls back to a default that says nothing about this model; judging
+   * attachments against it would move or refuse files the real window holds. */
+  const contextWindowKnown = Number(maxContextTokens) > 0 || modelContextTokens != null;
+  if (automaticDelivery && !contextWindowKnown) {
+    logger.warn(
+      `[initializeAgent] Automatic reading skipped the attachment budget: no context window for "${tokensModel}". Set maxContextTokens or endpointTokenConfig.`,
+    );
+  }
+  const contextRoom = Math.max(
+    0,
+    (Number(agentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS) - (Number(maxOutputTokens) || 0),
+  );
+  const budgetParams = {
+    routing: deliveryRouting,
+    consumers: fileConsumers,
+    budgetTokens: Math.floor(contextRoom * INLINE_ATTACHMENT_CONTEXT_SHARE),
+    limitTokens: contextRoom,
+  };
+  let budgetCandidates: NonNullable<typeof currentFiles> = [];
+  /** The registered routing is frozen, so its over-budget set is refilled in place. */
+  const setOverBudgetFileIds = (ids: ReadonlySet<string>): void => {
+    const target = deliveryRouting.overBudgetFileIds as Set<string>;
+    target.clear();
+    ids.forEach((id) => target.add(id));
+  };
   if (currentFiles?.length) {
     currentFiles = applyTurnDelivery(currentFiles, {
       routing: deliveryRouting,
@@ -1980,6 +2052,18 @@ export async function initializeAgent(
       skipTotalSizeLimit: true,
       preserveTextSources: true,
     });
+    /* Automatic reading settles which attachments leave the prompt for size here, once, after
+     * the endpoint dropped what it never receives and before any limit reads a route. */
+    if (automaticDelivery && contextWindowKnown) {
+      budgetCandidates = [...currentFiles, ...(resendFiles ? deferredProvisionFiles : [])];
+      setOverBudgetFileIds(planInlineAttachmentBudget(budgetCandidates, budgetParams));
+      if ((deliveryRouting.overBudgetFileIds?.size ?? 0) > 0) {
+        currentFiles = applyTurnDelivery(currentFiles, {
+          routing: deliveryRouting,
+          consumers: fileConsumers,
+        });
+      }
+    }
     const requestUsageFileIds = new Set(
       (authorizedRunFiles ?? requestUsageFiles).map((file) => file.file_id),
     );
@@ -2202,6 +2286,17 @@ export async function initializeAgent(
   );
   runtimeToolResources = projectResources.resources;
   const provisionState = projectResources.provisionState;
+  /* Automatic reading moves files the model would otherwise see; classic keeps the note as
+   * it was, including under the legacy chooser. */
+  if (automaticDelivery) {
+    runtimeToolResources = addQueuedFilesToFileSearch(
+      runtimeToolResources,
+      provisionState,
+      (file) =>
+        hasInferredLLMDeliveryPath(file) &&
+        resolveTurnLLMDeliveryPath(deliveryRouting, file, fileConsumers) === 'none',
+    );
+  }
   const dropFileSearchResources = (): void => {
     if (runtimeToolResources?.[EToolResources.file_search] == null) {
       return;
@@ -2841,6 +2936,9 @@ export async function initializeAgent(
     fileConsumers.executeCode !== finalFileConsumers.executeCode ||
     fileConsumers.fileSearch !== finalFileConsumers.fileSearch;
   Object.assign(fileConsumers, finalFileConsumers);
+  if (consumersChanged && automaticDelivery && contextWindowKnown) {
+    setOverBudgetFileIds(planInlineAttachmentBudget(budgetCandidates, budgetParams));
+  }
   const finalizeAttachments = (files: Array<TFile | undefined> | undefined): IMongoFile[] => {
     const hydrated = toMongoFiles(files);
     return consumersChanged

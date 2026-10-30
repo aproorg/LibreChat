@@ -54,6 +54,8 @@ export function resolveTurnDeliveryRouting({
     endpointProvider: getCustomEndpointProvider(config?.endpoints?.custom, endpoint),
     useResponsesApi: resolveUseResponsesApi(agent.model_parameters?.useResponsesApi),
     sttConfigured: isSpeechProviderConfigured(config?.speech?.stt),
+    /* Filled in place by initialization: the registered routing is frozen. */
+    overBudgetFileIds: new Set<string>(),
   });
 }
 

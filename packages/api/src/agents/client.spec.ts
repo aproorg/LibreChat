@@ -368,6 +368,43 @@ describe('countRetainedToolTokens', () => {
   });
 });
 
+describe('countFormattedMessageTokens document parts', () => {
+  const data = 'A'.repeat(750_000);
+  const count = (part: Record<string, unknown>, encoding: EncodingName) =>
+    countFormattedMessageTokens({ content: [part] }, encoding);
+  const anthropic = {
+    type: 'document',
+    source: { type: 'base64', media_type: 'application/pdf', data },
+  };
+  const pdfUrl = `data:application/pdf;base64,${data}`;
+
+  it.each(['claude', 'cl100k_base'] as EncodingName[])(
+    'counts an OpenAI file part PDF like the Anthropic base64 block (%s)',
+    (encoding) => {
+      const file = { type: 'file', file: { filename: 'a.pdf', file_data: pdfUrl } };
+      expect(count(file, encoding)).toBe(count(anthropic, encoding));
+    },
+  );
+
+  it('prices a 10-page PDF file part by page for Claude', () => {
+    const file = { type: 'file', file: { file_data: pdfUrl } };
+    expect(count(file, 'claude')).toBeGreaterThanOrEqual(20_000);
+  });
+
+  it.each(['claude', 'cl100k_base'] as EncodingName[])(
+    'counts a Responses input_file PDF like the Anthropic base64 block (%s)',
+    (encoding) => {
+      const file = { type: 'input_file', filename: 'a.pdf', file_data: pdfUrl };
+      expect(count(file, encoding)).toBe(count(anthropic, encoding));
+    },
+  );
+
+  it('keeps the flat fallback for a non-PDF file part', () => {
+    const csv = { type: 'file', file: { file_data: `data:text/csv;base64,${data}` } };
+    expect(count(csv, 'claude')).toBe(count({ type: 'file', file: {} }, 'claude'));
+  });
+});
+
 describe('collectToolCallIds', () => {
   it('collects the ids a snapshot has seen and skips everything else', () => {
     expect(
