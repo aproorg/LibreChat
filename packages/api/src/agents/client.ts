@@ -65,6 +65,8 @@ type ContentBlock = {
   mime_type?: string;
   data?: string;
   text?: string;
+  file?: { file_data?: string };
+  file_data?: string;
   tool_call?: { id?: string; name?: string; args?: string; output?: string };
 };
 
@@ -225,6 +227,13 @@ function estimateDocumentBlockTokens(
 ): number {
   const pdfPerPage = isClaude ? PDF_TOKENS_PER_PAGE_CLAUDE : PDF_TOKENS_PER_PAGE_OPENAI;
 
+  /* OpenAI chat `file` and Responses `input_file` parts carry the PDF as a data URL. */
+  const fileData = block.file?.file_data ?? block.file_data;
+  if (typeof fileData === 'string' && fileData.startsWith('data:application/pdf;base64,')) {
+    const base64 = fileData.slice(fileData.indexOf(',') + 1);
+    return Math.max(1, Math.ceil(base64.length / BASE64_BYTES_PER_PDF_PAGE)) * pdfPerPage;
+  }
+
   if (typeof block.source_type === 'string') {
     if (block.source_type === 'text' && typeof block.text === 'string') {
       return countTokens != null ? countTokens(block.text) : Math.ceil(block.text.length / 4);
@@ -305,7 +314,7 @@ export function estimateMediaTokensForMessage(
       tokens += estimateImageBlockTokens(block, isClaude);
       continue;
     }
-    if (type === 'document' || type === 'file') {
+    if (type === 'document' || type === 'file' || type === 'input_file') {
       tokens += estimateDocumentBlockTokens(block, isClaude, getTokenCount);
     }
   }
@@ -356,7 +365,7 @@ export function countFormattedMessageTokens(
           continue;
         }
 
-        if (type === 'document' || type === 'file') {
+        if (type === 'document' || type === 'file' || type === 'input_file') {
           numTokens += estimateDocumentBlockTokens(block, isClaude, countTokens);
           continue;
         }

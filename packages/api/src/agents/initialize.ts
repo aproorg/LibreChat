@@ -14,6 +14,8 @@ import {
   hasActivePiiPatterns,
   replaceSpecialVars,
   providerEndpointMap,
+  resolveTurnLLMDeliveryPath,
+  hasInferredLLMDeliveryPath,
 } from 'librechat-data-provider';
 import type {
   AgentToolResources,
@@ -337,6 +339,43 @@ export function resolveResendToolResources({
     }
   }
   return toolResourceSet;
+}
+
+/**
+ * Names this turn's queued File Search files in `file_search.files` so the tool's prompt note
+ * lists them before the first search embeds them. Only user-scoped files the predicate accepts
+ * qualify: an agent's own resource files are already named by `file_ids`.
+ */
+function addQueuedFilesToFileSearch(
+  resources: AgentToolResources | undefined,
+  provisionState: ProvisionState | undefined,
+  isToolOnly: (file: TFile) => boolean,
+): AgentToolResources | undefined {
+  if (provisionState == null || provisionState.vectorDBFiles.length === 0) {
+    return resources;
+  }
+  const current = resources?.[EToolResources.file_search] ?? {};
+  const currentFiles = current.files ?? [];
+  const seen = new Set([...currentFiles.map((file) => file.file_id), ...(current.file_ids ?? [])]);
+  const added: TFile[] = [];
+  for (const file of provisionState.vectorDBFiles) {
+    if (
+      seen.has(file.file_id) ||
+      provisionState.agentScopedFileIds.has(file.file_id) ||
+      !isToolOnly(file)
+    ) {
+      continue;
+    }
+    seen.add(file.file_id);
+    added.push(file);
+  }
+  if (added.length === 0) {
+    return resources;
+  }
+  return {
+    ...(resources ?? {}),
+    [EToolResources.file_search]: { ...current, files: currentFiles.concat(added) },
+  };
 }
 
 function getMaxCatalogSkills(runtime: AgentExecutionContext): number | undefined {
@@ -1834,6 +1873,19 @@ export async function initializeAgent(
     },
   });
 
+  /* Only the preference moves files the model would otherwise see; without it the File
+   * Search note stays as it was, including under the legacy chooser. */
+  const searchToolResources =
+    deliveryRouting.endpointConfig.preferFileSearch === true
+      ? addQueuedFilesToFileSearch(
+          tool_resources,
+          provisionState,
+          (file) =>
+            hasInferredLLMDeliveryPath(file) &&
+            resolveTurnLLMDeliveryPath(deliveryRouting, file, fileConsumers) === 'none',
+        )
+      : tool_resources;
+
   /**
    * Pre-resolve manually-invoked + always-apply skill primes so their
    * `allowed-tools` can be unioned into the agent's effective tool set
@@ -1923,7 +1975,7 @@ export async function initializeAgent(
       tools,
       model: agent.model,
       tool_options: agent.tool_options,
-      tool_resources,
+      tool_resources: searchToolResources,
       requestBody,
       codeExecutionContext,
       accessibleMcpServerNames: resolvedAuditNames,
@@ -2505,7 +2557,7 @@ export async function initializeAgent(
     toolRegistry,
     mcpAvailableTools,
     requestScopedConnections,
-    tool_resources,
+    tool_resources: searchToolResources,
     userMCPAuthMap,
     toolDefinitions,
     hasDeferredTools,
