@@ -14,6 +14,10 @@ import {
   hasActivePiiPatterns,
   replaceSpecialVars,
   providerEndpointMap,
+  isAutomaticLLMDelivery,
+  resolveSandboxFilename,
+  resolveTurnLLMDeliveryPath,
+  hasInferredLLMDeliveryPath,
 } from 'librechat-data-provider';
 import type {
   AgentToolResources,
@@ -72,6 +76,12 @@ import {
   MAX_PRIMED_SKILLS_PER_TURN,
 } from './skills';
 import {
+  assertAgentAttachmentLimits,
+  isModelBoundAttachmentFile,
+  planInlineAttachmentBudget,
+  INLINE_ATTACHMENT_CONTEXT_SHARE,
+} from './attachments';
+import {
   normalizeStatefulCodeEnvironment,
   resolveCodeExecutionContext,
   type CodeEnvironmentConfig,
@@ -102,13 +112,17 @@ import {
   normalizeAgentToolKeys,
 } from '~/mcp/utils';
 import {
+  getCodeFileContextLine,
+  appendCodeFileContextLine,
+  getCodeFileLocation,
+} from '~/files/code/priming';
+import {
   createStatefulCodeEnvironmentPolicyError,
   isFatalAgentInitializationError,
 } from './errors';
 import { isImplicitStatefulCodeRouteAvailable, isStatefulDefaultEligible } from '../code/config';
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
 import { createConfiguredContentInspector, inspectContent } from '../protection/runtime';
-import { assertAgentAttachmentLimits, isModelBoundAttachmentFile } from './attachments';
 import { resolveAttachedWorkspaceCommandTimeoutMax } from '~/code/command';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
 import { registerMemoryTools, memoryToolUsageGuard } from './memory';
@@ -118,6 +132,7 @@ import { resolveToolRoleGrants } from '~/tools/rolePermissions';
 import { createRequestAgentExecutionContext } from './runtime';
 import { resolveTurnDeliveryRouting } from './files/delivery';
 import { filterFilesByEndpointRuntimeConfig } from '~/files';
+import { getCodeEnvUploadFilename } from '~/files/code/form';
 import { hasActiveFileFieldPolicy } from '~/protection';
 import { PARTIAL_RESOLVED_CONVERSATION } from './guard';
 import { applyBackgroundToolCalls } from './background';
@@ -337,6 +352,43 @@ export function resolveResendToolResources({
     }
   }
   return toolResourceSet;
+}
+
+/**
+ * Names this turn's queued File Search files in `file_search.files` so the tool's prompt note
+ * lists them before the first search embeds them. Only user-scoped files the predicate accepts
+ * qualify: an agent's own resource files are already named by `file_ids`.
+ */
+function addQueuedFilesToFileSearch(
+  resources: AgentToolResources | undefined,
+  provisionState: ProvisionState | undefined,
+  isToolOnly: (file: TFile) => boolean,
+): AgentToolResources | undefined {
+  if (provisionState == null || provisionState.vectorDBFiles.length === 0) {
+    return resources;
+  }
+  const current = resources?.[EToolResources.file_search] ?? {};
+  const currentFiles = current.files ?? [];
+  const seen = new Set([...currentFiles.map((file) => file.file_id), ...(current.file_ids ?? [])]);
+  const added: TFile[] = [];
+  for (const file of provisionState.vectorDBFiles) {
+    if (
+      seen.has(file.file_id) ||
+      provisionState.agentScopedFileIds.has(file.file_id) ||
+      !isToolOnly(file)
+    ) {
+      continue;
+    }
+    seen.add(file.file_id);
+    added.push(file);
+  }
+  if (added.length === 0) {
+    return resources;
+  }
+  return {
+    ...(resources ?? {}),
+    [EToolResources.file_search]: { ...current, files: currentFiles.concat(added) },
+  };
 }
 
 function getMaxCatalogSkills(runtime: AgentExecutionContext): number | undefined {
@@ -1341,13 +1393,14 @@ export async function initializeAgent(
     llmConfig?.maxTokens as number | undefined,
     0,
   );
+  const modelContextTokens = getModelMaxTokens(
+    tokensModel ?? '',
+    providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
+    options.endpointTokenConfig,
+  );
   const agentMaxContextTokens = optionalChainWithEmptyCheck(
     maxContextTokens,
-    getModelMaxTokens(
-      tokensModel ?? '',
-      providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
-      options.endpointTokenConfig,
-    ),
+    modelContextTokens,
     DEFAULT_MAX_CONTEXT_TOKENS,
   );
 
@@ -1661,6 +1714,26 @@ export async function initializeAgent(
   } else if (requestFiles.length > 0 || toolFileIds.length > 0) {
     currentFiles = requestUsageFiles.concat(toolUsageFiles);
   }
+  const automaticDelivery = isAutomaticLLMDelivery(deliveryRouting.endpointConfig);
+  /* An unresolved window falls back to a default that says nothing about this model; judging
+   * attachments against it would move or refuse files the real window holds. */
+  const contextWindowKnown = Number(maxContextTokens) > 0 || modelContextTokens != null;
+  if (automaticDelivery && !contextWindowKnown) {
+    logger.warn(
+      `[initializeAgent] Automatic reading skipped the attachment budget: no context window for "${tokensModel}". Set maxContextTokens or endpointTokenConfig.`,
+    );
+  }
+  const contextRoom = Math.max(
+    0,
+    (Number(agentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS) - (Number(maxOutputTokens) || 0),
+  );
+  const budgetParams = {
+    routing: deliveryRouting,
+    consumers: fileConsumers,
+    budgetTokens: Math.floor(contextRoom * INLINE_ATTACHMENT_CONTEXT_SHARE),
+    limitTokens: contextRoom,
+  };
+  let budgetCandidates: NonNullable<typeof currentFiles> = [];
   if (currentFiles?.length) {
     /* Before any check reads the route: endpoint filtering, model-bound limits and content
      * inspection below all have to judge each file by the route this turn delivers it by. */
@@ -1684,6 +1757,21 @@ export async function initializeAgent(
       skipTotalSizeLimit: true,
       preserveTextSources: true,
     });
+    /* Automatic reading settles which attachments leave the prompt for size here, once, after
+     * the endpoint dropped what it never receives and before any limit reads a route. */
+    if (automaticDelivery && contextWindowKnown) {
+      budgetCandidates = [...currentFiles, ...(resendFiles ? deferredProvisionFiles : [])];
+      deliveryRouting.overBudgetFileIds = planInlineAttachmentBudget(
+        budgetCandidates,
+        budgetParams,
+      );
+      if (deliveryRouting.overBudgetFileIds.size > 0) {
+        currentFiles = applyTurnDelivery(currentFiles, {
+          routing: deliveryRouting,
+          consumers: fileConsumers,
+        });
+      }
+    }
     const requestUsageFileIds = new Set(
       (authorizedRunFiles ?? requestUsageFiles).map((file) => file.file_id),
     );
@@ -1834,6 +1922,18 @@ export async function initializeAgent(
     },
   });
 
+  /* Automatic reading moves files the model would otherwise see; classic keeps the note as
+   * it was, including under the legacy chooser. */
+  const searchToolResources = automaticDelivery
+    ? addQueuedFilesToFileSearch(
+        tool_resources,
+        provisionState,
+        (file) =>
+          hasInferredLLMDeliveryPath(file) &&
+          resolveTurnLLMDeliveryPath(deliveryRouting, file, fileConsumers) === 'none',
+      )
+    : tool_resources;
+
   /**
    * Pre-resolve manually-invoked + always-apply skill primes so their
    * `allowed-tools` can be unioned into the agent's effective tool set
@@ -1923,7 +2023,7 @@ export async function initializeAgent(
       tools,
       model: agent.model,
       tool_options: agent.tool_options,
-      tool_resources,
+      tool_resources: searchToolResources,
       requestBody,
       codeExecutionContext,
       accessibleMcpServerNames: resolvedAuditNames,
@@ -2427,6 +2527,30 @@ export async function initializeAgent(
     fileConsumers.executeCode !== finalFileConsumers.executeCode ||
     fileConsumers.fileSearch !== finalFileConsumers.fileSearch;
   Object.assign(fileConsumers, finalFileConsumers);
+  if (consumersChanged && automaticDelivery && contextWindowKnown) {
+    deliveryRouting.overBudgetFileIds = planInlineAttachmentBudget(budgetCandidates, budgetParams);
+  }
+  /* Upstream names queued sandbox files in prepareQueuedCodeFileContext; 0.8.8 lists only files
+   * with refs, so a spreadsheet sent to Run Code would otherwise be unknown to the model. The
+   * name mirrors provision/callback.ts; a same-name collision suffix there is not mirrored. */
+  let queuedCodeNote = '';
+  if (automaticDelivery && fileConsumers.executeCode && provisionState?.codeEnvFiles.length) {
+    const location = getCodeFileLocation(trustedCodeExecutionContext);
+    queuedCodeNote = (dynamicToolContextMap?.[Tools.execute_code] as string | undefined) ?? '';
+    for (const file of provisionState.codeEnvFiles) {
+      const name = provisionState.codeEnvRecoveryNames?.get(file.file_id)?.name ?? file.filename;
+      queuedCodeNote = appendCodeFileContextLine(
+        queuedCodeNote,
+        getCodeFileContextLine(
+          file,
+          provisionState.agentScopedFileIds,
+          getCodeEnvUploadFilename(resolveSandboxFilename(name, file.type)),
+          location,
+        ),
+        location,
+      );
+    }
+  }
   const finalizeAttachments = (files: Array<TFile | undefined> | undefined): IMongoFile[] => {
     const hydrated = toMongoFiles(files);
     return consumersChanged
@@ -2505,7 +2629,7 @@ export async function initializeAgent(
     toolRegistry,
     mcpAvailableTools,
     requestScopedConnections,
-    tool_resources,
+    tool_resources: searchToolResources,
     userMCPAuthMap,
     toolDefinitions,
     hasDeferredTools,
@@ -2538,7 +2662,9 @@ export async function initializeAgent(
     agentContextAttachments,
     fileConsumers,
     toolContextMap: toolContextMap ?? {},
-    dynamicToolContextMap: dynamicToolContextMap ?? {},
+    dynamicToolContextMap: queuedCodeNote
+      ? { ...(dynamicToolContextMap ?? {}), [Tools.execute_code]: queuedCodeNote }
+      : (dynamicToolContextMap ?? {}),
     useLegacyContent: !!options.useLegacyContent,
     tools: (tools ?? []) as GenericTool[] & string[],
     maxToolResultChars: maxToolResultCharsResolved,

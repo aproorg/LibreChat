@@ -672,6 +672,7 @@ export const endpointFileConfigSchema = z.object({
   defaultLLMDeliveryPath: defaultLLMDeliveryPathSchema.optional(),
   legacyFileUploadUX: z.boolean().optional(),
   textFallbackWithoutTools: z.boolean().optional(),
+  llmDeliveryPolicy: z.enum(['classic', 'automatic']).optional(),
 });
 
 const skillFileConfigSchema = z.object({
@@ -721,6 +722,7 @@ export const fileConfigSchema = z.object({
   defaultLLMDeliveryPath: defaultLLMDeliveryPathSchema.optional(),
   legacyFileUploadUX: z.boolean().optional(),
   textFallbackWithoutTools: z.boolean().optional(),
+  llmDeliveryPolicy: z.enum(['classic', 'automatic']).optional(),
 });
 
 export type TFileConfig = z.infer<typeof fileConfigSchema>;
@@ -1069,6 +1071,7 @@ function mergeWithDefault(
     legacyFileUploadUX: endpointConfig.legacyFileUploadUX ?? defaultConfig.legacyFileUploadUX,
     textFallbackWithoutTools:
       endpointConfig.textFallbackWithoutTools ?? defaultConfig.textFallbackWithoutTools,
+    llmDeliveryPolicy: endpointConfig.llmDeliveryPolicy ?? defaultConfig.llmDeliveryPolicy,
   };
 }
 
@@ -1161,6 +1164,7 @@ export function getEndpointFileConfig(params: {
     legacyFileUploadUX: mergedFileConfig.legacyFileUploadUX ?? baseDefaultConfig.legacyFileUploadUX,
     textFallbackWithoutTools:
       mergedFileConfig.textFallbackWithoutTools ?? baseDefaultConfig.textFallbackWithoutTools,
+    llmDeliveryPolicy: mergedFileConfig.llmDeliveryPolicy ?? baseDefaultConfig.llmDeliveryPolicy,
   };
   const userDefaultConfig = mergedFileConfig.endpoints.default;
   const defaultConfig = userDefaultConfig
@@ -1287,6 +1291,10 @@ export function mergeFileConfig(dynamic: z.infer<typeof fileConfigSchema> | unde
 
   if (dynamic.textFallbackWithoutTools !== undefined) {
     mergedConfig.textFallbackWithoutTools = dynamic.textFallbackWithoutTools;
+  }
+
+  if (dynamic.llmDeliveryPolicy !== undefined) {
+    mergedConfig.llmDeliveryPolicy = dynamic.llmDeliveryPolicy;
   }
 
   if (dynamic.serverFileSizeLimit !== undefined) {
@@ -1425,6 +1433,10 @@ export function mergeFileConfig(dynamic: z.infer<typeof fileConfigSchema> | unde
 
     if (dynamicEndpoint.textFallbackWithoutTools !== undefined) {
       mergedEndpoint.textFallbackWithoutTools = dynamicEndpoint.textFallbackWithoutTools;
+    }
+
+    if (dynamicEndpoint.llmDeliveryPolicy !== undefined) {
+      mergedEndpoint.llmDeliveryPolicy = dynamicEndpoint.llmDeliveryPolicy;
     }
   }
 
