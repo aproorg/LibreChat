@@ -255,6 +255,10 @@ export interface IMongoFile extends Omit<Document, 'model'> {
     routingMimeType?: string;
     /** Copies placed in attached workspaces. */
     workspaceImports?: TFileWorkspaceImports;
+    /** PDF pages counted at upload. */
+    pageCount?: number;
+    /** Characters pdf.js extracted from a PDF at upload. */
+    textChars?: number;
   };
   /** Upload-time inference, not a durable contract. See the schema field for why. */
   llmDeliveryPath?: string;
