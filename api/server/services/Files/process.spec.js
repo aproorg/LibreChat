@@ -127,6 +127,7 @@ jest.mock('@librechat/api', () => {
     parseText: jest.fn().mockResolvedValue({ text: '', bytes: 0 }),
     /** Stores no fallback text unless a test opts in; its own rules are covered in packages/api. */
     resolveUploadFallbackText: jest.fn(async () => undefined),
+    measurePdf: jest.fn(async () => undefined),
     MAX_STORED_EXTRACTED_TEXT_BYTES: 15 * 1024 * 1024,
     processAudioFile: jest.fn(),
     extractInspectableFileText: jest.fn(async ({ extract }) => extract()),
@@ -3355,6 +3356,104 @@ describe('fallback text for uploads left to tools', () => {
       }),
     };
   };
+
+  const useAutomaticPolicy = () =>
+    mergeFileConfig.mockReturnValue({
+      ...makeFileConfig(),
+      endpoints: {
+        'Custom Provider': {
+          defaultLLMDeliveryPath: { fallback: 'none' },
+          textFallbackWithoutTools: true,
+          llmDeliveryPolicy: 'automatic',
+        },
+      },
+    });
+
+  const uploadPdf = (overrides = {}, mimetype = PDF_MIME) => {
+    const req = makeReq({ mimetype, ocrConfig: null });
+    req.body.endpoint = EModelEndpoint.agents;
+    return {
+      req,
+      upload: processAgentFileUpload({
+        req,
+        res: mockRes,
+        metadata: {
+          agent_id: 'agent-abc',
+          message_file: 'true',
+          file_id: 'file-uuid-pdf',
+          effectiveEndpoint: 'Custom Provider',
+          ...overrides,
+        },
+      }),
+    };
+  };
+
+  test.each([
+    ['an upload with a chosen destination', { tool_resource: 'execute_code' }, PDF_MIME],
+    ['a file that is not a PDF', {}, 'text/csv'],
+  ])('does not measure %s on an automatic endpoint', async (_name, overrides, mimetype) => {
+    const { createFile } = require('~/models');
+    const { measurePdf } = require('@librechat/api');
+    useAutomaticPolicy();
+    setupStoredFileUpload();
+
+    await uploadPdf(overrides, mimetype).upload;
+
+    expect(measurePdf).not.toHaveBeenCalled();
+    for (const [doc] of createFile.mock.calls) {
+      expect(doc.metadata ?? {}).not.toHaveProperty('pageCount');
+    }
+  });
+
+  test('records the pages and text size of a PDF without fallback text', async () => {
+    const { createFile } = require('~/models');
+    const { measurePdf } = require('@librechat/api');
+    useAutomaticPolicy();
+    setupStoredFileUpload();
+    measurePdf.mockResolvedValueOnce({ pageCount: 40, textChars: 271_780 });
+
+    const { req, upload } = uploadPdf();
+    await upload;
+
+    expect(measurePdf).toHaveBeenCalledWith(req.file);
+    expect(createFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ pageCount: 40, textChars: 271_780 }),
+      }),
+      true,
+    );
+  });
+
+  test('takes pages and characters from fallback text instead of parsing again', async () => {
+    const { createFile } = require('~/models');
+    const { measurePdf, resolveUploadFallbackText } = require('@librechat/api');
+    useAutomaticPolicy();
+    setupStoredFileUpload();
+    resolveUploadFallbackText.mockResolvedValueOnce('page one\n');
+
+    const { upload } = uploadPdf();
+    await upload;
+
+    expect(measurePdf).not.toHaveBeenCalled();
+    expect(createFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ pageCount: 1, textChars: 9 }),
+      }),
+      true,
+    );
+  });
+
+  test('does not measure a PDF on a classic endpoint', async () => {
+    const { createFile } = require('~/models');
+    const { measurePdf } = require('@librechat/api');
+    setupStoredFileUpload();
+
+    const { upload } = uploadPdf();
+    await upload;
+
+    expect(measurePdf).not.toHaveBeenCalled();
+    expect(createFile.mock.calls[0][0].metadata).not.toHaveProperty('pageCount');
+  });
 
   test('stores the text a turn without a reading tool can fall back to', async () => {
     const { createFile } = require('~/models');

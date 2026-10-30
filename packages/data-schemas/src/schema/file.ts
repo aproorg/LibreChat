@@ -177,6 +177,15 @@ const file: Schema<IMongoFile> = new Schema(
         type: String,
         default: undefined,
       },
+      /** PDF pages and extracted characters counted at upload; they price a PDF the provider reads. */
+      pageCount: {
+        type: Number,
+        default: undefined,
+      },
+      textChars: {
+        type: Number,
+        default: undefined,
+      },
     },
     llmDeliveryPath: {
       /* What upload time inferred about delivery, from the endpoint and MIME type it saw.
