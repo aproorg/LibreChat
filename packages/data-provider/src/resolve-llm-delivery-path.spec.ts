@@ -15,6 +15,7 @@ import {
   getCustomEndpointProvider,
   resolveTurnLLMDeliveryPath as resolveStoredTurnPath,
   hasInferredLLMDeliveryPath,
+  isRunCodeSpreadsheet,
   resolveDefaultLLMDeliveryPath,
   resolveUploadLLMDeliveryPath,
   SYSTEM_LLM_DELIVERY_DEFAULTS,
@@ -1265,4 +1266,63 @@ describe('resolveTurnLLMDeliveryPath with llmDeliveryPolicy automatic', () => {
       }),
     ).toBe('text');
   });
+});
+
+describe('isRunCodeSpreadsheet', () => {
+  const auto: EndpointFileConfig = { llmDeliveryPolicy: 'automatic' };
+  const routing: Partial<TurnDeliveryRouting> = { endpoint: 'anthropic', endpointConfig: auto };
+  const both: TurnFileConsumers = { executeCode: true, fileSearch: true };
+  const file = (extra: Record<string, unknown> = {}): TurnDeliveryFile =>
+    ({
+      file_id: 'c',
+      type: 'text/csv',
+      llmDeliveryPath: 'text',
+      metadata: { destinationChosen: false },
+      ...extra,
+    }) as TurnDeliveryFile;
+
+  it.each(['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'])(
+    'is true for an inferred %s',
+    (type) => {
+      expect(isRunCodeSpreadsheet(routing, file({ type }), both)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['classic', { endpoint: 'anthropic', endpointConfig: {} }, file(), both],
+    ['no Run Code', routing, file(), { executeCode: false, fileSearch: true }],
+    ['unknown consumers', routing, file(), undefined],
+    ['a chosen destination', routing, file({ metadata: { destinationChosen: true } }), both],
+    ['an agent file', routing, file({ context: 'agents' }), both],
+    [
+      'an admin override',
+      {
+        ...routing,
+        endpointConfig: {
+          ...auto,
+          defaultLLMDeliveryPath: { overrides: { 'text/csv': 'text' } },
+        },
+      },
+      file(),
+      both,
+    ],
+    [
+      'a Word document',
+      routing,
+      file({ type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      both,
+    ],
+    ['an image', routing, file({ type: 'image/png' }), both],
+    [
+      'the legacy chooser',
+      { ...routing, endpointConfig: { ...auto, legacyFileUploadUX: true } },
+      file(),
+      both,
+    ],
+  ] as Array<[string, Partial<TurnDeliveryRouting>, TurnDeliveryFile, TurnFileConsumers?]>)(
+    'is false for %s',
+    (_name, r, f, c) => {
+      expect(isRunCodeSpreadsheet(r, f, c)).toBe(false);
+    },
+  );
 });

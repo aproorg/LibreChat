@@ -137,6 +137,7 @@ jest.mock('../../middleware/modelBoundContent', () => {
 import { initializeAgent } from '../initialize';
 import { primeResources } from '../resources';
 import { isFatalAgentInitializationError } from '../errors';
+import * as agentTools from '../tools';
 
 const realUtils = jest.requireActual<typeof import('~/utils')>('~/utils');
 
@@ -5166,7 +5167,7 @@ describe('initializeAgent tool-routed text fallback', () => {
         csv: pdf(),
         requestFiles: [],
         llmDeliveryPolicy: 'automatic',
-        csvOverride: false,
+        csvOverride: true,
         queuedForSearch: true,
         extraQueued: [
           {
@@ -5437,6 +5438,83 @@ describe('initializeAgent tool-routed text fallback', () => {
       );
       const off = await run(false);
       expect(off.result.deliveryRouting.overBudgetFileIds?.size ?? 0).toBe(0);
+    });
+
+    describe('Run Code spreadsheets and the File Search queue', () => {
+      const codeAndSearch = {
+        provider: EModelEndpoint.anthropic,
+        ...bothTools,
+        csvOverride: false,
+        codeQueued: true,
+        queuedForSearch: true,
+      };
+      const sheet = () => sandboxCsvFile();
+      const automatic = { llmDeliveryPolicy: 'automatic' as const };
+
+      it('keeps a Run Code spreadsheet off the File Search queue', async () => {
+        const { result, loadTools } = await initializeWith({
+          ...codeAndSearch,
+          ...automatic,
+          csv: sheet(),
+        });
+        expect(ids(result.provisionState?.codeEnvFiles)).toEqual(['csv']);
+        expect(ids(result.provisionState?.vectorDBFiles)).toEqual([]);
+        expect(loadTools.mock.calls[0][0].tool_resources?.file_search?.files).toBeUndefined();
+        expect(result.tool_resources?.file_search?.files).toBeUndefined();
+      });
+
+      it('still queues a document for File Search', async () => {
+        const { result } = await initializeWith({
+          ...codeAndSearch,
+          ...automatic,
+          csv: sheet(),
+          requestFiles: [sheet(), pdf()],
+          maxContextTokens: 100_000,
+        });
+        expect(ids(result.provisionState?.vectorDBFiles)).toEqual(['pdf-file']);
+        expect(ids(result.provisionState?.codeEnvFiles)?.sort()).toEqual(['csv', 'pdf-file']);
+        expect(ids(result.tool_resources?.file_search?.files)).toEqual(['pdf-file']);
+      });
+
+      it('keeps an agent-scoped spreadsheet on the queue', async () => {
+        const { result } = await initializeWith({
+          ...codeAndSearch,
+          ...automatic,
+          csv: sheet(),
+          agentScoped: true,
+        });
+        expect(ids(result.provisionState?.vectorDBFiles)).toEqual(['csv']);
+      });
+
+      it('leaves the queue alone when classic', async () => {
+        const { result } = await initializeWith({
+          ...codeAndSearch,
+          csv: sandboxCsvFile({ text: 'a,b' }),
+        });
+        expect(ids(result.provisionState?.vectorDBFiles)).toEqual(['csv']);
+      });
+
+      it('puts the spreadsheet back when Run Code does not load', async () => {
+        /* The loader would drop Run Code: register no code tools for this turn. */
+        const spy = jest
+          .spyOn(agentTools, 'registerCodeExecutionTools')
+          .mockImplementation(
+            ({ toolDefinitions }) => ({ toolDefinitions, toolNames: [] }) as never,
+          );
+        let result: Awaited<ReturnType<typeof initializeWith>>['result'];
+        try {
+          ({ result } = await initializeWith({
+            ...codeAndSearch,
+            ...automatic,
+            csv: sandboxCsvFile({ text: 'a,b' }),
+            loadedToolDefinitions: [],
+          }));
+        } finally {
+          spy.mockRestore();
+        }
+        expect(result.fileConsumers?.executeCode).toBe(false);
+        expect(ids(result.provisionState?.vectorDBFiles)).toEqual(['csv']);
+      });
     });
 
     it('names a queued sandbox file for the model', async () => {
