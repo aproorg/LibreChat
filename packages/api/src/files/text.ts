@@ -1,10 +1,11 @@
 import axios from 'axios';
+import { basename } from 'path';
 import FormData from 'form-data';
 import { createReadStream } from 'fs';
 import { logger } from '@librechat/data-schemas';
 import { FileSources } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types';
-import { logAxiosError, readFileAsString } from '~/utils';
+import { logAxiosError, readFileAsString, sanitizeFilename } from '~/utils';
 import { getFileExtractionLogDetails } from './extract';
 import { generateShortLivedToken } from '~/crypto/jwt';
 
@@ -116,7 +117,9 @@ export async function parseText({
     const jwtToken = generateShortLivedToken(userId);
     const formData = new FormData();
     formData.append('file_id', file_id);
-    formData.append('file', createReadStream(file.path));
+    formData.append('file', createReadStream(file.path), {
+      filename: sanitizeFilename(file.originalname ?? basename(file.path)),
+    });
 
     const formHeaders = formData.getHeaders();
 
