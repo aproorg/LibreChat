@@ -104,18 +104,20 @@ jest.mock('@librechat/api', () => {
       if (ocrConfigured && checkType(mimeType, fileConfig.ocr?.supportedMimeTypes ?? [])) {
         return UPLOAD_EXTRACTED_TEXT_PLANS.configuredOCR;
       }
-      const isDocumentParserEligible = actualDataProvider.documentParserMimeTypes.some((pattern) =>
-        pattern.test(mimeType),
-      );
-      if (!isDocumentParserEligible) {
-        return null;
-      }
+      /* Ahead of the parser gate, as in the real plan: a narrowed text list can name types the
+       * built-in parser does not handle, such as text/csv. */
       if (
         ragConfigured &&
         !actualDataProvider.isPermissiveMimeConfig(fileConfig.text?.supportedMimeTypes) &&
         checkType(mimeType, fileConfig.text?.supportedMimeTypes ?? [])
       ) {
         return UPLOAD_EXTRACTED_TEXT_PLANS.configuredRAG;
+      }
+      const isDocumentParserEligible = actualDataProvider.documentParserMimeTypes.some((pattern) =>
+        pattern.test(mimeType),
+      );
+      if (!isDocumentParserEligible) {
+        return null;
       }
       return UPLOAD_EXTRACTED_TEXT_PLANS.documentParser;
     },
@@ -125,6 +127,7 @@ jest.mock('@librechat/api', () => {
     /** Grants both; these specs vary the capability set, not the role. */
     resolveToolRoleGrants: jest.fn(async () => ({ runCode: true, fileSearch: true })),
     parseText: jest.fn().mockResolvedValue({ text: '', bytes: 0 }),
+    parseTextNative: jest.fn().mockResolvedValue({ text: '', bytes: 0 }),
     /** Stores no fallback text unless a test opts in; its own rules are covered in packages/api. */
     resolveUploadFallbackText: jest.fn(async () => undefined),
     measurePdf: jest.fn(async () => undefined),
@@ -3518,5 +3521,257 @@ describe('fallback text for uploads left to tools', () => {
       expect.objectContaining({ llmDeliveryPath: 'none', text: 'region,total' }),
       true,
     );
+  });
+});
+
+describe('automatic reading: spreadsheets for Run Code skip upload extraction', () => {
+  const XLSX_REGEX = [/^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet$/];
+  let originalRagUrl;
+
+  const useEndpointConfig = (endpointConfig = {}, textSupportedMimeTypes = XLSX_REGEX) =>
+    mergeFileConfig.mockReturnValue({
+      ...makeFileConfig({ textSupportedMimeTypes }),
+      endpoints: {
+        'Custom Provider': { llmDeliveryPolicy: 'automatic', ...endpointConfig },
+      },
+    });
+
+  const uploadSheet = ({ mimetype = XLSX_MIME, filters, ...metadata } = {}) => {
+    const req = makeReq({ mimetype, ocrConfig: null, filters });
+    req.body.endpoint = EModelEndpoint.agents;
+    return {
+      req,
+      upload: processAgentFileUpload({
+        req,
+        res: mockRes,
+        metadata: {
+          agent_id: 'agent-abc',
+          message_file: 'true',
+          file_id: 'file-uuid-sheet',
+          effectiveEndpoint: 'Custom Provider',
+          ...metadata,
+        },
+      }),
+    };
+  };
+
+  const expectTodaysContextPath = () => {
+    const { parseText, resolveUploadFallbackText } = require('@librechat/api');
+    expect(parseText).toHaveBeenCalled();
+    expect(resolveUploadFallbackText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+    expect(db.createFile).toHaveBeenCalledWith(
+      expect.objectContaining({ llmDeliveryPath: 'text', text: 'rag text' }),
+      true,
+    );
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    originalRagUrl = process.env.RAG_API_URL;
+    process.env.RAG_API_URL = 'http://rag-api.test';
+    mockRes.status.mockReturnThis();
+    mockRes.json.mockReturnValue({});
+    checkCapability.mockResolvedValue(true);
+    const { parseText, resolveToolRoleGrants } = require('@librechat/api');
+    parseText.mockResolvedValue({ text: 'rag text', bytes: 8 });
+    resolveToolRoleGrants.mockResolvedValue({ runCode: true, fileSearch: true });
+    useEndpointConfig();
+    setupStoredFileUpload();
+  });
+
+  afterEach(() => {
+    if (originalRagUrl === undefined) {
+      delete process.env.RAG_API_URL;
+    } else {
+      process.env.RAG_API_URL = originalRagUrl;
+    }
+  });
+
+  test('1: reads the workbook natively and stores it as none, without calling RAG', async () => {
+    const { parseText, resolveUploadFallbackText } = require('@librechat/api');
+    resolveUploadFallbackText.mockResolvedValueOnce('a,b');
+
+    await uploadSheet().upload;
+
+    expect(resolveUploadFallbackText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryPath: 'none',
+        spreadsheetForRunCode: true,
+        destinationChosen: false,
+        isMessageAttachment: true,
+      }),
+    );
+    expect(parseText).not.toHaveBeenCalled();
+    expect(db.createFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        llmDeliveryPath: 'none',
+        text: 'a,b',
+        metadata: expect.objectContaining({ destinationChosen: false }),
+      }),
+      true,
+    );
+    expect(db.addAgentResourceFile).not.toHaveBeenCalled();
+  });
+
+  test('2: a saved agent with execute_code reads natively and uploads nothing to the Code API', async () => {
+    const { parseText, resolveUploadFallbackText } = require('@librechat/api');
+    resolveUploadFallbackText.mockResolvedValueOnce('a,b');
+    await uploadSheet({ agentTools: [EToolResources.execute_code] }).upload;
+
+    expect(resolveUploadFallbackText).toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+    expect(parseText).not.toHaveBeenCalled();
+    expect(db.createFile).toHaveBeenCalledWith(
+      expect.objectContaining({ llmDeliveryPath: 'none', text: 'a,b' }),
+      true,
+    );
+    expect(getStrategyFunctions).not.toHaveBeenCalledWith(FileSources.execute_code);
+  });
+
+  test('3a: without the Run Code role grant it keeps the RAG path', async () => {
+    const { resolveToolRoleGrants } = require('@librechat/api');
+    resolveToolRoleGrants.mockResolvedValue({ runCode: false, fileSearch: true });
+
+    await uploadSheet().upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test('3b: with the execute_code capability off it keeps the RAG path', async () => {
+    checkCapability.mockImplementation(async (_req, capability) => {
+      return capability !== AgentCapabilities.execute_code;
+    });
+
+    await uploadSheet().upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test('3c: a saved agent with only file_search keeps the RAG path', async () => {
+    await uploadSheet({ agentTools: [EToolResources.file_search] }).upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test('4a: a chosen tool_resource keeps its own handling', async () => {
+    await uploadSheet({ tool_resource: EToolResources.context }).upload;
+
+    const { resolveUploadFallbackText } = require('@librechat/api');
+    expect(resolveUploadFallbackText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+  });
+
+  test('4b: the legacy chooser keeps its own handling', async () => {
+    useEndpointConfig({ legacyFileUploadUX: true });
+
+    await uploadSheet().upload;
+
+    const { resolveUploadFallbackText } = require('@librechat/api');
+    expect(resolveUploadFallbackText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+  });
+
+  test('5: an admin override for the type keeps its route', async () => {
+    useEndpointConfig({
+      defaultLLMDeliveryPath: { overrides: { [XLSX_MIME]: 'text' } },
+    });
+
+    await uploadSheet().upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test('6: an active file policy keeps extraction', async () => {
+    await uploadSheet({
+      filters: {
+        files: { pii: { fields: ['extracted_text'], uninspectable: 'block' } },
+      },
+    }).upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test('7: an agent resource upload is not a message attachment', async () => {
+    await uploadSheet({ message_file: undefined, agentTools: [EToolResources.execute_code] })
+      .upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+    expect(db.addAgentResourceFile).toHaveBeenCalledWith(
+      expect.objectContaining({ tool_resource: EToolResources.context }),
+    );
+  });
+
+  test('7b: a spreadsheet not routed to text is not read early', async () => {
+    useEndpointConfig({}, []);
+
+    await uploadSheet({ mimetype: 'application/vnd.apache.parquet' }).upload;
+
+    const { resolveUploadFallbackText } = require('@librechat/api');
+    expect(resolveUploadFallbackText).not.toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+  });
+
+  test('8: a classic policy keeps the RAG path', async () => {
+    useEndpointConfig({ llmDeliveryPolicy: undefined });
+
+    await uploadSheet().upload;
+
+    expectTodaysContextPath();
+    expect(require('@librechat/api').parseText).toHaveBeenCalled();
+  });
+
+  test("9: when the native read returns nothing, today's RAG path runs and stores text", async () => {
+    const { resolveUploadFallbackText } = require('@librechat/api');
+    resolveUploadFallbackText.mockResolvedValueOnce(undefined);
+
+    await uploadSheet().upload;
+
+    expect(resolveUploadFallbackText).toHaveBeenCalledWith(
+      expect.objectContaining({ spreadsheetForRunCode: true }),
+    );
+    const { parseText } = require('@librechat/api');
+    expect(parseText).toHaveBeenCalled();
+    expect(db.createFile).toHaveBeenCalledWith(
+      expect.objectContaining({ llmDeliveryPath: 'text', text: 'rag text' }),
+      true,
+    );
+  });
+
+  test('10: the text read before storage is reused, not read twice', async () => {
+    const { resolveUploadFallbackText } = require('@librechat/api');
+    resolveUploadFallbackText.mockResolvedValueOnce('a,b');
+
+    await uploadSheet().upload;
+
+    expect(resolveUploadFallbackText).toHaveBeenCalledTimes(1);
+  });
+
+  test('11: after a RAG failure a CSV is read natively, not by the document parser', async () => {
+    const { parseText, parseTextNative } = require('@librechat/api');
+    useEndpointConfig({ llmDeliveryPolicy: undefined }, [/^text\/csv$/]);
+    parseText.mockRejectedValueOnce(new Error('rag timeout'));
+    parseTextNative.mockResolvedValueOnce({ text: 'x,y', bytes: 3 });
+    const handleFileUpload = setupStoredFileUpload();
+
+    await expect(uploadSheet({ mimetype: 'text/csv' }).upload).resolves.not.toThrow();
+
+    expect(parseTextNative).toHaveBeenCalled();
+    expect(handleFileUpload).not.toHaveBeenCalledWith(
+      expect.objectContaining({ loadAuthValues: expect.anything() }),
+    );
+    expect(getStrategyFunctions).not.toHaveBeenCalledWith(FileSources.document_parser);
+    expect(db.createFile).toHaveBeenCalledWith(expect.objectContaining({ text: 'x,y' }), true);
   });
 });

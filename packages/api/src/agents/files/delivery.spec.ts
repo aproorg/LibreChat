@@ -322,3 +322,52 @@ describe('resolveScopedTurnAttachments', () => {
     ).toEqual([]);
   });
 });
+
+describe('a spreadsheet read at upload for Run Code', () => {
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const automatic = {
+    fileConfig: {
+      endpoints: {
+        openAI: { llmDeliveryPolicy: 'automatic' as const },
+      },
+    },
+  };
+  const agent = { provider: 'openAI' };
+  const sheet = {
+    file_id: 'sheet',
+    type: XLSX_MIME,
+    text: 'a,b',
+    llmDeliveryPath: 'none' as const,
+    metadata: { destinationChosen: false },
+  };
+
+  it('stays with Run Code on a turn that runs it', () => {
+    const files = [sheet];
+
+    expect(applyTurnDelivery(files, { agent, config: automatic, consumers: runsCode })).toBe(files);
+  });
+
+  it('delivers its text on a turn without Run Code', () => {
+    expect(applyTurnDelivery([sheet], { agent, config: automatic, consumers: noReader })).toEqual([
+      { ...sheet, llmDeliveryPath: 'text' },
+    ]);
+  });
+
+  it('reaches a handoff receiver without Run Code with its text', () => {
+    const routing = resolveTurnDeliveryRouting({ agent, config: automatic });
+    const attachments = resolveScopedTurnAttachments({
+      agents: [
+        {
+          agentId: 'handoff',
+          agent: { deliveryRouting: routing, fileConsumers: noReader },
+        },
+      ],
+      sharedConversationAgentIds: ['handoff'],
+      messages: [],
+      requestAttachments: [sheet],
+      sharedRunAttachmentIds: new Set(),
+    }).get('handoff');
+
+    expect(attachments).toEqual([{ ...sheet, llmDeliveryPath: 'text' }]);
+  });
+});
