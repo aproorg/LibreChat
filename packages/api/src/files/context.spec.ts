@@ -64,3 +64,31 @@ describe('extractFileContext for a spreadsheet read at upload for Run Code', () 
     expect(context).toContain('report.xlsx');
   });
 });
+
+describe('extractFileContext for a spreadsheet stored for Run Code without text', () => {
+  it('puts a note naming the file in the prompt on a turn without Run Code', async () => {
+    const sheet = {
+      file_id: 'sheet',
+      filename: 'pivot.xlsx',
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      llmDeliveryPath: 'none' as const,
+      metadata: { destinationChosen: false, textDerivation: 'deferred' as const },
+    };
+    const routing = resolveTurnDeliveryRouting({
+      agent: { provider: 'openAI' },
+      config: { fileConfig: { endpoints: { openAI: { llmDeliveryPolicy: 'automatic' } } } },
+    });
+    const delivered = applyTurnDelivery([sheet], {
+      routing,
+      consumers: { executeCode: false, fileSearch: false },
+    });
+
+    const context = await extractFileContext({
+      attachments: delivered,
+      tokenCountFn: (text: string) => text.length,
+    });
+
+    expect(context).toContain('"pivot.xlsx"');
+    expect(context).toContain('Run Code');
+  });
+});

@@ -1901,6 +1901,54 @@ describe('primeResources', () => {
       expect(result.provisionState?.vectorDBFiles.map((f) => f.file_id)).toContain('none-file');
     });
 
+    describe('a spreadsheet stored for Run Code without text', () => {
+      const sheet = {
+        user: 'user1',
+        file_id: 'deferred-sheet',
+        filename: 'pivot.xlsx',
+        filepath: '/path/pivot.xlsx',
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        bytes: 18_769_510,
+        object: 'file' as const,
+        usage: 0,
+        embedded: false,
+        source: FileSources.local,
+        llmDeliveryPath: 'none',
+        metadata: { destinationChosen: false, textDerivation: 'deferred' },
+      } as TFile;
+      const queued = async (file: TFile, tool_resources = {}) => {
+        const result = await primeResources({
+          req: mockReq,
+          appConfig: mockAppConfig,
+          getFiles: mockGetFiles,
+          filterFiles: mockFilterFiles,
+          tool_resources,
+          attachments: Promise.resolve([file]),
+          requestFileSet,
+          agentId: 'agent1',
+          enabledToolResources: new Set([EToolResources.file_search]),
+        });
+        return result.provisionState?.vectorDBFiles.map((f) => f.file_id) ?? [];
+      };
+
+      it('stays off the File Search queue', async () => {
+        expect(await queued(sheet)).not.toContain('deferred-sheet');
+      });
+
+      it('is queued without the marker', async () => {
+        expect(await queued({ ...sheet, metadata: { destinationChosen: false } })).toContain(
+          'deferred-sheet',
+        );
+      });
+
+      it('is queued when the agent holds it for File Search', async () => {
+        mockGetFiles.mockResolvedValue([sheet]);
+        expect(
+          await queued(sheet, { [EToolResources.file_search]: { file_ids: ['deferred-sheet'] } }),
+        ).toContain('deferred-sheet');
+      });
+    });
+
     it('provisions nothing when the legacy destination chooser is active', async () => {
       /* In legacy mode the destination is the user's explicit choice and the upload path
        * already acted on it, so a missing reference records a decline, not pending work.

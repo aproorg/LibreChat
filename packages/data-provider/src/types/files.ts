@@ -236,6 +236,7 @@ export type TFile = {
     destinationChosen?: boolean;
     /** The type the delivery route was resolved against, when conversion changed it. */
     routingMimeType?: string;
+    textDerivation?: 'deferred';
   };
   llmDeliveryPath?: 'provider' | 'text' | 'none';
   createdAt?: string | Date;

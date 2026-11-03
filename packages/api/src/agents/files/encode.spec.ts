@@ -3,7 +3,7 @@ import type { TFile } from 'librechat-data-provider';
 import type { RunFileEncodingAgent, RunFileMessageEncoderDeps } from './encode';
 import type { ServerRequest } from '~/types';
 import { AgentAttachmentLimitError, AgentAttachmentPolicyError } from '../attachments';
-import { resolveTurnDeliveryRouting } from './delivery';
+import { getDeferredTextNote, resolveTurnDeliveryRouting } from './delivery';
 import { createRunFileMessageEncoder } from './encode';
 
 jest.mock('~/utils/tokenizer', () => ({ countTokens: (text: string) => text.length }));
@@ -298,6 +298,36 @@ describe('createRunFileMessageEncoder', () => {
     );
     expect(harness.encodeDocuments).not.toHaveBeenCalled();
     expect(harness.extractText).not.toHaveBeenCalled();
+  });
+
+  describe('a spreadsheet stored for Run Code without text', () => {
+    const sheet: TFile = {
+      ...pdf,
+      file_id: 'sheet',
+      filename: 'pivot.xlsx',
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      bytes: 18_769_510,
+      llmDeliveryPath: 'none',
+      text: undefined,
+      metadata: { destinationChosen: false, textDerivation: 'deferred' },
+    };
+    const note = getDeferredTextNote('pivot.xlsx');
+
+    it.each([undefined, 1024 * 1024])(
+      'reaches an agent without Run Code as the note (fileSizeLimit %s)',
+      async (fileSizeLimit) => {
+        const harness = setup({
+          fileConfig: {
+            endpoints: { openAI: { llmDeliveryPolicy: 'automatic', fileSizeLimit } },
+          },
+        });
+
+        await expect(harness.encode([sheet], 'child')).resolves.toHaveLength(1);
+        expect(harness.extractText).toHaveBeenCalledWith(
+          expect.objectContaining({ attachments: [expect.objectContaining({ text: note })] }),
+        );
+      },
+    );
   });
 
   it('keeps legacy extracted text while excluding legacy tool-provisioned native bytes', async () => {
