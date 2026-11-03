@@ -18,6 +18,7 @@ const {
   isAssistantsEndpoint,
   getEndpointFileConfig,
   isAutomaticLLMDelivery,
+  isRunCodeSpreadsheet,
   resolveUploadLLMDeliveryPath,
   isNativelyReadableText,
   resolveUploadDestination,
@@ -32,6 +33,8 @@ const { logger, runAsSystem } = require('@librechat/data-schemas');
 const {
   sanitizeFilename,
   parseText,
+  parseTextNative,
+  hasActiveFilePolicy,
   processAudioFile,
   extractInspectableFileText,
   assertExtractedTextInspectable,
@@ -796,7 +799,7 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     }
   }
 
-  const llmDeliveryPath = resolveUploadLLMDeliveryPath({
+  const resolvedDeliveryPath = resolveUploadLLMDeliveryPath({
     toolResource: tool_resource,
     mimeType: file.mimetype,
     endpointConfig,
@@ -807,6 +810,24 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     sttConfigured: isSpeechProviderConfigured(appConfig?.speech?.stt),
   });
 
+  /* Under automatic reading a spreadsheet goes to Run Code on a turn that runs it, so the
+   * RAG round trip for its text is wasted. An active file policy still needs extraction,
+   * where it fails closed. */
+  const spreadsheetForRunCode =
+    resolvedDeliveryPath === 'text' &&
+    messageAttachment &&
+    !hasActiveFilePolicy(appConfig?.filters) &&
+    isRunCodeSpreadsheet(
+      { endpointConfig, fileConfig },
+      {
+        type: file.mimetype,
+        llmDeliveryPath: resolvedDeliveryPath,
+        context: FileContext.message_attachment,
+        metadata: uploadChoiceMetadata,
+      },
+      { executeCode: true },
+    );
+
   /* Destination and acceptability are one decision, made by shared policy rather than
    * rebuilt here. `agentTools` is undefined when no agent record backs the upload. */
   /* Only a permanent agent upload can land on a context resource, so the capability is
@@ -816,6 +837,7 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
       ? undefined
       : await checkCapability(req, AgentCapabilities.context);
   const hasRoleGatedConsumer =
+    spreadsheetForRunCode ||
     tool_resource === EToolResources.execute_code ||
     tool_resource === EToolResources.file_search ||
     metadata.agentTools?.some(
@@ -828,11 +850,32 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
         context: 'fileUpload',
       })
     : undefined;
+  const enabledTools = await filterEnabledConsumers(req, metadata.agentTools, toolRoleGrants);
+  const codePossible =
+    spreadsheetForRunCode &&
+    (metadata.agentTools == null
+      ? (await checkCapability(req, AgentCapabilities.execute_code)) &&
+        toolRoleGrants?.runCode === true
+      : enabledTools?.includes(EToolResources.execute_code) === true);
+  /* Read before storage. Only text the built-in readers returned moves the route to `none`;
+   * a file they cannot read keeps the extraction path below. */
+  const runCodeText = codePossible
+    ? await resolveUploadFallbackText({
+        file,
+        fileId: file_id,
+        deliveryPath: 'none',
+        destinationChosen: false,
+        isMessageAttachment: true,
+        spreadsheetForRunCode: true,
+        filters: appConfig?.filters,
+      })
+    : undefined;
+  const llmDeliveryPath = runCodeText != null ? 'none' : resolvedDeliveryPath;
   const destination = resolveUploadDestination({
     toolResource: tool_resource,
     deliveryPath: llmDeliveryPath,
     mimeType: file.mimetype,
-    agentTools: await filterEnabledConsumers(req, metadata.agentTools, toolRoleGrants),
+    agentTools: enabledTools,
     hasAgent: agent_id != null,
     isMessageAttachment: messageAttachment,
     /* A message attachment can acquire a file-tool consumer later in the same draft or
@@ -1094,7 +1137,7 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
 
     /**
      * A document type the admin routed to configured text extraction: prefer RAG `/text`, but fall
-     * back to the built-in document parser (not raw native text) when RAG is unavailable, so a
+     * back to the built-in document parser when RAG is unavailable (CSV/TSV/JSON are read natively instead), so a
      * transient outage doesn't degrade a docx/pdf to unreadable bytes. Only the RAG extraction is
      * inside the fallback catch: a downstream persistence failure (size guard, DB, agent-resource
      * mutation) must surface as itself, not trigger a second extraction attempt.
@@ -1111,7 +1154,9 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
         );
         const documentText = await extractInspectableFileText({
           filters: appConfig?.filters,
-          extract: resolveDocumentText,
+          extract: isNativelyReadableText(file.mimetype)
+            ? () => parseTextNative(file)
+            : resolveDocumentText,
         });
         if (!documentText) {
           throw new Error(
@@ -1143,15 +1188,17 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
   }
 
   /* Extracted before storage, which may move the temporary upload the extractors read. */
-  const fallbackText = await resolveUploadFallbackText({
-    file,
-    fileId: file_id,
-    deliveryPath: llmDeliveryPath,
-    destinationChosen: uploadChoiceMetadata.destinationChosen,
-    isMessageAttachment: messageAttachment,
-    endpointConfig,
-    filters: appConfig?.filters,
-  });
+  const fallbackText =
+    runCodeText ??
+    (await resolveUploadFallbackText({
+      file,
+      fileId: file_id,
+      deliveryPath: llmDeliveryPath,
+      destinationChosen: uploadChoiceMetadata.destinationChosen,
+      isMessageAttachment: messageAttachment,
+      endpointConfig,
+      filters: appConfig?.filters,
+    }));
 
   /* Prices the PDF if a turn sends it to the provider (estimateAttachmentTokens). Uploads sent
    * to text/context return earlier and are not measured (priced by size). Fallback text for a PDF is

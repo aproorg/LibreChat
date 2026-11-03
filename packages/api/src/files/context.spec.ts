@@ -1,5 +1,6 @@
 import type { TFile } from 'librechat-data-provider';
-import { getAttachmentTitleText } from './context';
+import { applyTurnDelivery, resolveTurnDeliveryRouting } from '~/agents/files/delivery';
+import { getAttachmentTitleText, extractFileContext } from './context';
 
 const file = (filename?: string): TFile => ({ filename }) as TFile;
 
@@ -26,5 +27,40 @@ describe('getAttachmentTitleText', () => {
 
   it('returns an empty string when no file has a filename', () => {
     expect(getAttachmentTitleText([file(), file()])).toBe('');
+  });
+});
+
+describe('extractFileContext for a spreadsheet read at upload for Run Code', () => {
+  it('puts the stored text in the prompt on a turn without Run Code', async () => {
+    const sheet = {
+      file_id: 'sheet',
+      filename: 'report.xlsx',
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      text: 'a,b',
+      llmDeliveryPath: 'none' as const,
+      metadata: { destinationChosen: false },
+    };
+    const routing = resolveTurnDeliveryRouting({
+      agent: { provider: 'openAI' },
+      config: {
+        fileConfig: {
+          endpoints: {
+            openAI: { llmDeliveryPolicy: 'automatic' },
+          },
+        },
+      },
+    });
+    const delivered = applyTurnDelivery([sheet], {
+      routing,
+      consumers: { executeCode: false, fileSearch: false },
+    });
+
+    const context = await extractFileContext({
+      attachments: delivered,
+      tokenCountFn: (text: string) => text.length,
+    });
+
+    expect(context).toContain('a,b');
+    expect(context).toContain('report.xlsx');
   });
 });
