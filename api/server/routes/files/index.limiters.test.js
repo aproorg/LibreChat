@@ -65,18 +65,24 @@ jest.mock('~/server/routes/assistants/v1', () => ({
 
 describe('file route limiter wiring', () => {
   let app;
+  let multerOptions;
 
   beforeAll(async () => {
     const { initialize } = require('./index');
     app = express();
     app.use(express.json());
     app.use('/api/files', await initialize());
+    multerOptions = require('./multer').createMulterInstance.mock.calls[0][0];
   });
 
   beforeEach(() => {
     hits.uploadIp = 0;
     hits.uploadUser = 0;
     hits.usage = 0;
+  });
+
+  it('stages /api/files uploads under a unique temp path', () => {
+    expect(multerOptions).toEqual({ uniqueTempPath: true });
   });
 
   it('meters POST /usage with the usage limiter, never leaving it unlimited', async () => {

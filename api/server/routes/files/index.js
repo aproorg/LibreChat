@@ -24,7 +24,7 @@ const initialize = async () => {
   router.use(checkBan);
   router.use(uaParser);
 
-  const upload = await createMulterInstance();
+  const upload = await createMulterInstance({ uniqueTempPath: true });
   router.post('/speech/stt', upload.single('audio'), restoreTenantContextFromReq);
 
   /* Important: speech route must be added before the upload limiters */

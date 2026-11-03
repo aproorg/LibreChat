@@ -98,6 +98,37 @@ describe('Multer Configuration', () => {
         });
       });
 
+      it('gives two same-name stagings distinct paths when uniqueTempPath is on', async () => {
+        const uniqueStorage = createStorage({ uniqueTempPath: true });
+        const stage = (req) =>
+          new Promise((resolve, reject) =>
+            uniqueStorage.getFilename(req, { ...mockFile }, (err, name) =>
+              err ? reject(err) : resolve(name),
+            ),
+          );
+
+        const first = await stage({ ...mockReq });
+        const second = await stage({ ...mockReq });
+
+        expect(first).not.toBe(second);
+        expect(first.endsWith('-test-file.jpg')).toBe(true);
+        expect(second.endsWith('-test-file.jpg')).toBe(true);
+      });
+
+      it('keeps the staged name within the budget Local storage leaves after its file_id prefix', async () => {
+        const uniqueStorage = createStorage({ uniqueTempPath: true });
+        const originalname = `${'á'.repeat(100)}.pdf`;
+        const req = { ...mockReq };
+        const name = await new Promise((resolve, reject) =>
+          uniqueStorage.getFilename(req, { ...mockFile, originalname }, (err, n) =>
+            err ? reject(err) : resolve(n),
+          ),
+        );
+
+        expect(Buffer.byteLength(`${req.file_id}__${name}`)).toBeLessThanOrEqual(255);
+        expect(name.endsWith('.pdf')).toBe(true);
+      });
+
       it('should generate a UUID for req.file_id', (done) => {
         const cb = jest.fn((err, filename) => {
           expect(err).toBeNull();

@@ -96,6 +96,19 @@ describe('ImageService', () => {
       expect(fs.promises.unlink).toHaveBeenCalledWith('/tmp/upload-123.jpg');
     });
 
+    it('keys the saved image by file_id and the unique staged basename', async () => {
+      await service.uploadImage({
+        req: mockReq as ServerRequest,
+        file: { ...mockFile, path: '/tmp/temp/user123/file-456-photo.jpg' },
+        file_id: 'file-456',
+        endpoint: 'openAI',
+      });
+
+      expect(mockSaveBuffer).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: 'file-456__file-456-photo.webp' }),
+      );
+    });
+
     it('throws error when user not authenticated', async () => {
       const reqNoUser = { config: {} };
 

@@ -13,6 +13,20 @@ const {
 } = require('librechat-data-provider');
 const { getAppConfig } = require('~/server/services/Config');
 
+/** Local/Local-images prepend `${file_id}__` (38 bytes) to the staged basename and must stay under NAME_MAX (255). */
+const STAGED_NAME_MAX_BYTES = 255 - 38;
+
+const truncateBytes = (value, maxBytes) => {
+  let out = '';
+  let bytes = 0;
+  for (const char of value) {
+    bytes += Buffer.byteLength(char);
+    if (bytes > maxBytes) break;
+    out += char;
+  }
+  return out;
+};
+
 const createStorage = ({ uniqueTempPath = false } = {}) =>
   multer.diskStorage({
     destination: function (req, file, cb) {
@@ -40,10 +54,18 @@ const createStorage = ({ uniqueTempPath = false } = {}) =>
         return cb(createCustomError(400, 'Invalid filename encoding'));
       }
       const sanitizedFilename = sanitizeFilename(file.originalname);
-      const stagedFilename = uniqueTempPath
-        ? sanitizeFilename(`${req.file_id}-${sanitizedFilename}`)
-        : sanitizedFilename;
-      cb(null, stagedFilename);
+      if (!uniqueTempPath) {
+        return cb(null, sanitizedFilename);
+      }
+      const prefix = `${req.file_id}-`;
+      const ext = path.extname(sanitizedFilename);
+      const stem = path.basename(sanitizedFilename, ext);
+      const budget = STAGED_NAME_MAX_BYTES - Buffer.byteLength(prefix + ext);
+      const staged =
+        Buffer.byteLength(prefix + sanitizedFilename) <= STAGED_NAME_MAX_BYTES
+          ? prefix + sanitizedFilename
+          : prefix + truncateBytes(stem, budget) + ext;
+      cb(null, staged);
     },
   });
 
