@@ -101,7 +101,12 @@ const MESSAGE_STRIP_FIELDS = [
  * }
  */
 export function sanitizeFileForTransmit<T extends FilePreviewSource>(file: T): SanitizedFile<T> {
-  const sanitized = { ...file };
+  const sanitized = { ...file } as T & { bytes?: number; storedBytes?: number };
+  /* A turn copy priced at its note restores the stored size before persisting. */
+  if (sanitized.storedBytes != null) {
+    sanitized.bytes = sanitized.storedBytes;
+  }
+  delete sanitized.storedBytes;
   for (const field of FILE_STRIP_FIELDS) {
     delete sanitized[field as keyof typeof sanitized];
   }

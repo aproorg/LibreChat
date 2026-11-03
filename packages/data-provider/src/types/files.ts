@@ -275,6 +275,7 @@ export type TFile = {
     routingMimeType?: string;
     /** Copies already placed in attached workspaces; see `TFileWorkspaceImports`. */
     workspaceImports?: TFileWorkspaceImports;
+    textDerivation?: 'deferred';
   };
   llmDeliveryPath?: 'provider' | 'text' | 'none';
   createdAt?: string | Date;

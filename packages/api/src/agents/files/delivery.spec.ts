@@ -1,9 +1,11 @@
 import type { TurnFileConsumers, TurnDeliveryFile } from 'librechat-data-provider';
 import {
+  getDeferredTextNote,
   applyTurnDelivery as materializeTurnDelivery,
   resolveTurnDeliveryRouting,
   resolveScopedTurnAttachments,
 } from './delivery';
+import { planInlineAttachmentBudget, isModelBoundAttachmentFile } from '../attachments';
 
 function applyTurnDelivery<T extends TurnDeliveryFile>(
   files: T[],
@@ -369,5 +371,135 @@ describe('a spreadsheet read at upload for Run Code', () => {
     }).get('handoff');
 
     expect(attachments).toEqual([{ ...sheet, llmDeliveryPath: 'text' }]);
+  });
+});
+
+describe('a spreadsheet stored for Run Code without text', () => {
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const automatic = {
+    fileConfig: { endpoints: { openAI: { llmDeliveryPolicy: 'automatic' as const } } },
+  };
+  const agent = { provider: 'openAI' };
+  const deferred: TurnDeliveryFile & {
+    file_id: string;
+    filename: string;
+    bytes: number;
+    text?: string;
+  } = {
+    file_id: 'sheet',
+    filename: 'pivot.xlsx',
+    type: XLSX_MIME,
+    bytes: 18_769_510,
+    llmDeliveryPath: 'none',
+    metadata: { destinationChosen: false, textDerivation: 'deferred' },
+  };
+  const searchOnly: TurnFileConsumers = { executeCode: false, fileSearch: true };
+  const note = getDeferredTextNote('pivot.xlsx');
+  const noted = {
+    ...deferred,
+    llmDeliveryPath: 'text',
+    text: note,
+    bytes: Buffer.byteLength(note),
+    storedBytes: 18_769_510,
+  };
+
+  it('stays with Run Code on a turn that runs it', () => {
+    const files = [deferred];
+    const result = applyTurnDelivery(files, { agent, config: automatic, consumers: runsCode });
+
+    expect(result).toBe(files);
+    expect(result[0]).not.toHaveProperty('text');
+  });
+
+  it('gets a note naming the file on a turn without Run Code, leaving the record alone', () => {
+    const result = applyTurnDelivery([deferred], { agent, config: automatic, consumers: noReader });
+
+    expect(result).toEqual([noted]);
+    expect(result[0].text).toContain('pivot.xlsx');
+    expect(result[0].text).toContain('Run Code');
+    expect(deferred).not.toHaveProperty('text');
+    expect(deferred.bytes).toBe(18_769_510);
+  });
+
+  it('keeps stored text instead of the note when a deferred record already has text', () => {
+    const withText = { ...deferred, text: 'real text' };
+    const [result] = applyTurnDelivery([withText], {
+      agent,
+      config: automatic,
+      consumers: noReader,
+    });
+
+    expect(result.text).toBe('real text');
+  });
+
+  it('gets the same note under File Search without Run Code', () => {
+    expect(
+      applyTurnDelivery([deferred], {
+        agent,
+        config: automatic,
+        consumers: searchOnly,
+      }),
+    ).toEqual([noted]);
+  });
+
+  it('gets no note without the marker', () => {
+    const unmarked = { ...deferred, metadata: { destinationChosen: false } };
+    const [result] = applyTurnDelivery([unmarked], {
+      agent,
+      config: automatic,
+      consumers: noReader,
+    });
+
+    expect(result.llmDeliveryPath).toBe('text');
+    expect(result.text).toBeUndefined();
+  });
+
+  it('reaches a handoff receiver without Run Code as the note', () => {
+    const routing = resolveTurnDeliveryRouting({ agent, config: automatic });
+    const attachments = resolveScopedTurnAttachments({
+      agents: [
+        { agentId: 'handoff', agent: { deliveryRouting: routing, fileConsumers: noReader } },
+      ],
+      sharedConversationAgentIds: ['handoff'],
+      messages: [],
+      requestAttachments: [deferred],
+      sharedRunAttachmentIds: new Set(),
+    }).get('handoff');
+
+    expect(attachments).toEqual([noted]);
+  });
+
+  it('passes the inline budget without File Search', () => {
+    const routing = resolveTurnDeliveryRouting({ agent, config: automatic });
+    const applied = materializeTurnDelivery([deferred], { routing, consumers: noReader });
+
+    expect(
+      planInlineAttachmentBudget(applied, {
+        routing,
+        consumers: noReader,
+        budgetTokens: 1000,
+        limitTokens: 2000,
+      }).size,
+    ).toBe(0);
+  });
+
+  it('is never diverted over budget under File Search', () => {
+    const routing = resolveTurnDeliveryRouting({ agent, config: automatic });
+    const consumers = searchOnly;
+    const applied = materializeTurnDelivery([deferred], { routing, consumers });
+    const diverted = planInlineAttachmentBudget(applied, {
+      routing,
+      consumers,
+      budgetTokens: 5,
+      limitTokens: 0,
+    });
+
+    expect(diverted.has('sheet')).toBe(false);
+    const [again] = materializeTurnDelivery([deferred], {
+      routing: { ...routing, overBudgetFileIds: diverted },
+      consumers,
+    });
+    expect(again.llmDeliveryPath).toBe('text');
+    expect(isModelBoundAttachmentFile(again)).toBe(true);
   });
 });
