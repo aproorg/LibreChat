@@ -44,6 +44,7 @@ jest.mock('../utils', () => ({
     return 'Error';
   }),
   readFileAsString: jest.fn(),
+  sanitizeFilename: jest.fn((name: string) => name),
 }));
 
 // Now import everything after mocks are in place
@@ -210,6 +211,24 @@ describe('text', () => {
         bytes: mockBytes,
         source: FileSources.text,
       });
+    });
+
+    it('should send the original filename, not the unique staged basename, to the RAG API', async () => {
+      process.env.RAG_API_URL = 'http://rag-api.test';
+      const append = jest.fn();
+      mockedFormData.mockImplementation(
+        () => ({ append, getHeaders: jest.fn().mockReturnValue({}) }) as unknown as FormData,
+      );
+      mockedAxios.get.mockResolvedValue({ status: 200, statusText: 'OK' });
+      mockedAxios.post.mockResolvedValue({ data: { text: 'x' } });
+
+      await parseText({
+        req: mockReq,
+        file: { ...mockFile, originalname: 'report.pdf', path: '/tmp/uuid-1234-report.pdf' },
+        file_id: mockFileId,
+      });
+
+      expect(append).toHaveBeenCalledWith('file', expect.anything(), { filename: 'report.pdf' });
     });
 
     it('should accept empty text as valid RAG API response', async () => {

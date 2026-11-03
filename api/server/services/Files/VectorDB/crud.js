@@ -1,9 +1,10 @@
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('@librechat/data-schemas');
 const { FileSources } = require('librechat-data-provider');
-const { logAxiosError, generateShortLivedToken } = require('@librechat/api');
+const { logAxiosError, sanitizeFilename, generateShortLivedToken } = require('@librechat/api');
 
 /**
  * Deletes a file from the vector database. This function takes a file object, constructs the full path, and
@@ -73,7 +74,9 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, s
     const jwtToken = generateShortLivedToken(req.user.id);
     const formData = new FormData();
     formData.append('file_id', file_id);
-    formData.append('file', fs.createReadStream(file.path));
+    formData.append('file', fs.createReadStream(file.path), {
+      filename: sanitizeFilename(file.originalname ?? path.basename(file.path)),
+    });
     if (entity_id != null && entity_id) {
       formData.append('entity_id', entity_id);
     }
