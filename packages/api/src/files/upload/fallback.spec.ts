@@ -1,7 +1,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { logger } from '@librechat/data-schemas';
 import type { FiltersConfig } from 'librechat-data-provider';
 import type { UploadFallbackTextExtractors } from './fallback';
 import {
@@ -59,21 +58,6 @@ describe('getUploadFallbackTextPlan', () => {
 
   it('runs nothing for a file kept on an agent, which no turn delivers as text', () => {
     expect(getUploadFallbackTextPlan({ ...csvRoute, isMessageAttachment: false })).toBeNull();
-  });
-
-  it('runs for a spreadsheet filed for Run Code without the endpoint opt-in', () => {
-    const route = { ...csvRoute, endpointConfig: undefined, spreadsheetForRunCode: true };
-
-    expect(getUploadFallbackTextPlan({ ...route, mimeType: XLSX_MIME })).toBe(
-      UPLOAD_FALLBACK_TEXT_PLANS.documentParser,
-    );
-    expect(getUploadFallbackTextPlan(route)).toBe(UPLOAD_FALLBACK_TEXT_PLANS.nativeText);
-  });
-
-  it('runs nothing without the opt-in or the Run Code flag', () => {
-    expect(
-      getUploadFallbackTextPlan({ ...csvRoute, endpointConfig: undefined, mimeType: XLSX_MIME }),
-    ).toBeNull();
   });
 });
 
@@ -144,79 +128,6 @@ describe('resolveUploadFallbackText', () => {
     ).resolves.toBe('Sheet One:\nData,on,first,sheet\nSecond Sheet:\nData,On\nSecond,Sheet\n');
     expect(extractors.parseDocument).toHaveBeenCalledWith({ file });
     expect(extractors.parseTextNative).not.toHaveBeenCalled();
-  });
-
-  describe('for a spreadsheet filed for Run Code', () => {
-    const runCodeRoute = { ...route, endpointConfig: undefined, spreadsheetForRunCode: true };
-    const xlsxFile = {
-      originalname: 'sample.xlsx',
-      path: path.join(__dirname, '../documents/sample.xlsx'),
-      mimetype: XLSX_MIME,
-    } as Express.Multer.File;
-
-    it('parses a workbook with the document parser', async () => {
-      const extractors = spiedExtractors();
-
-      await expect(
-        resolveUploadFallbackText({ ...runCodeRoute, file: xlsxFile, fileId: 'f', extractors }),
-      ).resolves.toContain('Sheet One:');
-      expect(extractors.parseDocument).toHaveBeenCalledWith({ file: xlsxFile });
-      expect(extractors.parseTextNative).not.toHaveBeenCalled();
-    });
-
-    it('reads a CSV natively', async () => {
-      const extractors = spiedExtractors();
-      const file = csvUpload('run-code.csv', 'a,b');
-
-      await expect(
-        resolveUploadFallbackText({ ...runCodeRoute, file, fileId: 'f', extractors }),
-      ).resolves.toBe('a,b');
-      expect(extractors.parseTextNative).toHaveBeenCalledWith(file);
-      expect(extractors.parseDocument).not.toHaveBeenCalled();
-    });
-
-    it('returns undefined and logs one warning when the parser throws', async () => {
-      const warn = jest.spyOn(logger, 'warn').mockImplementation(() => logger);
-      const extractors: UploadFallbackTextExtractors = {
-        parseDocument: async () => {
-          throw new Error('corrupt workbook');
-        },
-        parseTextNative,
-      };
-
-      await expect(
-        resolveUploadFallbackText({ ...runCodeRoute, file: xlsxFile, fileId: 'f', extractors }),
-      ).resolves.toBeUndefined();
-      expect(warn).toHaveBeenCalledTimes(1);
-      warn.mockRestore();
-    });
-
-    it('returns undefined for text over the storage cap', async () => {
-      const extractors: UploadFallbackTextExtractors = {
-        parseDocument: async () => ({ text: 'a'.repeat(MAX_STORED_EXTRACTED_TEXT_BYTES + 1) }),
-        parseTextNative,
-      };
-
-      await expect(
-        resolveUploadFallbackText({ ...runCodeRoute, file: xlsxFile, fileId: 'f', extractors }),
-      ).resolves.toBeUndefined();
-    });
-
-    it('calls no extractor without the flag', async () => {
-      const extractors = spiedExtractors();
-
-      await expect(
-        resolveUploadFallbackText({
-          ...runCodeRoute,
-          spreadsheetForRunCode: undefined,
-          file: xlsxFile,
-          fileId: 'f',
-          extractors,
-        }),
-      ).resolves.toBeUndefined();
-      expect(extractors.parseDocument).not.toHaveBeenCalled();
-      expect(extractors.parseTextNative).not.toHaveBeenCalled();
-    });
   });
 
   it('extracts nothing when no plan applies', async () => {

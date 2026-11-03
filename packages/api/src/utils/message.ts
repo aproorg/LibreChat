@@ -38,11 +38,16 @@ const MESSAGE_STRIP_FIELDS = ['fileContext', 'image_urls'] as const;
 export function sanitizeFileForTransmit<T extends Partial<TFile>>(
   file: T,
 ): Omit<T, (typeof FILE_STRIP_FIELDS)[number]> {
-  const sanitized = { ...file };
+  const sanitized = { ...file } as Partial<TFile> & { storedBytes?: number };
+  /* A turn copy priced at its note restores the stored size before persisting. */
+  if (sanitized.storedBytes != null) {
+    sanitized.bytes = sanitized.storedBytes;
+  }
+  delete sanitized.storedBytes;
   for (const field of FILE_STRIP_FIELDS) {
     delete sanitized[field as keyof typeof sanitized];
   }
-  return sanitized;
+  return sanitized as Omit<T, (typeof FILE_STRIP_FIELDS)[number]>;
 }
 
 /** Filters attachments to those whose `file_id` appears in `requestFiles`, then sanitizes each. */

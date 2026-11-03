@@ -12,6 +12,13 @@ import {
 const NO_PARENT = Constants.NO_PARENT as string;
 
 describe('sanitizeFileForTransmit', () => {
+  it('restores the stored size of a turn copy priced at its note', () => {
+    const result = sanitizeFileForTransmit({ file_id: 'a', bytes: 247, storedBytes: 18_769_510 });
+
+    expect(result.bytes).toBe(18_769_510);
+    expect(result).not.toHaveProperty('storedBytes');
+  });
+
   it('should remove text field from file', () => {
     const file = {
       file_id: 'test-123',

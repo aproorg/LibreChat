@@ -857,20 +857,9 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
       ? (await checkCapability(req, AgentCapabilities.execute_code)) &&
         toolRoleGrants?.runCode === true
       : enabledTools?.includes(EToolResources.execute_code) === true);
-  /* Read before storage. Only text the built-in readers returned moves the route to `none`;
-   * a file they cannot read keeps the extraction path below. */
-  const runCodeText = codePossible
-    ? await resolveUploadFallbackText({
-        file,
-        fileId: file_id,
-        deliveryPath: 'none',
-        destinationChosen: false,
-        isMessageAttachment: true,
-        spreadsheetForRunCode: true,
-        filters: appConfig?.filters,
-      })
-    : undefined;
-  const llmDeliveryPath = runCodeText != null ? 'none' : resolvedDeliveryPath;
+  /* Stored for Run Code untouched: no RAG, no built-in reader, no text cap. A later turn
+   * without Run Code gets a note naming the file instead of its text (#16848 `textDerivation`). */
+  const llmDeliveryPath = codePossible ? 'none' : resolvedDeliveryPath;
   const destination = resolveUploadDestination({
     toolResource: tool_resource,
     deliveryPath: llmDeliveryPath,
@@ -1188,17 +1177,17 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
   }
 
   /* Extracted before storage, which may move the temporary upload the extractors read. */
-  const fallbackText =
-    runCodeText ??
-    (await resolveUploadFallbackText({
-      file,
-      fileId: file_id,
-      deliveryPath: llmDeliveryPath,
-      destinationChosen: uploadChoiceMetadata.destinationChosen,
-      isMessageAttachment: messageAttachment,
-      endpointConfig,
-      filters: appConfig?.filters,
-    }));
+  const fallbackText = codePossible
+    ? undefined
+    : await resolveUploadFallbackText({
+        file,
+        fileId: file_id,
+        deliveryPath: llmDeliveryPath,
+        destinationChosen: uploadChoiceMetadata.destinationChosen,
+        isMessageAttachment: messageAttachment,
+        endpointConfig,
+        filters: appConfig?.filters,
+      });
 
   /* Prices the PDF if a turn sends it to the provider (estimateAttachmentTokens). Uploads sent
    * to text/context return earlier and are not measured (priced by size). Fallback text for a PDF is
@@ -1409,6 +1398,7 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
       metadata: {
         ...(fileInfoMetadata ?? {}),
         ...uploadChoiceMetadata,
+        ...(codePossible ? { textDerivation: 'deferred' } : {}),
         ...(pdfMeasure ?? {}),
         /* The route was resolved against the upload's own type, and delivery re-resolves
          * it later. Conversion changes `type`, so without this the second answer is drawn
