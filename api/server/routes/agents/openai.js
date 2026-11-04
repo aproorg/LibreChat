@@ -20,13 +20,10 @@
  */
 const express = require('express');
 const {
-  isEnabled,
   reportLocatorTraversalFailure,
   createAgentEventBindingHandlers,
   createAgentTriggerIngressHandlers,
   createMessageFilterPii,
-  OMIT_UNAVAILABLE_OPENID_HEADERS,
-  IGNORE_OPENID_TOKENS_IN_HEADERS,
 } = require('@librechat/api');
 const {
   OpenAIChatCompletionController,
@@ -45,6 +42,7 @@ const {
   requireRemoteAgentAuth,
   checkRemoteAgentsFeature,
 } = require('./middleware');
+const { applyRemoteHeaderPolicy } = require('./remoteHeaderPolicy');
 const db = require('~/models');
 
 const router = express.Router();
@@ -63,17 +61,7 @@ const eventBindingHandlers = createAgentEventBindingHandlers({
 
 router.use(preAuthTenantMiddleware);
 router.use(requireRemoteAgentAuth);
-router.use((req, _res, next) => {
-  if (req.user && isEnabled(process.env.REMOTE_AGENTS_OMIT_UNAVAILABLE_OPENID_HEADERS)) {
-    req.user[OMIT_UNAVAILABLE_OPENID_HEADERS] = true;
-    /**
-     * The bearer a remote caller sent is for LibreChat, not model endpoints: header resolution
-     * ignores it. `federatedTokens` stays because MCP OBO falls back to it (resolveOboToken).
-     */
-    req.user[IGNORE_OPENID_TOKENS_IN_HEADERS] = true;
-  }
-  next();
-});
+router.use(applyRemoteHeaderPolicy);
 router.use(configMiddleware);
 router.use(checkRemoteAgentsFeature);
 
