@@ -38,7 +38,7 @@ The shared layer holds word splitting, folding, the token format, the read plan,
 ## Today's packs
 
 - **`en`**: stemmer, Snowball, stop list from the reference.
-- **`is`**: dictionary. `knows` is the library's core; `claims` is the Icelandic-letter test; `lemmas` covers core, fold table and the guarded suffix fallback; `parts` guards `word in Object.prototype` and the function-verb block list; `stopWords` is the library's list plus the reference's additions; `attribution` is FR-043's text.
+- **`is`**: dictionary. `knows` is the library's core; `claims` is the Icelandic-letter test; `lemmas` covers core, fold table and the guarded suffix fallback; `parts` guards `word in Object.prototype` and the function-verb block list; `stopWords` is the library's list plus the reference's additions; `attribution` is FR-043's text. The stop-lemma list, the additions and the block list load from `languageDataDir` until FR-045's answers clear them for this repository.
 
 ## Contract tests (every pack, `languages/__tests__/helpers/contract.ts`)
 
@@ -56,4 +56,4 @@ A new pack also adds golden queries and measures tokens per message and stop-wor
 
 ## Analyzer version
 
-`analyzer/version.ts` hashes enabled pack IDs and versions, stop lists, the fold rule version and the caps. A change is what FR-026 calls token-changing. The writer compares it to `search_state.analyzer` at start, and a mismatch queues reconcile. The runbook also requests reconcile after a token-changing deploy finishes ([R-11](../research.md#r-11-backfill-reconcile-verify)).
+`analyzer/version.ts` hashes enabled pack IDs and versions, stop lists, the fold rule version and the caps. A change is what FR-026 calls token-changing. The writer compares it to `search_state.analyzer` at start, and a mismatch queues reconcile once a backfill chain has finished. The runbook also requests reconcile after a token-changing deploy finishes ([R-11](../research.md#r-11-backfill-reconcile-verify)).

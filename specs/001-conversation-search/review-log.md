@@ -404,3 +404,16 @@ Fresh-context review of the open PR. Each loop reviews the pushed head.
 | L9 | Personal email in commit metadata | Left for the owner | none |
 | L10 | Scaffolding in this PR | Partly: the brief asks for it, so it stays; env var note added | `tasks.md` |
 | Extra | Licence status of stop lists and cursor overflow were undefined | Applied | T008, T053, T054, T078, R-06 |
+
+## Loop 2
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| H1 | Loop 1's reorder of after-removal rollback stalled or showed a nearly empty index, as `indexSync` only runs at process start. My error in loop 1 | Applied: explicit order | T140, T149, quickstart |
+| H2 | Possibly BÍN-derived lists could reach the public repository before the answers | Applied: private by default | T009, T053, T054, language-pack |
+| H3 | Reconcile could run as an unrequested full backfill | Applied: automatic triggers wait for `chain.finishedAt`, test | T104, T111, T113, T121, R-09, data-model |
+| M1 | Startup order contradicted itself | Applied: `bindSearch()` before listen, `startSearchBackground()` after | T074, T124 |
+| M2 | Loop 1's cursor overflow rule relaxed "none lost" | Applied: a byte limit in the prefix budget, applied at freeze and shared with the oracle | T077, T078, R-06 |
+| M3 | A Jest config can't set Node flags | Applied: script, not run | T052, T055, quickstart |
+| L1, L2, L3 | T052 had no runner, quickstart's quality directory, T149's missing dependency | Applied | T052, quickstart, graph |
+| L4 | Removed clause stays in earlier commits | Left: squash-merge recommended to the owner | none |

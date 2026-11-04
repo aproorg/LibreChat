@@ -5,7 +5,7 @@ Each scenario proves an outcome; shapes are in [data-model.md](data-model.md) an
 ## Prerequisites
 
 - `npm ci`, `npm run build:data-provider`.
-- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to `search-experiments`, `SEARCH_QUALITY_VOCAB` to the corpus-wide word list, and `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0.
+- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to T016's output, `SEARCH_QUALITY_VOCAB` to the corpus-wide word list, and `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0.
 - For live checks: `DOCUMENTDB_URI` and `DOCUMENTDB_TLS_CA_FILE`, as `packages/data-schemas/misc/documentdb/` expects.
 - `librechat.yaml` with `search: { data: true, backend: search }`, and `SEARCH=true`.
 
@@ -34,7 +34,7 @@ With the private data, outside public CI: the `is` pack passes the same suite, t
 ## 3. Token parity and quality (FR-007, SC-001 to SC-004, US1)
 
 ```bash
-cd packages/api && npx jest --config misc/search-quality/jest.config.mjs
+cd packages/api && npm run test:search-quality
 ```
 
 Expect:
@@ -102,7 +102,7 @@ Runs with `languages: [en]` until FR-045's answers arrive ([R-02](research.md#r-
 
 Expect: one setting for both rollbacks.
 
-After-removal rollback is timed once on the shadow tenant's data, before the first removal anywhere (FR-036): on a snapshot clone with a parallel Meilisearch, the runbook turns search data off, resets sync state, runs a full sync, and hides search until it finishes.
+After-removal rollback is timed once on the shadow tenant's data, before the first removal anywhere (FR-036): on a snapshot clone with a parallel Meilisearch, the runbook rolls out data off and `meiliResyncPending` with the Meilisearch variables unset, resets sync state, then rolls out with the variables set, which starts the full sync. Search stays hidden until it finishes.
 
 ## 8. Shadow gate (SC-005 to SC-014)
 

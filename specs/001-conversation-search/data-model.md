@@ -58,7 +58,7 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 | `reconcile` | `pass`, `phase`, `lastId` per phase, `status`, `missing`, `orphans`, `stale`, `finishedAt?` | Reports before repair |
 | `verification` | `status` (`pending`, `passed`, `failed`), `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds` | Readiness (FR-019, FR-037) |
 | `analyzer` | `version`, `packs` with attribution text and URL, `attributionUntilReanalyzed`, `tenantId` | Token changes (FR-026), FR-043 after a disable, tenant pin |
-| `chain` | `requestId`, `step` | Backfill chain position, resumed by each new lease holder |
+| `chain` | `requestId`, `step`, `finishedAt?` | Backfill chain position, resumed by each new lease holder. Automatic reconcile waits for `finishedAt` |
 | `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |
 | `vocab` | `run` | Rebuild run number |
 | `jobRequest:<id>` | `job`, `requestedAt` | Written by `config/search-job.js` |
