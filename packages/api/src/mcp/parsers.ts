@@ -170,10 +170,17 @@ function describeResourceLink(item: t.ResourceLink): string[] {
   return lines;
 }
 
+/** Text for a result with no content blocks; some servers (e.g. Work IQ) answer only in structuredContent. */
+function emptyContentText(result: t.MCPToolCallResponse): string {
+  return result?.structuredContent != null
+    ? JSON.stringify(result.structuredContent)
+    : '(No response)';
+}
+
 function parseAsString(result: t.MCPToolCallResponse): string {
   const content = result?.content ?? [];
   if (!content.length) {
-    return '(No response)';
+    return emptyContentText(result);
   }
 
   const text = content
@@ -233,7 +240,7 @@ export function formatToolContent(
 
   const content = result?.content ?? [];
   if (!content.length) {
-    return ['(No response)', undefined];
+    return [emptyContentText(result), undefined];
   }
 
   const imageUrls: t.FormattedContent[] = [];

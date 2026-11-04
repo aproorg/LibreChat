@@ -30,6 +30,13 @@ describe('formatToolContent', () => {
       expect(artifacts).toBeUndefined();
     });
 
+    it('should fall back to structuredContent when content is empty', () => {
+      const result: t.MCPToolCallResponse = { content: [], structuredContent: { answer: 42 } };
+      const [content, artifacts] = formatToolContent(result, 'unknown' as t.Provider);
+      expect(content).toBe('{"answer":42}');
+      expect(artifacts).toBeUndefined();
+    });
+
     it('should preserve the image payload in the string for unrecognized providers', () => {
       const result: t.MCPToolCallResponse = {
         content: [{ type: 'image', data: 'iVBORw0KGgoAAAA...', mimeType: 'image/png' }],
@@ -68,6 +75,17 @@ describe('formatToolContent', () => {
 
           const [content, artifacts] = formatToolContent(result, provider);
           expect(content).toBe('First text\n\nSecond text');
+          expect(artifacts).toBeUndefined();
+        });
+
+        it('should fall back to structuredContent when content is empty', () => {
+          const result: t.MCPToolCallResponse = {
+            content: [],
+            structuredContent: { results: [{ statusCode: 200 }] },
+          };
+
+          const [content, artifacts] = formatToolContent(result, provider);
+          expect(content).toBe('{"results":[{"statusCode":200}]}');
           expect(artifacts).toBeUndefined();
         });
 
