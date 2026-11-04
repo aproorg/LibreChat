@@ -36,6 +36,7 @@ const {
   requireRemoteAgentAuth,
   checkRemoteAgentsFeature,
 } = require('./middleware');
+const { applyRemoteHeaderPolicy } = require('./remoteHeaderPolicy');
 
 const router = express.Router();
 const background = createBackgroundResponseHandlers({
@@ -45,6 +46,7 @@ const background = createBackgroundResponseHandlers({
 
 router.use(preAuthTenantMiddleware);
 router.use(authenticateBackgroundResponses(requireRemoteAgentAuth));
+router.use(applyRemoteHeaderPolicy);
 router.use(requireTermsAcceptance);
 router.use(configMiddleware);
 router.use(checkRemoteAgentsFeature);

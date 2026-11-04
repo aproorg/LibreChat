@@ -23,6 +23,7 @@ jest.mock('@librechat/api', () => ({
   }),
   createAgentTriggerIngressHandlers: mockCreateAgentTriggerIngressHandlers,
   createMessageFilterPii: () => (_req, _res, next) => next(),
+  isEnabled: () => false,
 }));
 
 jest.mock('~/models', () => ({
