@@ -29,7 +29,7 @@ Bare boolean, as today, with the status read cached ([R-15](../research.md#r-15-
 | Backend | True when |
 |---|---|
 | `SEARCH` off | Never |
-| `meilisearch`, `shadow` | Meilisearch healthy, and `search.meiliResyncPending` is unset or the sync progress reports complete |
+| `meilisearch`, `shadow` | Meilisearch healthy, and `search.meiliResyncPending` is unset or, per model, nothing is pending indexing or cleanup and unprocessed documents are within `MEILI_SYNC_THRESHOLD` |
 | `search` | `search.data` on, this process's packs loaded, and `verification.status` is `passed` with `passedAt` later than `invalidatedAt` |
 
 Misconfiguration (`data` off): `shadow` serves Meilisearch with no detached run and logs a configuration error; `search` reports false and logs the same. A pack that failed to load makes `search` report false in that process, and alarms.
@@ -60,8 +60,8 @@ Apply when `backend: search`, except the cursor rule above. Clients do not retry
 
 | Code | HTTP | When | Surface |
 |---|---|---|---|
-| `search_busy` | 503 | Cursor limit after two retries, per-process cap, timeout | `/search`; sidebar and shared links when the title read fails |
-| `search_failed` | 500 | Any other read failure, or this process's pack failed to load | `/search`; sidebar and shared links when the title read fails |
+| `search_busy` | 503 | Cursor limit after two retries, per-process cap, timeout, or this process's packs still loading | `/search`; sidebar and shared links when the title read fails |
+| `search_failed` | 500 | Any other read failure, this process's pack failed to load, or `data` off | `/search`; sidebar and shared links when the title read fails |
 | `search_cursor_invalid` | 400 | Malformed, forged, stale or wrong-query cursor | `/search`; client offers a restart |
 
 Body: `{ "code": "<code>" }`, no message text (FR-018, FR-020). Clients map codes to localized copy, with a fallback.

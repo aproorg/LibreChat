@@ -417,3 +417,17 @@ Fresh-context review of the open PR. Each loop reviews the pushed head.
 | M3 | A Jest config can't set Node flags | Applied: script, not run | T052, T055, quickstart |
 | L1, L2, L3 | T052 had no runner, quickstart's quality directory, T149's missing dependency | Applied | T052, quickstart, graph |
 | L4 | Removed clause stays in earlier commits | Left: squash-merge recommended to the owner | none |
+
+## Loop 3
+
+These fixes have had no further review.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| H1 | `isComplete` can stay false after an aborted message, hiding search for good after rollback | Applied: gate by pending counts and threshold, step to clear the flag, test under traffic | T125, T140, T105, T149, http |
+| M1 | `reset-meili-sync.js` hangs without a TTY | Applied: `--yes` flag. Hang simulated by the reviewer on a copy of the prompt logic, flag not built | T114, T140 |
+| M2 | "After the server listens" invited a call that can exit the process | Applied: un-awaited, own catch, test | T074, T124 |
+| M3 | No behaviour while packs load or with data off | Applied: `packState` | T069, http |
+| M4 | `data: false` only postpones the flood | Applied: off to on discards the token, new R-05 question, release check. Lag unmeasured | T111, T141, R-05, R-09 |
+| L1 to L3, L5 to L8 | R-11 triggers, live suite flag, missing env var, `JWT_SECRET` owner, private data layout, T016 before T013 (inferred), T020's module name | Applied | R-11, T136, quickstart, T074, R-02, graph, T020 |
+| L4 | The scenario's order differed from T140 | Applied in the spec: reset, then redeploy | `spec.md` |

@@ -5,7 +5,7 @@ Each scenario proves an outcome; shapes are in [data-model.md](data-model.md) an
 ## Prerequisites
 
 - `npm ci`, `npm run build:data-provider`.
-- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to T016's output, `SEARCH_QUALITY_VOCAB` to the corpus-wide word list, and `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0.
+- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to T016's output, `SEARCH_QUALITY_VOCAB` to the corpus-wide word list, `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0, and `SEARCH_LANGUAGE_DATA_DIR` to the private copy.
 - For live checks: `DOCUMENTDB_URI` and `DOCUMENTDB_TLS_CA_FILE`, as `packages/data-schemas/misc/documentdb/` expects.
 - `librechat.yaml` with `search: { data: true, backend: search }`, and `SEARCH=true`.
 
@@ -87,7 +87,7 @@ After stages 4 and 5, rerun against the code:
 
 ```bash
 cd packages/data-schemas && npx jest --config misc/documentdb/jest.documentdb.config.mjs
-cd packages/api && npx jest --config misc/search-live/jest.config.mjs
+cd packages/api && npm run test:search-live
 ```
 
 ## 7. Operator path on a non-production tenant (US3, SC-017)

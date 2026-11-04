@@ -69,7 +69,7 @@ An operator moves one tenant at a time through the engine upgrade trial, measure
 3. **Given** a tenant's per-user verification has not passed, **When** the availability check runs on the new backend, **Then** search is reported not ready.
 4. **Given** shadow mode, **When** a user searches, **Then** Meilisearch serves the results and the new search runs detached and capped, and its failure or slowness never affects what the user gets.
 5. **Given** any abort threshold is crossed, before removal, **When** the owner acts, **Then** the tenant returns to Meilisearch by one setting change and a written cause is recorded.
-6. **Given** Meilisearch has been removed, **When** rollback is required, **Then** the runbook redeploys it, resets its sync state, runs a full sync, and keeps search hidden until that sync finishes.
+6. **Given** Meilisearch has been removed, **When** rollback is required, **Then** the runbook resets its sync state, redeploys it, runs a full sync, and keeps search hidden until that sync finishes.
 
 ---
 
