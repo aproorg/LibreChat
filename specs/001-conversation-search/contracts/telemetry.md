@@ -26,7 +26,7 @@ Structured `logger` events under `search.*`, per [R-14](../research.md#r-14-metr
 
 | Measure | Source |
 |---|---|
-| SC-005 leaks | `search.probe` |
+| SC-005 leaks | `search.probe`, and a metric filter on tenant logs for the probe sentinels |
 | SC-006, SC-007 latency | `search.request` |
 | SC-008 cursor errors, search | `search.cursor_error` |
 | SC-008, FR-038 cursor errors, elsewhere | CloudWatch log filter on `Cannot open a new cursor` in existing error logs, excluding `search.*` lines. Any such line counts as a chat route: conservative, because existing lines name a method rather than a route |

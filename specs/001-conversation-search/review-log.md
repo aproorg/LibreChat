@@ -384,3 +384,23 @@ The merge target changed after the task reviews. One fresh-context audit read ev
 | `/metrics` is absent from `experimental.js` | Applied | T144, telemetry |
 | Lighthouse database option was incomplete | Applied | T019 |
 | Dead references | Applied | R-02, R-03, R-15, R-19, research intro |
+
+# PR review loops
+
+Fresh-context review of the open PR. Each loop reviews the pushed head.
+
+## Loop 1
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| H1 | `subagentTask` is `select: false`, so jobs could index subagent messages | Applied: shared projection, test, direct probe | T108, T102, T128, data-model |
+| H2 | Last-event rule could keep a bookkeeping event and lose the edit | Applied: drop those events first, test | T110, T101, R-09 |
+| M3 | Live after-removal rollback floods sync | Applied: `data: false` before the reset | T140, R-09, quickstart |
+| M4 | SC-005's log checks had no task | Applied | T143, T139, telemetry |
+| M5 | A crash between chain steps had no resume | Applied: `chain` key, request deleted late, test | T120, T121, T104, data-model |
+| M6 | T158's file name was skipped by public CI | Applied: renamed | T158 |
+| L7 | FR-035 listed as open though the spec decides it | Applied: removed from the PR body | PR body |
+| L8 | Fleet details in the public diff | Partly: the sidebar clause went from the spec; container size and volume stay, as they name no tenant | `spec.md` |
+| L9 | Personal email in commit metadata | Left for the owner | none |
+| L10 | Scaffolding in this PR | Partly: the brief asks for it, so it stays; env var note added | `tasks.md` |
+| Extra | Licence status of stop lists and cursor overflow were undefined | Applied | T008, T053, T054, T078, R-06 |

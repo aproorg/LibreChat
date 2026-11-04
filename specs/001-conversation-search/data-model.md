@@ -22,7 +22,7 @@ All records are new and derived. `messages` and `conversations` keep their shape
 
 **Never stored**: message text, `contextMeta`, `summary`, tool output. `aproorg/0.8.8` keeps no unredacted private copy of a message; FR-022 binds any added later. Text comes from `parseTextParts(content, false, { includeSteer: true })` when `content` is an array, else `text`.
 
-**Validation**: A record exists only when `isIndexableSource` holds for the source: indexable by the stored temporary flag and expiry, not `unfinished`, and `subagentTask` unset.
+**Validation**: A record exists only when `isIndexableSource` holds for the source: indexable by the stored temporary flag and expiry, not `unfinished`, and `subagentTask` unset. `subagentTask` is `select: false`, so every source read must project it.
 
 ## Conversation search record (`csearch`)
 
@@ -58,6 +58,7 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 | `reconcile` | `pass`, `phase`, `lastId` per phase, `status`, `missing`, `orphans`, `stale`, `finishedAt?` | Reports before repair |
 | `verification` | `status` (`pending`, `passed`, `failed`), `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds` | Readiness (FR-019, FR-037) |
 | `analyzer` | `version`, `packs` with attribution text and URL, `attributionUntilReanalyzed`, `tenantId` | Token changes (FR-026), FR-043 after a disable, tenant pin |
+| `chain` | `requestId`, `step` | Backfill chain position, resumed by each new lease holder |
 | `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |
 | `vocab` | `run` | Rebuild run number |
 | `jobRequest:<id>` | `job`, `requestedAt` | Written by `config/search-job.js` |

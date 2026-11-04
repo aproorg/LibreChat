@@ -102,7 +102,7 @@ Runs with `languages: [en]` until FR-045's answers arrive ([R-02](research.md#r-
 
 Expect: one setting for both rollbacks.
 
-After-removal rollback is timed once on the shadow tenant's data, before the first removal anywhere (FR-036): on a snapshot clone with a parallel Meilisearch, the runbook resets sync state, runs a full sync, and hides search until it finishes.
+After-removal rollback is timed once on the shadow tenant's data, before the first removal anywhere (FR-036): on a snapshot clone with a parallel Meilisearch, the runbook turns search data off, resets sync state, runs a full sync, and hides search until it finishes.
 
 ## 8. Shadow gate (SC-005 to SC-014)
 
