@@ -1,0 +1,75 @@
+# HTTP Contract
+
+Default configuration (`search.data: false`, `search.backend: meilisearch`): every response stays exactly as today. Each section states when it applies. Flows per surface are in [R-03](../research.md#r-03-seams-into-existing-code).
+
+## GET /api/messages?search=…
+
+Applies when `backend: search`. Under `shadow`, Meilisearch serves with today's response and the new search runs detached. On `meilisearch` and `shadow`, a cursor with the `s1.` prefix returns `search_cursor_invalid`, because that cursor came from before a rollback. Today's client never sends any other cursor here.
+
+| Field | Type | Notes |
+|---|---|---|
+| `messages` | array | Same fields the client renders today; private fields stripped; ranked order kept |
+| `nextCursor` | string or null | Non-null whenever more matches may exist, even when `messages` is short or empty after filtering |
+| `reason` | `only_stop_words`, optional | With `messages: []` |
+
+**Request**: `cursor` is opaque and encrypted ([R-06](../research.md#r-06-paging-model)). `pageSize` is ignored: the page is 25 (FR-013). `user` comes from the session only. Every other parameter behaves as today.
+
+## GET /api/convos?search=…
+
+Applies when `backend: search`, including Archived Chats, which uses this route. Adds to today's response: `partial: true` when message search failed and only title matches are shown; `reason: only_stop_words` with an empty list. Paging, sort and every other filter stay the same.
+
+## GET /api/share?search=…
+
+Applies when `backend: search`. Adds `reason: only_stop_words`. Existing paging and filtering of the links shown stay.
+
+## GET /api/search/enable
+
+Bare boolean, as today, with the status read cached ([R-15](../research.md#r-15-client-data-needs)).
+
+| Backend | True when |
+|---|---|
+| `SEARCH` off | Never |
+| `meilisearch`, `shadow` | Meilisearch healthy, and `search.meiliResyncPending` is unset or the sync progress reports complete |
+| `search` | `search.data` on, this process's packs loaded, and `verification.status` is `passed` with `passedAt` later than `invalidatedAt` |
+
+Misconfiguration (`data` off): `shadow` serves Meilisearch with no detached run and logs a configuration error; `search` reports false and logs the same. A pack that failed to load makes `search` report false in that process, and alarms.
+
+## GET /api/search/meta (new)
+
+Called only by the `/search` view. JWT required. Applies whenever `search.data` is on, on any backend, and until FR-043's re-analysis finishes.
+
+```json
+{
+  "attribution": { "text": "…verbatim…", "url": "https://bin.arnastofnun.is" },
+  "panel": { "eligible": true }
+}
+```
+
+`attribution` is present per FR-043. `panel` is present only for a user in `search.shadow.panelUsers` during `shadow`. With the default configuration it returns `{}`.
+
+## Panel (new, `backend: shadow` only)
+
+Server rejects with 404 unless the backend is `shadow` and the user is listed.
+
+- `GET /api/search/panel/compare?search=…` returns `{ meilisearch: { messages }, search: { messages, state: 'ok' | 'dropped' | 'failed' } }`, for the caller's own search. Query text is not stored or logged.
+- `POST /api/search/panel/verdict` with `{ verdict: 'better' | 'equal' | 'worse', knownMissed: boolean }` returns 204. Nothing else is accepted or stored, and the server adds the round to the key ([R-18](../research.md#r-18-fr-011s-panel-re-run)).
+
+## Errors
+
+Apply when `backend: search`, except the cursor rule above. Clients do not retry `search_busy` or `search_cursor_invalid`.
+
+| Code | HTTP | When | Surface |
+|---|---|---|---|
+| `search_busy` | 503 | Cursor limit after two retries, per-process cap, timeout | `/search`; sidebar and shared links when the title read fails |
+| `search_failed` | 500 | Any other read failure, or this process's pack failed to load | `/search`; sidebar and shared links when the title read fails |
+| `search_cursor_invalid` | 400 | Malformed, forged, stale or wrong-query cursor | `/search`; client offers a restart |
+
+Body: `{ "code": "<code>" }`, no message text (FR-018, FR-020). Clients map codes to localized copy, with a fallback.
+
+Sidebar with message read failed and title read fine: 200 with `partial: true`, plus an alarm. Sidebar with title read failed: the code above, message hits discarded.
+
+Shared links no longer return an empty 200 on failure on this backend, so an outage never reads as no results.
+
+## Types
+
+Add to `packages/data-provider`: `SearchErrorCode`, `SearchReason`, response additions, `SearchMeta`, panel types, endpoints in `api-endpoints.ts`, services in `data-service.ts`, keys in `keys.ts`.

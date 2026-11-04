@@ -141,3 +141,246 @@ I confirmed findings 13 and 21 against `search.mjs`, and read the conversation s
 | 28 | Tests need private data; no owner for the answers | Partly applied | FR-045 says where the tests run. No owner named in the spec: the design leaves it to whoever contacts the institute, so it is flagged to the user |
 | 29 | Rollback timing would hide search on production | Applied | FR-036: parallel Meilisearch. Spec decision |
 | 30 | Sync lag on just-sent messages not listed | Applied | Accepted gap |
+
+# Plan reviews
+
+Three rounds, each a fresh reviewer given only file paths, no earlier findings.
+
+## Plan round 1
+
+37 findings. All verified against the code before applying, where the code decides.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| 1 | `isIndexableDocument` needs hydrated documents; moving it unchanged throws on change events | Applied | R-03: pure `isIndexableSource`, parity test |
+| 2 | Read plan recomputed per page from drifting `df` | Applied | R-06: frozen plan in the cursor |
+| 3 | Clearing `seen` at a window change duplicates | Applied | R-06: floor pinned, range re-reads |
+| 4 | `tieAfter` assumes `_id` order within a date | Applied | R-06: rows at the boundary date become their own `_id`-sorted window |
+| 5 | First page to cursor undefined; evidence covers a different read | Applied | R-06: page 1 from the read plan, then the paging reference's walk excluding page 1 |
+| 6 | `e` cannot stop a deleted record coming back | Applied | R-09: 24-hour tombstones. Rejected re-reading the source per write as more reads for the same guard |
+| 7 | Hydration checks conversations only | Applied | R-03: `getSearchableMessages` |
+| 8 | Reconcile cannot meet "never overwrite newer" | Applied | R-11: compare-and-set, insert-only |
+| 9 | Nothing invalidates a verification pass | Applied | R-11: `passedAt` later than `invalidatedAt`, set by the writer's config poll |
+| 10 | R-02 ships data in tenant images before the answers | Applied | R-02, plan stages 0 and 8 |
+| 11 | Single-flight conflicts with per-request cancel | Applied | R-08: refcounted waiters |
+| 12 | Exact verification not computable | Applied | R-11: by ID, age from source `_id`, recheck mismatches |
+| 13 | Models create collections with data off | Applied | `autoCreate: false`; quickstart asserts it |
+| 14 | Error codes lost; seams overlap | Applied | R-03: one flow per surface, `SearchError` passes both catches |
+| 15 | Meilisearch bookkeeping floods the stream | Partly applied | R-09: in-writer skip. Rejected a server-side `$match`: `findOneAndUpdate` sets `_meiliIndex` beside real edits, so it would drop them. Rehearsal on a snapshot clone |
+| 16 | Word list rebuild not implementable | Applied | R-10: generations, atomic flip |
+| 17 | SC-008 and FR-038 have no source | Applied | R-14: APM and log filters, stage 7 exit |
+| 18 | Backfill pause has no actor | Applied | R-11: `pause`, `resume` jobs, owner issues them |
+| 19 | FR-011 re-run has no lever | Applied | `rank.lengthBucket`, R-18 |
+| 20 | Synthetic probes have no home | Applied | R-14, `shadow/probe.ts` |
+| 21 | FR-023's fallback absent | Applied | R-17 |
+| 22 | `/enable` omits pack failure | Applied | contracts/http.md |
+| 23 | Spec-assigned tests missing | Applied | quickstart |
+| 24 | Config plumbing missing; writer never re-reads | Applied | R-03, R-09, contracts/config.md |
+| 25 | `isLargestUser` has no field | Applied | `shadow.largestUserId`; plain ID in tenant config, simpler than a hash |
+| 26 | Language enum contradicts SC-016 | Applied | String array, validated in the service |
+| 27 | http.md header conflicts with FR-043 | Applied | Each section scoped |
+| 28 | Shadow telemetry cannot produce its fields | Applied | `search.request` from both paths; `meiliMs` dropped |
+| 29 | Tenant model inconsistent on a shared database | Applied | R-04: one tenant per database, writer pins it |
+| 30 | `indexSync` wording contradicts the hold | Applied | R-03: keyed on Meilisearch being configured |
+| 31 | Reconcile and drop state underspecified | Applied | R-11 |
+| 32 | New levers without config fields | Applied | contracts/config.md |
+| 33 | Stream bypasses the database boundary | Applied | `watchSearchSources` in `data-schemas` |
+| 34 | Startup claim partly false | Applied | R-15: cached status; plan table corrected |
+| 35 | Default cap exceeds the cursor floor | Applied | Default 2, shadow 1, formula in R-16 |
+| 36 | Smaller details (budget, cursor size, forged cursors, stage order, vocabulary index, pack interface, stop list, wording) | Applied | R-06, R-10, R-16, plan, language-pack.md, data-model.md |
+| 37 | "Our tenants set 200" describes fleet settings | Applied | Removed from config.md. No names found |
+
+## Plan round 2
+
+33 findings.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| 1 | Cursor exposes the tenant word list; forgery undetectable | Applied | R-06: AES-GCM, key by HKDF, user as associated data |
+| 2 | Invalidation misses shadow aborts and restart flips | Applied | R-11: `observed` compared at each process start |
+| 3 | Polling cannot see YAML changes | Applied | R-19: process snapshot, rolling restart. Verified at `app/service.ts` |
+| 4 | `req` close aborts shadow on normal responses | Applied | R-03: `res` close with `writableFinished` false |
+| 5 | Temporary-chat records can still be written in a race | Applied | R-09: tombstone on the transition. Rejected tombstoning every non-indexable write: volume, and it adds nothing for sources that were never indexable |
+| 6 | Frozen plan conflicts with the stop rule | Applied | R-06: prefix read once when first reached, then frozen; independent oracle |
+| 7 | 8 KB cursor bound false; nginx limit | Applied | `rankWindow` max 200, 5-byte hashes, 7.5 KB URL test. Verified nginx default is unset |
+| 8 | React Query retries and focus refetch | Applied | R-15 |
+| 9 | Pre-rollback cursor returns an empty 200 | Applied | `s1.` prefix rejected on the Meilisearch branch |
+| 10 | No place for failure states | Applied | plan.md tree, R-15 |
+| 11 | `singleBatch` can truncate silently | Applied | R-06: reads never project `tokens`; chunked fetch for scoring |
+| 12 | Generation delete races the cache | Applied | R-10: delayed delete |
+| 13 | False claim of no metrics | Applied | R-14: `metrics.ts` used for chat save and route figures. Search keeps log events, as `/metrics` may not be scraped everywhere |
+| 14 | Unchanged `h` leaves `e` low | Applied | R-09: replay raises `e` |
+| 15 | Tombstone shape, volume, repair blocked | Applied | R-09, R-11, data-model.md |
+| 16 | Stalled writer raises no alarm | Applied | `search.sync_status` |
+| 17 | Re-run contaminates the gate; extra field | Applied | Separate `panel-rerun:` key, no date, cleared at logout |
+| 18 | Runbook arrives too late | Applied | Sections before stages 2 and 5 |
+| 19 | Verification loop drops reconcile | Applied | R-11 |
+| 20 | Title path reads outside the cap, unmeasured | Applied | Shared expansions, R-05 row |
+| 21 | Shared read bounded by count, not memory | Applied | `sharedReadMaxBytes`, no `tokens` kept |
+| 22 | Rebuild cost unmeasured | Applied | R-05 row, bounded merge |
+| 23 | Abort checks only on the shadow tenant | Applied | Per-tenant entry check |
+| 24 | Failed pack holder stalls sync | Applied | R-09: lease needs loaded packs |
+| 25 | Tenant pin undefined for tenantless rows | Applied | R-04 |
+| 26 | Rollback timing not scheduled | Applied | Stage 7 exit, quickstart |
+| 27 | `is` contract run unnamed | Applied | quickstart §2 |
+| 28 | `$nor` fallback can lose matches | Applied | R-05: walk windows, costs reads, not matches |
+| 29 | Context adds a read on the load path | Applied | R-19: none is added |
+| 30 | Hibernating tenants block stage 2's exit | Applied | Stage 2 |
+| 31 | Hard-coded levers | Partly applied | Config fields added. Rejected for the auto-fetch count, a UI constant with no operator use, and the heartbeat, derived from takeover time |
+| 32 | Backfill duty cycle | Applied | Delay 1,000 ms, about 22% of a core, measured on the first backfill. Rejected a worker thread until that measurement says it is needed |
+| 33 | Truncation and cold state unobservable | Applied | `vocabRowsTruncated`, `coldAfterIdle` defined |
+
+## Plan round 3
+
+22 findings and 3 simplifications.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| 1 | Oversized change event stalls sync | Applied | R-09: `$project`, treated as a gap. The `_meili*` skip now keys on `_meiliIndex: true` |
+| 2 | Paging undefined for several common tokens | Applied | R-06: jobs walked one at a time, so reads stay in index order |
+| 3 | Cap of 2 rejects one typing user; shadow hides it | Applied | Default 4, shadow 4, `signal` passed from the client. Rejected adding a gate measure: FR-033's drop share already shows it |
+| 4 | "Top 200" has no defined path | Applied | R-13: the ranked shared read at `sidebarLimit` 200, the reference's semantics |
+| 5 | Backfill could precede its alarms and baseline | Applied | New stage 8 |
+| 6 | Unbatched stream writes | Applied | R-09: one pass per batch |
+| 7 | Archived Chats is a search surface | Applied | Verified `ArchivedChatsTable.tsx`. plan, R-03, R-15 |
+| 8 | Read cost understated | Applied | R-06, R-08: lazy masks, parallel hydration, no shared flags |
+| 9 | Worst-case URL ignores query text | Applied | R-06: 256 characters on a cursor request; 414 maps to restart |
+| 10 | Window overflow gets stuck | Applied | R-06 |
+| 11 | FR-034, FR-040, FR-031 reruns have no place | Applied | Release checklist, stage 10 entry |
+| 12 | Alarm contract overpromises; sources disagree | Applied | telemetry.md: one source per measure |
+| 13 | Analyzer check timing contradicts itself | Applied | Removed poll; runbook reconcile after deploy. Rejected refusing the lease by version order: hashes have no order, and reconcile already heals it |
+| 14 | Shadow title reads uncapped | Applied | R-12 |
+| 15 | `attributionUntilReanalyzed` has no owner | Applied | R-11 |
+| 16 | Code claim corrections | Applied | `messageId` keying, sidebar path, catch wording, export |
+| 17 | Code locations conflict | Applied | `utils/searchError.ts`, `app/search.ts` |
+| 18 | `updateDescription` fallback incomplete | Applied | R-05, R-09 |
+| 19 | Sandbox question on database-level watch | Applied | R-05 |
+| 20 | Crash windows in job state | Applied | `pass` field; the generation one went with S2 |
+| 21 | FR-036 clone differs from the spec's wording | Partly applied | Kept the clone. The spec is not changed here: flagged to the user |
+| 22 | Implementer guesses | Partly applied | Secret, replay horizon, data directory default, sha512 at load, new-word scenario. The TTL index item went with S1. R-18's text stays, with logout clearing kept as a requirement |
+| S1 | Replace tombstones with a post-write source check | Applied | R-09. It removes a TTL index, optional fields and skip rules. Residual: a crash in a rare window leaves an orphan that cannot show and reconcile removes |
+| S2 | Replace word list generations | Applied | R-10: keeps §9's `_id: token` and removes a cached read per search |
+| S3 | Simplify the panel re-run | Partly applied | R-18: config flip and `panelRound` replace the `variant` parameter. Kept the local list of rated queries, as a session-only list would not survive the restart |
+
+# Tasks reviews
+
+Three rounds, each a fresh reviewer given only file paths, no earlier findings.
+
+## Tasks round 1
+
+33 findings, with 4 low items in the last.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| 1 | Lighthouse cannot run against the clone | Applied | T012: `LIGHTHOUSE_MONGO_URI`. Verified the lane hard-sets memory Mongo |
+| 2 | Pack helpers under `__tests__/` fail Jest | Applied | `__tests__/helpers/` |
+| 3 | Private suite would run in public CI | Applied | T004. Verified `packages/api/jest.config.mjs` |
+| 4 | Service cannot be built where T052 said | Applied | T030 lazy port, T064 in server entry points |
+| 5 | `search` still overridable | Applied | T015, T017. Verified `BASE_ONLY_CONFIG_SECTIONS` |
+| 6 | Index and record builder missing before Phase 6 | Applied | T028, T031, T032 |
+| 7 | Nothing runs the jobs | Applied | T106. Decision: backfill starts by request |
+| 8 | Engine gate skippable | Applied | Graph, gates |
+| 9 | Licence gate on the wrong task | Applied | T123 with `languages: [en]` until answers |
+| 10 | Sandbox timing contradicts the plan | Applied | T010 before Phases 4 and 6 |
+| 11 | Telemetry events have no emitter | Applied | Named in each owning task |
+| 12 | Reads and ranking have no public test | Applied | T050, T068 |
+| 13 | Title search depends on later tasks | Applied | T056, T074 |
+| 14 | `readConcurrency` never named | Applied | T048, T052, T058 |
+| 15 | `is` pack spec missing methods | Applied | T044, query parity in T045 |
+| 16 | Attribution has no source after a disable | Applied | T097, T110, R-11 |
+| 17 | Panel and attribution gaps | Applied | T092, T108, T113 to T115 |
+| 18 | Post-deploy reconcile not written down | Applied | T121 |
+| 19 | Probes have no schedule | Applied | T107 before T108, T119, T122 |
+| 20 | Public repository check never written | Applied | T006 |
+| 21 | Other surfaces still retry | Applied | T080 predicate, T083 to T085 |
+| 22 | Archived Chats omits partial | Applied | T084 |
+| 23 | Pack failure mapping unassigned | Applied | T059, T069 |
+| 24 | Edge cases with no test | Applied | T040, T049, T066, T078, T080, T086, T087 |
+| 25 | Early upstream check missing | Applied | T008 |
+| 26 | Wrong dependencies for US4 | Applied | T129 to T131 |
+| 27 | A test contradicts the design | Applied | T101 states the one read and no write; startup check moved to T100 and quickstart |
+| 28 | Live spec in the wrong package | Applied | T116 split |
+| 29 | Wrong `[P]` markers and order | Applied | Markers dropped; `version` before packs; rebuild before backfill |
+| 30 | Checks too late; wrong branch name | Applied | Every PR rule. Named `dev` or the maintainer's branch |
+| 31 | Quality suite inputs unspecified | Applied | T045, R-13: all by path, runner only committed |
+| 32 | Guesswork | Applied | `IS_DATA_SHA512`, T051, T075 |
+| 33 | Tasks too large | Partly applied | Split T046, T072, T080, T082, T087, T096, T101. Kept T108 and T122 whole: both are thin lists of one kind of thing |
+| Low | Unrequested files, secret reached for, duplicate codes, tree drift | Applied | Dropped `en/NOTICE.md` and README; T076 takes the secret; T019 imports codes; plan tree aligned |
+
+## Tasks round 2
+
+Task IDs below are as of this round; earlier rounds' IDs predate its renumbering.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| 1 | Phase 2 gate named a code task instead of the first live backfill | Applied | Phase 2, T135 |
+| 2 | Search data could run on an un-upgraded engine; T133 waited on the private image step | Applied: T133's tenant must be on 8.0, image step split out | T133, T132 |
+| 3 | FR-039's stream setup was documented but no task performed it | Applied, with entry checks | T131, T133, T135, T138 |
+| 4 | A test could not pass in the phase owning it (`nextCursor` before paging) | Applied: moved, and Phase 4 returns `null` | T054, T066, T072 |
+| 5 | Phase 4 and 5 checkpoints were false: no packs loaded, `/enable` still on Meilisearch health | Applied | T069, T070, T116 |
+| 6 | T036 had no named extensions and could not assert much in Phase 3 | Applied | T036 and its six extenders; Every PR |
+| 7 | T022 used T015's output with nothing ordering them | Applied: T015 updates merged code | T015 |
+| 8 | No script covered R-05, and T012 was oversized | Applied: confirmed by grep, split | T012, T013, T014 |
+| 9 | Upstream's checksum cannot match a trimmed copy; no task built the fold table | Applied: manifest hash, upstream's kept as provenance | T009, T049, R-02 |
+| 10 | Quality runner would change the word list and left sources and database unnamed | Applied | T046, T050, R-13, quickstart |
+| 11 | Shadow wiring had no paths or default-backend rule | Applied: no event on `meilisearch` | T099, T118, telemetry |
+| 12 | `panel/compare` needed hydration held in CJS | Applied: extraction | T120, plan |
+| 13 | `search.request` and `search.realtext` fields had no owners; three CloudWatch rows missing | Applied | T026, T068, T086, telemetry |
+| 14 | Inner share catch swallows errors into an empty result; only the outer was named | Applied | T075, T085 |
+| 15 | Parity test would fail on an unfinished row, since `buildIndexableQuery` has no such clause | Applied | T034, T056, R-03, quickstart |
+| 16 | No tenant context named for jobs; bulk path unnamed | Applied. Checking this also showed `tenantSafeBulkWrite` strips `tenantId` from update documents under `runAsSystem`, so upserted records would lose it: writes now run in the source's tenant scope | T101, T113, T114, T095, R-04 |
+| 17 | T008 was four units of work; FR-043's location unowned | Applied: split | T008, T009, T010, T011 |
+| 18 | T002 used a later file, no version pin, dynamic import unjustified | Applied | T002, T042, plan |
+| 19 | Record building preceded the analyzer | Applied: moved | T045, T046 |
+| 20 | Prework graph lacked edges | Applied | Dependencies |
+| 21 | Later-dependency and wrong `[P]` cases | Applied | T040, T106, T105, T119, T139, T140 |
+| 22 | Writer start split across three tasks | Applied: one startup path | T115, T108, T113 |
+| 23 | Token change at start not queued; job dispatch list missing | Applied | T106, T113 |
+| 24 | Destructive `drop` had no test | Applied | T096 |
+| 25 | R-18's second panel round had no UI | Applied | T123 |
+| 26 | Behaviours with no test: proximity, FR-008 fields, FR-019, sync gap, R-09 events, FR-041 client, retry wiring | Applied | T045, T055, T062, T074, T075, T076, T090 to T092, T093, T094, T099 |
+| 27 | Plan documents contradicted each other (6 items) | 5 applied. FR-036 versus the clone timing stays flagged to the owner rather than decided here | R-02, R-11, plan, gates |
+| 28 | T004's path did not match the pattern; `misc` suites were never typechecked | Applied | T004, T125, Rules |
+| 29 | Oversized or uncheckable tasks | Applied: split and given criteria | T043, T085, T124, T140 |
+
+## Tasks round 3
+
+Task IDs below are as of this round; earlier rounds' IDs predate its renumbering.
+
+| # | Finding | Outcome | Where |
+|---|---|---|---|
+| H1 | Private suites would still run in CI: the command-line ignore list replaces the config's, and the workflow filter omits `misc/` | Applied. Rests on Jest's documented behaviour and the file contents; T004's `--listTests` proves it when run | T004 |
+| H2 | A test added in round 2 said thinking text never reaches the output, contradicting FR-008 and the code | Applied: that test was the author's error | T048 |
+| H3 | No script runs B4 on DocumentDB, so §10 step 3 could not run as written | Applied: harness task, estimate raised | T012, T013, Strategy |
+| H4 | The `is` library imports `tokenize-is`, which the trim omitted, and is ESM-only while `packages/api` builds CJS | Applied | T008, T009, T052, T055, R-02 |
+| M1 | No task wrote the first `observed`, so an old verification pass could serve after an abort | Applied, with a no-seed test | T115, T124, R-11 |
+| M2 | SC-008's source named a series that does not exist: `Document.save` is not instrumented, and message saves use `findOneAndUpdate` | Applied | telemetry, T144 |
+| M3 | Retry and timeout covered only some reads, so a cursor error elsewhere became a 500 | Applied: one wrapper | T067, T080 |
+| M4 | `final/relevance.mjs` exports nothing, `final/oracle.mjs` is ESM and needs the full binary, and the inputs had no generator | Applied: files plus a grader run as a child process, because precision grades what the candidate returned | T016, T055, T076 |
+| M5 | SC-006 and SC-009 alarms were missing | Applied | telemetry, T143 |
+| M6 | The partial state had no component or accessibility test | Applied | T095, T097, T098, plan |
+| M7 | After-removal rehearsal departs from FR-036 with no decision task | Partly: task added; the decision is the owner's | T147 |
+| M8 | Stream setup "as it upgrades" contradicted the graph | Applied: before each backfill | T145 |
+| M9 | Query truncation was in the wrong file, and an NFD query could fail on page 2 | Applied: one rule | T087, T094, T078, T096 |
+| M10 | Panel compare was underspecified and untested | Applied | T107, T130 |
+| M11 | Word list upkeep had no test, and `df` decreases were left to guess | Applied: increments only | T112 |
+| M12 | Nobody ran the live suites before tenant work | Applied | T148 |
+| M13 | Seams left to guess though the code has answers | Applied | T038, T074, T093, T125, T133 |
+| M14 | `search.pack` success had no owner | Applied | T074 |
+| L1 to L7, L9 to L11 | Fold table checksum, deferred `is` checks, later-tenant entry, R-03's catch, quickstart's `_meili*`, live suite naming, limiter's place, ordering wording, lighthouse delay, TTL monitor | Applied | T009, T149, T151, T154, R-03, R-05, quickstart, plan, T019, T100 |
+| L8 | Round 2's reason was too broad: the wrapper leaves `replaceOne` and `insertOne` documents alone | Applied, and simplified: writes stay in `runAsSystem`, using only those two operations, and the tenant grouping is gone | T108, R-04 |
+| Tests | `search-job.js` `status` and `panel`, FR-008's no match on sender, user or ID | Applied | T123, T122, T048 |
+| Simplify | The chain rebuilt the word list twice | Applied: reconcile skips its `vocab` phase in the chain when it made no repairs. FR-027 and FR-028 still hold | T121, R-11 |
+| Size | T021, T052, T088, T120, T122, T130, T133, T142 too large; T010, T154, T160 had no finish | Applied: split, and given criteria | Those tasks, T155 |
+
+# Base change to `aproorg/0.8.8`
+
+The merge target changed after the task reviews. One fresh-context audit read every claim about existing code against `aproorg/0.8.8`, which lacks 710 commits the docs were written against. No tests ran.
+
+| Finding | Outcome | Where |
+|---|---|---|
+| PR base and static-check ref named `dev` | Applied | Every PR line, plan |
+| `privateText` does not exist on this base, so its test and sentinel proved nothing | Applied: `contextMeta` and tool output. Spec unchanged, FR-022 stays as the rule for any private copy added later | T048, T128, R-14, data-model, quickstart |
+| `/metrics` is absent from `experimental.js` | Applied | T144, telemetry |
+| Lighthouse database option was incomplete | Applied | T019 |
+| Dead references | Applied | R-02, R-03, R-15, R-19, research intro |
