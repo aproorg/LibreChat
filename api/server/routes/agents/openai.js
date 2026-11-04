@@ -46,6 +46,7 @@ const {
   requireRemoteAgentAuth,
   checkRemoteAgentsFeature,
 } = require('./middleware');
+const { applyRemoteHeaderPolicy } = require('./remoteHeaderPolicy');
 const db = require('~/models');
 
 const router = express.Router();
@@ -64,6 +65,7 @@ const eventBindingHandlers = createAgentEventBindingHandlers({
 
 router.use(preAuthTenantMiddleware);
 router.use(requireRemoteAgentAuth);
+router.use(applyRemoteHeaderPolicy);
 router.use(requireTermsAcceptance);
 router.use(configMiddleware);
 router.use(checkRemoteAgentsFeature);
