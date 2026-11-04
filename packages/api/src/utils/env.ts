@@ -114,7 +114,17 @@ export function encodeHeaderValue(value: string): string {
  * (`processMCPEnv`) is unaffected and still signals re-authentication.
  */
 export const OMIT_UNAVAILABLE_OPENID_HEADERS = 'omitUnavailableOpenIDHeaders' as const;
-type UnattendedOpenIDUser = { [OMIT_UNAVAILABLE_OPENID_HEADERS]?: boolean };
+/**
+ * Set on `req.user` for Agents API requests (`REMOTE_AGENTS_OMIT_UNAVAILABLE_OPENID_HEADERS=true`).
+ * `federatedTokens` there is the remote caller's bearer, which is for LibreChat and must not reach
+ * model endpoints, yet MCP OBO still reads it. `resolveHeaders` therefore ignores the tokens
+ * (omitting credential headers) instead of the middleware deleting them.
+ */
+export const IGNORE_OPENID_TOKENS_IN_HEADERS = 'ignoreOpenIDTokensInHeaders' as const;
+type UnattendedOpenIDUser = {
+  [OMIT_UNAVAILABLE_OPENID_HEADERS]?: boolean;
+  [IGNORE_OPENID_TOKENS_IN_HEADERS]?: boolean;
+};
 
 export function createSafeUser(
   user: IUser | null | undefined,
@@ -150,6 +160,10 @@ export function createSafeUser(
 
   if ((user as UnattendedOpenIDUser)[OMIT_UNAVAILABLE_OPENID_HEADERS] === true) {
     (safeUser as UnattendedOpenIDUser)[OMIT_UNAVAILABLE_OPENID_HEADERS] = true;
+  }
+
+  if ((user as UnattendedOpenIDUser)[IGNORE_OPENID_TOKENS_IN_HEADERS] === true) {
+    (safeUser as UnattendedOpenIDUser)[IGNORE_OPENID_TOKENS_IN_HEADERS] = true;
   }
 
   return safeUser;
@@ -315,6 +329,7 @@ function processSingleValue({
   isHeader = false,
   dbSourced = false,
   omitUnavailableOpenID = false,
+  ignoreOpenIDTokens = false,
 }: {
   originalValue: string;
   customUserVars?: Record<string, string>;
@@ -325,6 +340,8 @@ function processSingleValue({
   dbSourced?: boolean;
   /** Leave OpenID credential placeholders unresolved (for the caller to omit) instead of throwing when the tokens are unavailable */
   omitUnavailableOpenID?: boolean;
+  /** Treat the user's OpenID tokens as unavailable even when valid (header resolution only) */
+  ignoreOpenIDTokens?: boolean;
 }): string {
   // Type guard: ensure we're working with a string
   if (typeof originalValue !== 'string') {
@@ -364,7 +381,7 @@ function processSingleValue({
   value = processUserPlaceholders(value, user, isHeader);
 
   const openidTokenInfo = extractOpenIDTokenInfo(user);
-  if (openidTokenInfo && isOpenIDTokenValid(openidTokenInfo)) {
+  if (openidTokenInfo && !ignoreOpenIDTokens && isOpenIDTokenValid(openidTokenInfo)) {
     value = processOpenIDPlaceholders(value, openidTokenInfo);
   } else if (openidTokenInfo && omitUnavailableOpenID) {
     /** Credential placeholders stay literal so `resolveHeaders` omits the whole header */
@@ -653,6 +670,8 @@ export function resolveHeaders(options?: {
   const inputHeaders = headers ?? {};
   const omitUnavailableOpenID =
     (user as UnattendedOpenIDUser | undefined)?.[OMIT_UNAVAILABLE_OPENID_HEADERS] === true;
+  const ignoreOpenIDTokens =
+    (user as UnattendedOpenIDUser | undefined)?.[IGNORE_OPENID_TOKENS_IN_HEADERS] === true;
 
   const resolvedHeaders: Record<string, string> = { ...inputHeaders };
 
@@ -665,6 +684,7 @@ export function resolveHeaders(options?: {
         body,
         isHeader: true, // Important: Enable header encoding
         omitUnavailableOpenID,
+        ignoreOpenIDTokens,
       });
       if (!stripUnresolved && !omitUnavailableOpenID) {
         resolvedHeaders[key] = processed;

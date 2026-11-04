@@ -32,11 +32,13 @@ const {
   requireRemoteAgentAuth,
   checkRemoteAgentsFeature,
 } = require('./middleware');
+const { applyRemoteHeaderPolicy } = require('./remoteHeaderPolicy');
 
 const router = express.Router();
 
 router.use(preAuthTenantMiddleware);
 router.use(requireRemoteAgentAuth);
+router.use(applyRemoteHeaderPolicy);
 router.use(configMiddleware);
 router.use(checkRemoteAgentsFeature);
 
