@@ -35,6 +35,7 @@ export interface IUser extends Document {
   appleId?: string;
   plugins?: string[];
   openidIssuer?: string;
+  openidFederatedIdp?: string;
   twoFactorEnabled?: boolean;
   /**
    * When required enrollment promoted this account. Access tokens are stateless, so this is the
@@ -90,6 +91,8 @@ export interface IUser extends Document {
   updatedAt?: Date;
   /** Field for external source identification (for consistency with TPrincipal schema) */
   idOnTheSource?: string;
+  /** Entra `oid` linked for remote Agents API callers; unique across users */
+  remoteAgentOid?: string;
   tenantId?: string;
   /** Derived search tokens (see `~/utils/search`); `select: false`. */
   nameTokens?: string[];

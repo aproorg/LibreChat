@@ -40,6 +40,7 @@ const {
   findBalanceByUser,
   recordAuditEntry,
   createUserIfAbsent,
+  setOpenidFederatedIdp,
 } = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
@@ -650,6 +651,36 @@ function applyOpenIdClaimsRole(user, username, { role, adminRoleGranted, demoted
   user.role = role;
 }
 
+/** Federated-IdP recording is only needed when the Agents API oid linking is configured. */
+function isFederatedIdpLinkingConfigured() {
+  return (process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS ?? '').trim() !== '';
+}
+
+/**
+ * Federated IdP name from the verified ID-token `identities` claim (Cognito); undefined for
+ * native logins or anything malformed or inconsistent with `cognito:username`. May arrive as a JSON string.
+ * @param {Record<string, unknown>} claims
+ * @returns {string | undefined}
+ */
+function getFederatedIdp(claims) {
+  let identities = claims?.identities;
+  if (typeof identities === 'string') {
+    try {
+      identities = JSON.parse(identities);
+    } catch {
+      return undefined;
+    }
+  }
+  const name = Array.isArray(identities) ? identities[0]?.providerName : undefined;
+  if (typeof name !== 'string' || name === '') {
+    return undefined;
+  }
+  // `identities` may be end-user writable on native pool users; `cognito:username` is immutable and
+  // Cognito names federated users `<providerName>_<sub>`, so a native user cannot forge this pair.
+  const username = claims?.['cognito:username'];
+  return typeof username === 'string' && username.startsWith(`${name}_`) ? name : undefined;
+}
+
 /**
  * Process OpenID authentication tokenset and userinfo
  * This is the core logic extracted from the passport strategy callback
@@ -866,7 +897,14 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     }
   }
 
-  user = await updateUser(user._id, user);
+  // Never write back the Agents API link fields from this (possibly stale) copy: an operator unlink
+  // or a concurrent link must not be undone by a browser login.
+  const { remoteAgentOid: _linkedOid, openidFederatedIdp: _idp, ...userUpdate } = user;
+  user = await updateUser(user._id, userUpdate);
+  if (isFederatedIdpLinkingConfigured()) {
+    // Latest login wins: a native login (undefined) clears the recorded IdP.
+    await setOpenidFederatedIdp(user._id, getFederatedIdp(claims) ?? null);
+  }
   await recordIdpRoleChange({
     recordAuditEntry,
     userId: String(user._id),
