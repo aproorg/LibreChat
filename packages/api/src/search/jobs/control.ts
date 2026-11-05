@@ -1,6 +1,6 @@
 import type { SearchSourceCollection } from '@librechat/data-schemas';
 
-/** Why a job stopped early. Either way its saved position lets the next run carry on. */
+/** Why a job stopped early. The next run carries on from what the job saved. */
 export type JobStop = 'paused' | 'lost';
 export type JobOutcome = 'done' | JobStop;
 
@@ -14,6 +14,11 @@ export interface JobControl {
   /** The throttle between batches. */
   wait(): Promise<void>;
 }
+
+export const CHAIN_KEY = 'chain';
+export const VERIFICATION_KEY = 'verification';
+export const VOCAB_KEY = 'vocab';
+export const LEASE_KEY = 'lease';
 
 export const SOURCE_COLLECTIONS: readonly SearchSourceCollection[] = ['messages', 'conversations'];
 

@@ -258,6 +258,51 @@ describe('search job runner', () => {
       expect(await chain()).toMatchObject({ failures: 0 });
     });
 
+    it('saves a safe failure code, and no error text', async () => {
+      await seed();
+      const runner = createRunner(harness, {
+        methods: withMethods(harness, {
+          ensureSearchIndexes: () =>
+            Promise.reject(Object.assign(new TypeError('SENTINEL_FAILURE_TEXT'), { code: 13 })),
+        }),
+      });
+      await request('backfill');
+
+      await settle(runner, 3);
+
+      expect(await chain()).toMatchObject({ lastFailureCode: 'TypeError:13' });
+      expect(JSON.stringify(await chain())).not.toContain('SENTINEL_FAILURE_TEXT');
+      expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_FAILURE_TEXT');
+      expect(
+        harness.logged.find(({ event }) => event === '[search] Job failed')?.meta,
+      ).toMatchObject({
+        lastFailureCode: 'TypeError:13',
+      });
+    });
+
+    it('a backfill after a failed verify fills the gap, and verify then passes', async () => {
+      await seed();
+      const runner = createRunner(harness);
+      await request('backfill');
+      await settle(runner);
+      await harness.database.connection.db!.collection('msearch').deleteOne({});
+      await request('verify');
+      await settle(runner);
+      expect(await stateOf(harness, 'verification')).toMatchObject({
+        status: 'failed',
+        missing: 1,
+      });
+
+      await request('backfill');
+      await settle(runner, 5);
+
+      expect(await recordCount(harness, 'msearch')).toBe(3);
+      expect(await stateOf(harness, 'verification')).toMatchObject({
+        status: 'passed',
+        missing: 0,
+      });
+    });
+
     it('a new holder moving a step on clears a count it did not make', async () => {
       await seed();
       await request('backfill');
@@ -382,7 +427,11 @@ describe('search job runner', () => {
       await request('backfill');
       await runner.tick();
       const { requestId } = (await chain()) as unknown as { requestId: string };
-      await request('backfill');
+      /* Past the script, which refuses this while it can see the chain. */
+      await harness.methods.writeSearchState('jobRequest:late', {
+        job: 'backfill',
+        requestedAt: new Date(),
+      });
 
       await settle(runner);
 

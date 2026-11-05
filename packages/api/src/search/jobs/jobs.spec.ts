@@ -613,6 +613,45 @@ describe('search jobs', () => {
       expect(await verification()).toMatchObject({ status: 'passed', otherVersion: 1 });
     });
 
+    it('a re-check keeps a passing tenant shown until its result, and clears old figures', async () => {
+      await load();
+      await verify();
+      const read = harness.methods.readSearchSources;
+      const during: Array<unknown> = [];
+      const methods = withMethods(harness, {
+        readSearchSources: async (params) => {
+          during.push(await verification());
+          return read(params);
+        },
+      });
+
+      await verify(methods);
+
+      expect(during[0]).toMatchObject({ status: 'passed', running: true });
+      expect(await verification()).toMatchObject({ status: 'passed', running: false });
+    });
+
+    it('a failed result is replaced by clean figures when the next walk starts', async () => {
+      const row = sourceMessage({ text: 'kerfi' });
+      await load([row]);
+      await dropRecord('msearch', row._id);
+      await verify();
+      expect(await verification()).toMatchObject({ status: 'failed', missing: 1 });
+
+      const read = harness.methods.readSearchSources;
+      const during: Array<unknown> = [];
+      await verify(
+        withMethods(harness, {
+          readSearchSources: async (params) => {
+            during.push(await verification());
+            return read(params);
+          },
+        }),
+      );
+
+      expect(during[0]).toMatchObject({ status: 'pending', missing: 0, reason: null });
+    });
+
     it('a stale holder does not overwrite the result', async () => {
       await load();
 

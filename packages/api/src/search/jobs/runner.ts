@@ -9,7 +9,13 @@ import type { BackfillMethods } from './backfill';
 import type { SearchService } from '../service';
 import type { SearchMetrics } from '../metrics';
 import type { VerifyMethods } from './verify';
-import { BACKFILL_KEYS, JOB_STATE_READ, SOURCE_COLLECTIONS } from './control';
+import {
+  BACKFILL_KEYS,
+  CHAIN_KEY,
+  JOB_STATE_READ,
+  SOURCE_COLLECTIONS,
+  VERIFICATION_KEY,
+} from './control';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchLease } from '../sync/lease';
 import { runVocabRebuild } from './vocabRebuild';
@@ -22,10 +28,8 @@ export type SearchJobMethods = BackfillMethods &
   SearchLeaseMethods &
   Pick<SearchMethods, 'ensureSearchIndexes' | 'listSearchJobRequests' | 'deleteSearchState'>;
 
-const CHAIN_KEY = 'chain';
 /** The longest wait between attempts at a job that keeps failing. */
 const MAX_RETRY_DELAY_MS = 10 * 60_000;
-const VERIFICATION_KEY = 'verification';
 /** Fixed, so every restart of every process asks for the same one backfill. */
 const ON_START_REQUEST = 'jobRequest:backfill-on-start';
 
@@ -49,6 +53,16 @@ export interface SearchJobRunnerDeps {
   service: Pick<SearchService, 'jobAnalyzer'>;
   holder?: string;
   now?: () => number;
+}
+
+/**
+ * Enough to tell an outage from a refused write: an error class name and a numeric driver
+ * code. Never the message, which can echo submitted content.
+ */
+function safeFailureCode(error: unknown): string {
+  const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown };
+  const label = typeof name === 'string' && /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
+  return typeof code === 'number' ? `${label}:${code}` : label;
 }
 
 /** One step of the chain. A step is safe to run again, so a new holder restarts the one it finds. */
@@ -167,13 +181,14 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         }
       })
       .catch(async (error: unknown) => {
-        logger.warn('[search] Job failed', getSafeErrorMetadata(error));
+        const lastFailureCode = safeFailureCode(error);
+        logger.warn('[search] Job failed', { ...getSafeErrorMetadata(error), lastFailureCode });
         failures += 1;
         retryAt =
           failures > 1
             ? now() + Math.min(lease.heartbeatMs * 2 ** (failures - 1), MAX_RETRY_DELAY_MS)
             : 0;
-        await record({ failures, lastFailureAt: new Date(now()) });
+        await record({ failures, lastFailureAt: new Date(now()), lastFailureCode });
       })
       .finally(() => {
         active = null;

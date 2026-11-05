@@ -57,6 +57,24 @@ describe('search-job script', () => {
     expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
   });
 
+  it('writes no backfill request while a chain runs, and says why', async () => {
+    await harness.methods.writeSearchState('chain', { step: 'vocab' });
+
+    const { code, lines } = await run('backfill');
+
+    expect(code).toBe(0);
+    expect(lines.join()).toContain('already at step vocab');
+    expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+  });
+
+  it('warns when a request waits with no holder, and not when one holds', async () => {
+    expect((await run('verify')).lines.join()).toContain('No process holds the lease');
+
+    await harness.methods.writeSearchState('lease', { leaseUntil: new Date(NOW + 1000) });
+
+    expect((await run('verify')).lines.join()).not.toContain('No process holds the lease');
+  });
+
   it('refuses a request where search data was never on, and creates no collection', async () => {
     const db = harness.database.connection.db!;
     await db.dropDatabase();
@@ -128,7 +146,9 @@ describe('search-job script', () => {
       expect(text).toContain('messages: running  processed 1000 of about 3000');
       expect(text).toContain('rate 100/s');
       expect(text).toContain(new Date(NOW + 20_000).toISOString());
-      expect(text).toContain('verify: failed  reason mismatch  mismatched users 2  missing 3');
+      expect(text).toContain(
+        'verify: failed  checked -  reason mismatch  mismatched users 2  missing 3',
+      );
     });
 
     it('still reports progress when the tenant read fails', async () => {
@@ -149,6 +169,72 @@ describe('search-job script', () => {
       const text = formatSearchJobStatus(status).join('\n');
       expect(text).toContain('distinct tenantId values: not read');
       expect(text).toContain('failed attempts: 3');
+    });
+
+    it.each([
+      ['no chain', {}, 'next: run backfill'],
+      [
+        'a request and no holder',
+        { 'jobRequest:a': { job: 'backfill' } },
+        'no process holds the lease',
+      ],
+      [
+        'a request and a holder',
+        { 'jobRequest:a': { job: 'backfill' }, lease: { leaseUntil: new Date(NOW + 1000) } },
+        'picks up the request',
+      ],
+      [
+        'paused',
+        { chain: { step: 'backfill' }, 'backfill:messages': { pause: true } },
+        'next: run resume',
+      ],
+      ['no holder', { chain: { step: 'vocab' } }, 'no process holds the lease'],
+      [
+        'retrying',
+        {
+          chain: { step: 'vocab', failures: 2 },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        '[search] Job failed',
+      ],
+      [
+        'failed verify',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'failed',
+            reason: 'mismatch',
+            missing: 1,
+            missingIds: ['abc123'],
+          },
+        },
+        'run backfill to fill the gaps',
+      ],
+    ])('names the next action: %s', async (_name, state, expected) => {
+      for (const [key, fields] of Object.entries(state)) {
+        await harness.methods.writeSearchState(key, fields as Record<string, unknown>);
+      }
+
+      const { lines } = await run('status');
+
+      expect(lines[lines.length - 1]).toContain(expected);
+    });
+
+    it('prints the failure code and the sample of missing IDs', async () => {
+      await harness.methods.writeSearchState('chain', {
+        step: 'verify',
+        failures: 1,
+        lastFailureCode: 'MongoServerError:13',
+      });
+      await harness.methods.writeSearchState('verification', {
+        status: 'failed',
+        missingIds: ['abc123'],
+      });
+
+      const text = (await run('status')).lines.join('\n');
+
+      expect(text).toContain('MongoServerError:13');
+      expect(text).toContain('abc123');
     });
 
     it('does not walk the sources for tenants while a chain is running', async () => {

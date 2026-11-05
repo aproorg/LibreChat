@@ -5,7 +5,13 @@ import type {
 } from '@librechat/data-schemas';
 import type { JobControl, JobOutcome } from './control';
 import type { SearchMetrics } from '../metrics';
-import { BACKFILL_KEYS, JOB_STATE_READ, objectIdFloor, SOURCE_COLLECTIONS } from './control';
+import {
+  BACKFILL_KEYS,
+  JOB_STATE_READ,
+  objectIdFloor,
+  SOURCE_COLLECTIONS,
+  VERIFICATION_KEY,
+} from './control';
 import { belongsInSearch } from '../sync/record';
 
 export type VerifyMethods = Pick<
@@ -19,7 +25,6 @@ export type VerifyMethods = Pick<
   | 'readSearchRecordIdsIn'
 >;
 
-const VERIFICATION_KEY = 'verification';
 /** Only sources older than this at the snapshot count (R-11). */
 const MIN_AGE_MS = 60_000;
 /** A sample for the operator: IDs only, and a mass failure must not grow the state document. */
@@ -77,10 +82,22 @@ export async function runVerify({
   now = Date.now,
 }: VerifyDeps): Promise<JobOutcome> {
   const snapshotAt = now();
+  const previous = await methods.readSearchState(VERIFICATION_KEY, JOB_STATE_READ);
+  /* A re-check of a passing tenant keeps search shown: only its result can take it away. */
   await methods.writeSearchState(VERIFICATION_KEY, {
-    status: 'pending',
+    status: previous?.status === 'passed' ? 'passed' : 'pending',
+    running: true,
     snapshotAt: new Date(snapshotAt),
     rounds: round,
+    reason: null,
+    checked: 0,
+    missing: 0,
+    missingIds: [],
+    orphans: 0,
+    changedSinceBackfill: 0,
+    analysisFailures: 0,
+    otherVersion: 0,
+    mismatchedUsers: 0,
   });
 
   const tally: VerifyTally = {
@@ -99,6 +116,7 @@ export async function runVerify({
     }
     await methods.writeSearchState(VERIFICATION_KEY, {
       ...figures(tally),
+      running: false,
       status,
       reason,
       finishedAt: new Date(now()),
@@ -192,6 +210,7 @@ async function walkCollection({
       tally,
     );
 
+    await methods.writeSearchState(VERIFICATION_KEY, { checked: tally.checked });
     if (rows.length === 0) {
       return 'done';
     }

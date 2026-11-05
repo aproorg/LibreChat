@@ -1,8 +1,7 @@
 import type { SearchStateEntry } from '@librechat/data-schemas';
 import type { SearchService, SearchServiceMethods } from '../service';
 import { getSafeErrorMetadata } from '~/utils/errors';
-
-const VERIFICATION_KEY = 'verification';
+import { VERIFICATION_KEY } from '../jobs/control';
 
 export interface SearchStatus {
   /** The `search` row of `/enable`, or `null` where another backend keeps today's check. */

@@ -1,6 +1,6 @@
 import type { SearchMethods, SearchSourceCollection } from '@librechat/data-schemas';
 import type { JobControl, JobOutcome } from './control';
-import { JOB_STATE_READ, SOURCE_COLLECTIONS } from './control';
+import { JOB_STATE_READ, SOURCE_COLLECTIONS, VOCAB_KEY } from './control';
 
 export type VocabRebuildMethods = Pick<
   SearchMethods,
@@ -12,7 +12,6 @@ export type VocabRebuildMethods = Pick<
   | 'settleSearchVocab'
 >;
 
-const VOCAB_KEY = 'vocab';
 /**
  * Distinct tokens held before a flush. It bounds memory per process rather than serving as a
  * tuning lever: `jobs.batchSize` and `batchDelayMs` already set the load.
@@ -52,6 +51,7 @@ export async function runVocabRebuild({
       run,
       phase,
       lastId: null,
+      walked: 0,
       status: 'running',
       startedAt: new Date(now()),
     });
@@ -59,6 +59,12 @@ export async function runVocabRebuild({
 
   const save = (fields: { phase?: Phase; lastId: string | null }) =>
     methods.writeSearchState(VOCAB_KEY, fields);
+  /* Apart from the position, which moves only at a flush, so a long walk still shows it is alive. */
+  let walked = typeof saved?.walked === 'number' && resuming ? saved.walked : 0;
+  const noteProgress = (rows: number) => {
+    walked += rows;
+    return methods.writeSearchState(VOCAB_KEY, { walked, walkedAt: new Date(now()) });
+  };
 
   for (const collection of SOURCE_COLLECTIONS) {
     if (PHASES.indexOf(phase) > PHASES.indexOf(collection)) {
@@ -89,6 +95,7 @@ export async function runVocabRebuild({
         }
       }
       lastId = rows[rows.length - 1]._id;
+      await noteProgress(rows.length);
       if (counts.size >= MAX_COUNTS_IN_MEMORY) {
         if (!control.holds()) {
           return 'lost';
@@ -128,6 +135,7 @@ export async function runVocabRebuild({
     });
     lastId = rows[rows.length - 1].token;
     await save({ lastId });
+    await noteProgress(rows.length);
     await control.wait();
   }
 
