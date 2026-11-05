@@ -82,6 +82,10 @@ const ENV_KEYS = [
   'OPENID_ROLE_SYNC_ROLE_PRIORITY',
   'OPENID_ROLE_SYNC_FALLBACK_ROLE',
   'PROXY',
+  'OPENID_ISSUER',
+  'REMOTE_AGENTS_LINK_LOGIN_ACCOUNT_BY_OID',
+  'REMOTE_AGENTS_LINK_EMAIL_DOMAINS',
+  'REMOTE_AGENTS_LINK_FEDERATED_IDPS',
 ] as const;
 
 type AgentAuthConfig = NonNullable<NonNullable<TAgentsEndpoint['remoteApi']>['auth']>;
@@ -95,6 +99,7 @@ type FindUserCondition = {
   openidId?: FindUserValue;
   openidIssuer?: FindUserValue;
   idOnTheSource?: FindUserValue;
+  remoteAgentOid?: FindUserValue;
   $or?: FindUserCondition[];
 };
 type FindUserQuery = FindUserCondition & { $or?: FindUserCondition[] };
@@ -114,6 +119,10 @@ const originalEnv = ENV_KEYS.reduce<Record<(typeof ENV_KEYS)[number], string | u
     OPENID_ROLE_SYNC_ROLE_PRIORITY: undefined,
     OPENID_ROLE_SYNC_FALLBACK_ROLE: undefined,
     PROXY: undefined,
+    OPENID_ISSUER: undefined,
+    REMOTE_AGENTS_LINK_LOGIN_ACCOUNT_BY_OID: undefined,
+    REMOTE_AGENTS_LINK_EMAIL_DOMAINS: undefined,
+    REMOTE_AGENTS_LINK_FEDERATED_IDPS: undefined,
   },
 );
 
@@ -207,6 +216,12 @@ function matchesCondition(user: IUser, condition: FindUserCondition): boolean {
   ) {
     return false;
   }
+  if (
+    condition.remoteAgentOid !== undefined &&
+    !matchesValue(user.remoteAgentOid, condition.remoteAgentOid)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -225,10 +240,12 @@ function makeDeps(appConfig: AppConfig = makeConfig()) {
   return {
     findUser: makeFindUser(makeUser()),
     updateUser: jest.fn(),
+    linkRemoteAgentOid: jest.fn().mockResolvedValue(true),
     getRolesByNames: jest.fn(async (roleNames: string[]) =>
       roleNames.map((roleName) => ({ name: roleName })),
     ),
     isPrincipalActive: jest.fn().mockResolvedValue(true),
+    hasCapability: jest.fn().mockResolvedValue(false),
     getAppConfig: jest.fn().mockResolvedValue(appConfig),
     apiKeyMiddleware: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
   };
@@ -993,6 +1010,389 @@ describe('createRemoteAgentAuth', () => {
         }),
       );
       expect(mockNext).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('linking a remote OIDC caller to the login account by oid', () => {
+    const LOGIN_ISSUER = 'https://cognito-idp.example.com/pool';
+    const TENANT_GUID = '00000000-0000-0000-0000-0000000000aa';
+    const ENTRA_ISSUER = `https://login.microsoftonline.com/${TENANT_GUID}/v2.0`;
+    const OID = '11111111-0000-0000-0000-000000000001';
+    const payload = {
+      sub: 'entra-pairwise-sub',
+      oid: OID,
+      tid: TENANT_GUID,
+      preferred_username: 'alice@example.com',
+    };
+
+    const cognitoUser = (overrides: Partial<IUser> = {}) =>
+      makeUser({
+        email: 'alice@example.com',
+        openidId: 'cognito-sub',
+        openidIssuer: LOGIN_ISSUER,
+        emailVerified: true,
+        openidFederatedIdp: 'Entra',
+        ...overrides,
+      });
+
+    const enable = (domains = 'example.com') => {
+      process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = 'Entra';
+      process.env.OPENID_ISSUER = LOGIN_ISSUER;
+      process.env.REMOTE_AGENTS_LINK_LOGIN_ACCOUNT_BY_OID = 'true';
+      process.env.REMOTE_AGENTS_LINK_EMAIL_DOMAINS = domains;
+    };
+
+    const call = async (
+      user: IUser | IUser[],
+      tokenPayload: JwtPayload = payload,
+      deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false })),
+    ) => {
+      setupOidcMocks(tokenPayload);
+      deps.findUser = makeFindUser(...(Array.isArray(user) ? user : [user]));
+      const req = makeReq({ authorization: `Bearer ${FAKE_TOKEN}` });
+      const { res, status } = makeRes();
+      await createRemoteAgentAuth(asDeps(deps))(req as Request, res, mockNext);
+      return { deps, req, status };
+    };
+
+    const expectNoLink = (deps: ReturnType<typeof makeDeps>, status: jest.Mock) => {
+      expect(status).toHaveBeenCalledWith(401);
+      expect(deps.linkRemoteAgentOid).not.toHaveBeenCalled();
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    };
+
+    it('L1 flag off: Cognito-bound user is still rejected', async () => {
+      process.env.OPENID_ISSUER = LOGIN_ISSUER;
+      const { deps, status } = await call(cognitoUser());
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('L2 first call links by preferred_username and writes only remoteAgentOid', async () => {
+      enable();
+      const user = cognitoUser();
+      const { deps, req, status } = await call(user);
+      expect(status).not.toHaveBeenCalled();
+      expect(mockNext).toHaveBeenCalled();
+      expect(deps.linkRemoteAgentOid).toHaveBeenCalledTimes(1);
+      expect(deps.linkRemoteAgentOid).toHaveBeenCalledWith(user.id, OID);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+      expect((req.user as IUser).openidId).toBe('cognito-sub');
+      expect((req.user as IUser).idOnTheSource).toBeUndefined();
+      expect(logger.info).toHaveBeenCalledWith(
+        `[remoteAgentAuth] Linked remote OIDC oid to existing login account ${user.id}`,
+      );
+    });
+
+    it('linked steady-state call does not log the email or hit the email fallback', async () => {
+      enable();
+      const { status } = await call(cognitoUser({ remoteAgentOid: OID }));
+      expect(status).not.toHaveBeenCalled();
+      expect(JSON.stringify((logger.warn as jest.Mock).mock.calls)).not.toContain('alice@');
+    });
+
+    it('first link refused when the account has no recorded federated IdP', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ openidFederatedIdp: undefined }));
+      expect(status).toHaveBeenCalledWith(401);
+      expectNoLink(deps, status);
+    });
+
+    it('first link refused when the federated IdP is not in the allowed list (case-sensitive)', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ openidFederatedIdp: 'entra' }));
+      expectNoLink(deps, status);
+      const other = await call(cognitoUser({ openidFederatedIdp: 'Google' }));
+      expect(other.status).toHaveBeenCalledWith(401);
+      expectNoLink(other.deps, other.status);
+    });
+
+    it('linking is disabled when REMOTE_AGENTS_LINK_FEDERATED_IDPS is unset or empty', async () => {
+      enable();
+      delete process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS;
+      const unset = await call(cognitoUser());
+      expectNoLink(unset.deps, unset.status);
+      process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = ' , ';
+      const empty = await call(cognitoUser());
+      expect(empty.status).toHaveBeenCalledWith(401);
+      expectNoLink(empty.deps, empty.status);
+    });
+
+    it('native user who changed their email to a victim address cannot capture the first link', async () => {
+      enable();
+      // native pool login stores the self-set email; no identities claim -> no federated IdP
+      const attacker = cognitoUser({ email: 'victim@example.com', openidFederatedIdp: undefined });
+      const { deps, status } = await call(attacker, {
+        ...payload,
+        preferred_username: 'victim@example.com',
+      });
+      expect(status).toHaveBeenCalledWith(401);
+      expectNoLink(deps, status);
+    });
+
+    it('first link of an ADMIN account is refused', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ role: 'ADMIN' }));
+      expect(status).toHaveBeenCalledWith(401);
+      expectNoLink(deps, status);
+    });
+
+    it('non-ASCII preferred_username folding onto an allowed address is not linked', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ email: 'karl@example.com' }), {
+        ...payload,
+        preferred_username: '\u212Aarl@example.com',
+      });
+      expect(status).toHaveBeenCalledWith(401);
+      expectNoLink(deps, status);
+    });
+
+    it('L3 second call resolves by oid even without a usable email or tid', async () => {
+      enable();
+      const { deps, req, status } = await call(cognitoUser({ remoteAgentOid: OID }), {
+        sub: 'entra-pairwise-sub',
+        oid: OID,
+      });
+      expect(status).not.toHaveBeenCalled();
+      expect((req.user as IUser).openidId).toBe('cognito-sub');
+      expect(deps.linkRemoteAgentOid).not.toHaveBeenCalled();
+    });
+
+    it('L4 disallowed email domain is rejected and nothing is written', async () => {
+      enable('other.is');
+      const { deps, status } = await call(cognitoUser());
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['subdomain', 'alice@evil.example.com'],
+      ['trailing dot', 'alice@example.com.'],
+      ['multiple @', 'x@example.com@evil.com'],
+      ['whitespace', 'alice@example.com '],
+    ])('rejects preferred_username with %s', async (_name, preferred_username) => {
+      enable();
+      const { deps, status } = await call(cognitoUser(), { ...payload, preferred_username });
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('spoofed email claim does not link when preferred_username is not allowed', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser(), {
+        ...payload,
+        preferred_username: 'alice@evil.com',
+        email: 'alice@example.com',
+        upn: 'alice@example.com',
+      });
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('tid mismatch does not link', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser(), {
+        ...payload,
+        tid: '11111111-1111-1111-1111-111111111111',
+      });
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('missing tid does not link', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser(), { ...payload, tid: undefined });
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it.each([[false], [undefined]])(
+      'links on first call when the stored account emailVerified is %s',
+      async (emailVerified) => {
+        enable();
+        const user = cognitoUser({ emailVerified });
+        const { deps, status } = await call(user);
+        expect(status).not.toHaveBeenCalled();
+        expect(deps.linkRemoteAgentOid).toHaveBeenCalledWith(user.id, OID);
+      },
+    );
+
+    it('refuses first link when the account stores a different Entra oid', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ idOnTheSource: 'victim-oid' }));
+      expectNoLink(deps, status);
+      expect(logger.warn).toHaveBeenCalledWith(
+        '[remoteAgentAuth] link refused: account stores a different Entra oid',
+      );
+    });
+
+    it('refuses linking when login issuer equals the remote issuer', async () => {
+      enable();
+      process.env.OPENID_ISSUER = ENTRA_ISSUER;
+      const { deps, status } = await call(
+        cognitoUser({ openidIssuer: ENTRA_ISSUER, idOnTheSource: 'victim-oid' }),
+      );
+      expectNoLink(deps, status);
+      expect(status).toHaveBeenCalledWith(401);
+    });
+
+    it('same login and remote issuer is never linked (no idOnTheSource on the victim)', async () => {
+      enable();
+      process.env.OPENID_ISSUER = ENTRA_ISSUER;
+      const { deps, status } = await call(cognitoUser({ openidIssuer: ENTRA_ISSUER }));
+      expectNoLink(deps, status);
+      expect(status).toHaveBeenCalledWith(401);
+    });
+
+    it('oid already on a non-login account never falls through to the email link', async () => {
+      enable();
+      const holder = makeUser({
+        email: 'holder@example.com',
+        openidId: 'holder-sub',
+        openidIssuer: 'https://other-idp.example',
+        remoteAgentOid: OID,
+      });
+      const { deps, status } = await call([holder, cognitoUser()]);
+      expectNoLink(deps, status);
+      expect(status).toHaveBeenCalledWith(401);
+    });
+
+    it('L5 account linked to a different oid is rejected and never overwritten', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser({ remoteAgentOid: 'someone-else' }));
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        '[remoteAgentAuth] link refused: account already linked to a different oid',
+      );
+    });
+
+    it('L6 account bound to another IdP is not linked', async () => {
+      enable();
+      const { deps, status } = await call(
+        cognitoUser({ openidIssuer: 'https://other-idp.example' }),
+      );
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('oid-matched account bound to another IdP is rejected', async () => {
+      enable();
+      const { deps, status } = await call(
+        cognitoUser({ remoteAgentOid: OID, openidIssuer: 'https://other-idp.example' }),
+      );
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('L7 token without oid is not linked', async () => {
+      enable();
+      const { deps, status } = await call(cognitoUser(), { ...payload, oid: undefined });
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['non-openid provider', { provider: 'local' }],
+      ['no openidId', { openidId: undefined }],
+    ])('L8 %s is not linked', async (_name, overrides) => {
+      enable();
+      const { deps } = await call(cognitoUser(overrides as Partial<IUser>));
+      expect(deps.linkRemoteAgentOid).not.toHaveBeenCalled();
+    });
+
+    it('L9 empty domain list disables linking even with the flag on', async () => {
+      enable('');
+      const { deps, status } = await call(cognitoUser());
+      expectNoLink(deps, status);
+      expect(deps.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('refuses (401) when the atomic write is rejected, e.g. duplicate oid on another account', async () => {
+      enable();
+      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+      deps.linkRemoteAgentOid.mockResolvedValue(false);
+      const { status } = await call(cognitoUser(), payload, deps);
+      expect(status).toHaveBeenCalledWith(401);
+      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('Linked remote OIDC'));
+    });
+
+    it('does not link when a later policy check rejects the request', async () => {
+      enable();
+      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+      deps.isPrincipalActive.mockResolvedValue(false);
+      const { status } = await call(cognitoUser(), payload, deps);
+      expect(status).toHaveBeenCalledWith(409);
+      expect(deps.linkRemoteAgentOid).not.toHaveBeenCalled();
+    });
+
+    it('concurrent first calls with two different oids link exactly one', async () => {
+      enable();
+      const user = cognitoUser();
+      // idempotent for the same oid, like the real linkRemoteAgentOid
+      const atomicLink = jest.fn(async (_id: string, oid: string) => {
+        if (user.remoteAgentOid !== undefined && user.remoteAgentOid !== oid) return false;
+        user.remoteAgentOid = oid;
+        return true;
+      });
+      // per-token payloads so the two in-flight calls cannot see each other's claims
+      const payloads: Record<string, JwtPayload> = {
+        'tok.a.a': { ...payload, oid: 'oid-a' },
+        'tok.b.b': { ...payload, oid: 'oid-b' },
+      };
+      setupOidcMocks(payload);
+      (jwt.decode as jest.Mock).mockImplementation((t: string) => ({
+        header: { kid: 'test-kid' },
+        payload: payloads[t],
+      }));
+      (jwt.verify as jest.Mock).mockImplementation(
+        (t: string, _k: string, _o: VerifyOptions, cb: JwtVerifyCallback) => cb(null, payloads[t]),
+      );
+      const run = async (t: string) => {
+        const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+        deps.findUser = makeFindUser(user);
+        deps.linkRemoteAgentOid = atomicLink;
+        const req = makeReq({ authorization: `Bearer ${t}` });
+        const { res, status } = makeRes();
+        await createRemoteAgentAuth(asDeps(deps))(req as Request, res, mockNext);
+        return status;
+      };
+      const [a, b] = await Promise.all([run('tok.a.a'), run('tok.b.b')]);
+      expect(atomicLink.mock.calls.map((c) => c[1]).sort()).toEqual(['oid-a', 'oid-b']);
+      expect([a, b].filter((s) => s.mock.calls.length === 0)).toHaveLength(1);
+      expect([a, b].filter((s) => s.mock.calls[0]?.[0] === 401)).toHaveLength(1);
+      expect(user.remoteAgentOid).toMatch(/^oid-[ab]$/);
+    });
+
+    it('refuses first link when the account holds ACCESS_ADMIN via a grant (non-ADMIN role)', async () => {
+      enable();
+      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+      deps.hasCapability.mockImplementation(
+        async (_u: unknown, cap: string) => cap === 'access:admin',
+      );
+      const { status } = await call(cognitoUser({ role: 'SUPERADMIN' }), payload, deps);
+      expectNoLink(deps, status);
+      expect(deps.hasCapability).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'SUPERADMIN' }),
+        'access:admin',
+      );
+    });
+
+    it('fails closed when the admin capability lookup throws', async () => {
+      enable();
+      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+      deps.hasCapability.mockRejectedValue(new Error('db down'));
+      const { status } = await call(cognitoUser(), payload, deps);
+      expectNoLink(deps, status);
+      expect(deps.hasCapability).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not run the capability check for an already-linked account', async () => {
+      enable();
+      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+      const { status } = await call(cognitoUser({ remoteAgentOid: OID }), payload, deps);
+      expect(status).not.toHaveBeenCalledWith(401);
+      expect(deps.hasCapability).not.toHaveBeenCalled();
     });
   });
 

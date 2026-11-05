@@ -34,6 +34,7 @@ export interface IUser extends Document {
   appleId?: string;
   plugins?: string[];
   openidIssuer?: string;
+  openidFederatedIdp?: string;
   twoFactorEnabled?: boolean;
   totpSecret?: string;
   backupCodes?: Array<{
@@ -74,6 +75,8 @@ export interface IUser extends Document {
   updatedAt?: Date;
   /** Field for external source identification (for consistency with TPrincipal schema) */
   idOnTheSource?: string;
+  /** Entra `oid` linked for remote Agents API callers; unique across users */
+  remoteAgentOid?: string;
   tenantId?: string;
   federatedTokens?: OIDCTokens;
   openidTokens?: OIDCTokens;

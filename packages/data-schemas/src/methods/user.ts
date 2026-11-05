@@ -47,6 +47,7 @@ export function createUserMethods(
     returnUser?: boolean,
   ) => Promise<mongoose.Types.ObjectId | Partial<IUser>>;
   updateUser: (userId: string, updateData: Partial<IUser>) => Promise<IUser | null>;
+  linkRemoteAgentOid: (userId: string, oid: string) => Promise<boolean>;
   claimSamlIdentity: (
     userId: string,
     samlId: string,
@@ -290,16 +291,43 @@ export function createUserMethods(
    */
   async function updateUser(userId: string, updateData: Partial<IUser>): Promise<IUser | null> {
     const User = mongoose.models.User;
-    const updateOperation = {
-      $set: updateData,
-      $unset: { expiresAt: '' }, // Remove the expiresAt field to prevent TTL
-    };
+    const $unset: Record<string, ''> = { expiresAt: '' }; // Remove the expiresAt field to prevent TTL
+    const { openidFederatedIdp, ...rest } = updateData;
+    const $set: Partial<IUser> = rest;
+    // Always reflects the most recent login: an absent value (native login) clears the field.
+    if ('openidFederatedIdp' in updateData) {
+      if (openidFederatedIdp) $set.openidFederatedIdp = openidFederatedIdp;
+      else $unset.openidFederatedIdp = '';
+    }
+    const updateOperation = { $set, $unset };
     const updated = await User.findByIdAndUpdate(userId, updateOperation, {
       new: true,
       runValidators: true,
     }).lean<IUser>();
     await invalidateAuthUserDocCache(userId);
     return updated;
+  }
+
+  /**
+   * Atomically sets `remoteAgentOid` only if the user has none (idempotent for the same oid). Returns false when the user is
+   * already linked, missing, or the oid belongs to another account (unique index).
+   */
+  async function linkRemoteAgentOid(userId: string, oid: string): Promise<boolean> {
+    const User = mongoose.models.User;
+    try {
+      const updated = await User.findOneAndUpdate(
+        { _id: userId, $or: [{ remoteAgentOid: { $exists: false } }, { remoteAgentOid: oid }] },
+        { $set: { remoteAgentOid: oid } },
+        { new: true },
+      ).lean<IUser>();
+      if (updated) {
+        await invalidateAuthUserDocCache(userId);
+      }
+      return updated != null;
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return false;
+      throw err;
+    }
   }
 
   /** Atomically updates a SAML user only when the incoming identity can claim the document. */
@@ -831,6 +859,7 @@ export function createUserMethods(
     countUsers,
     createUser,
     updateUser,
+    linkRemoteAgentOid,
     claimSamlIdentity,
     acceptTerms,
     searchUsers,

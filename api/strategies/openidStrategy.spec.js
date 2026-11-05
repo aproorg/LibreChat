@@ -1469,6 +1469,72 @@ describe('setupOpenId', () => {
     expect(user.avatar).toBe('/fake/path/to/avatar.png');
   });
 
+  describe('openidFederatedIdp from ID-token identities claim', () => {
+    const existing = { _id: 'existingId', provider: 'openid', email: 'test@example.com' };
+    const fed = { 'cognito:username': 'Entra_abc' };
+    const login = async (extraClaims, found = existing) => {
+      findUser.mockResolvedValue(found ? { ...found } : null);
+      return validate({
+        ...tokenset,
+        claims: () => ({ ...tokenset.claims(), ...fed, ...extraClaims }),
+      });
+    };
+    const written = () => updateUser.mock.calls.at(-1)[1];
+
+    it('records the provider name for a federated login', async () => {
+      const { user } = await login({
+        identities: [{ providerName: 'Entra', providerType: 'OIDC' }],
+      });
+      expect(user).toBeTruthy();
+      expect(written().openidFederatedIdp).toBe('Entra');
+    });
+
+    it('accepts identities delivered as a JSON string', async () => {
+      await login({ identities: JSON.stringify([{ providerName: 'Entra' }]) });
+      expect(written().openidFederatedIdp).toBe('Entra');
+    });
+
+    it('sets the field on newly created users', async () => {
+      await login({ identities: [{ providerName: 'Entra' }] }, null);
+      expect(createUser.mock.calls.at(-1)[0].openidFederatedIdp).toBe('Entra');
+    });
+
+    it('clears a previous value on a native login', async () => {
+      const { user } = await login({}, { ...existing, openidFederatedIdp: 'Entra' });
+      expect(user).toBeTruthy();
+      expect(written()).toHaveProperty('openidFederatedIdp', undefined);
+    });
+
+    it.each([
+      ['garbage string', 'not json'],
+      ['empty array', []],
+      ['non-string providerName', [{ providerName: 42 }]],
+      ['missing providerName', [{}]],
+      ['non-array object', { providerName: 'Entra' }],
+    ])('treats %s as native and still logs in', async (_name, identities) => {
+      const { user } = await login({ identities }, { ...existing, openidFederatedIdp: 'Entra' });
+      expect(user).toBeTruthy();
+      expect(written().openidFederatedIdp).toBeUndefined();
+    });
+
+    it('rejects forged identities on a native account (username lacks the provider prefix)', async () => {
+      await login(
+        { 'cognito:username': 'native-user', identities: [{ providerName: 'Entra' }] },
+        { ...existing, openidFederatedIdp: 'Entra' },
+      );
+      expect(written().openidFederatedIdp).toBeUndefined();
+    });
+
+    it('ignores identities that only appear in userinfo, not the ID token', async () => {
+      require('openid-client').fetchUserInfo.mockResolvedValueOnce({
+        sub: '1234',
+        identities: [{ providerName: 'Entra' }],
+      });
+      await login({}, { ...existing, openidFederatedIdp: 'Entra' });
+      expect(written().openidFederatedIdp).toBeUndefined();
+    });
+  });
+
   it('should not attempt to download avatar if picture is not provided', async () => {
     // Arrange – remove picture
     const userinfo = { ...tokenset.claims() };

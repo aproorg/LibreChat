@@ -550,6 +550,31 @@ async function applyOpenIdRoleSync({
 }
 
 /**
+ * Federated IdP name from the verified ID-token `identities` claim (Cognito); undefined for
+ * native logins or anything malformed or inconsistent with `cognito:username`. May arrive as a JSON string.
+ * @param {Record<string, unknown>} claims
+ * @returns {string | undefined}
+ */
+function getFederatedIdp(claims) {
+  let identities = claims?.identities;
+  if (typeof identities === 'string') {
+    try {
+      identities = JSON.parse(identities);
+    } catch {
+      return undefined;
+    }
+  }
+  const name = Array.isArray(identities) ? identities[0]?.providerName : undefined;
+  if (typeof name !== 'string' || name === '') {
+    return undefined;
+  }
+  // `identities` may be end-user writable on native pool users; `cognito:username` is immutable and
+  // Cognito names federated users `<providerName>_<sub>`, so a native user cannot forge this pair.
+  const username = claims?.['cognito:username'];
+  return typeof username === 'string' && username.startsWith(`${name}_`) ? name : undefined;
+}
+
+/**
  * Process OpenID authentication tokenset and userinfo
  * This is the core logic extracted from the passport strategy callback
  * Can be reused by both the passport strategy and proxy authentication
@@ -686,6 +711,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       name: fullName,
       idOnTheSource: userinfo.oid,
       openidIssuer,
+      openidFederatedIdp: getFederatedIdp(claims),
     };
 
     const balanceConfig = getBalanceConfig(appConfig);
@@ -699,6 +725,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     user.username = username;
     user.name = fullName;
     user.idOnTheSource = userinfo.oid;
+    user.openidFederatedIdp = getFederatedIdp(claims);
     if (email && email !== user.email) {
       user.email = email;
       user.emailVerified = userinfo.email_verified || false;
