@@ -110,8 +110,9 @@ api/server/index.js, experimental.js                  # start the sync writer; s
 api/server/index.js, experimental.js                  # create the service after config loads; bind the port; app.locals.search
 config/search-job.js                                  # new operator command: status, backfill, pause, resume, reconcile, verify, probe, panel, drop
 
-client/src/routes/Search.tsx                          # load-more, busy, stop-word, attribution, panel
-client/src/components/Search/                         # new: Attribution, BusyState, FailedState, PartialState, StopWordHint, LoadMore, CursorRestart, ShadowPanel
+client/src/routes/Search.tsx                          # load-more, busy, stop-word, panel
+client/src/components/Nav/SettingsTabs/About/          # attribution
+client/src/components/Search/                         # new: BusyState, FailedState, PartialState, StopWordHint, LoadMore, CursorRestart, ShadowPanel
 client/src/components/UnifiedSidebar/ConversationsSection.tsx  # partial, stop-word, busy and failed states
 client/src/components/Nav/SettingsTabs/General/ArchivedChatsTable.tsx # same states
 client/src/data-provider/queries.ts, packages/data-provider/src/data-service.ts # pass React Query's signal
@@ -129,7 +130,7 @@ Mirrors §10. Code steps can merge dark because the default configuration leaves
 
 | Stage | Work | Exit |
 |---|---|---|
-| 0. Operator prework | Message counts, Azure database, licence letters, private data copy (FR-031, FR-045) | Counts recorded. Licence answers tracked: no tenant image holds the data until they arrive, which gates stages 8 and 9 |
+| 0. Operator prework | Message counts, Azure database, private data copy (FR-031, FR-045) | Counts recorded. No tenant image holds the data until T146, which gates stages 8 and 9 |
 | 1. Sandbox | §10 step 3 on 8.0 and 5.0 planner v2, plus [R-05](research.md#r-05-what-the-sandbox-must-also-answer)'s additions, as scripts needing no application code | FR-031 stop rules read; defaults retuned in `contracts/config.md`; [R-17](research.md#r-17-if-the-sandbox-rules-out-change-streams) decided |
 | 2. Engine | Runbook's upgrade section first. Clone trial, compat specs, lighthouse, pre-upgrade snapshots, rollout in batches, with FR-031's halt rule | Every awake AWS tenant on one engine; a hibernating tenant upgrades on wake-up |
 | 3. Analyzer and packs | US4 contract, `is`, `en`, parity | SC-016; FR-007 parity on the corpus |
@@ -137,7 +138,7 @@ Mirrors §10. Code steps can merge dark because the default configuration leaves
 | 5. Sync, backfill, reconcile | Writer, lease, jobs; runbook's backfill section | Replica-set tests; live DocumentDB spec on the sandbox |
 | 6. Client and status | Load-more, states, attribution, `/enable` | Component tests, lighthouse |
 | 7. Shadow harness and runbook | Detached runner, panel, probes, metrics, alarms, remaining runbook sections | Quickstart scenarios on a non-production tenant; FR-046's cost recorded; after-removal rollback timed on a clone before stage 10 needs it |
-| 8. First live backfill | Entry: FR-045's answers; scrape on and named queries working; alarms attached; two weeks of SC-008 and SC-012 baseline; FR-046's cost recorded; SC-001 to SC-004 passing. Then search data on, backfill, reconcile | Verification passed on the shadow tenant |
+| 8. First live backfill | Entry: T146's image; scrape on and named queries working; alarms attached; two weeks of SC-008 and SC-012 baseline; FR-046's cost recorded; SC-001 to SC-004 passing. Then search data on, backfill, reconcile | Verification passed on the shadow tenant |
 | 9. Shadow | Entry: gate terms fixed. Two weeks on one tenant | SC-005 to SC-014 decided by the owner |
 | 10. Cutover and removal | Per-tenant entry: stage 8's checks, verified backfill, and SC-001 to SC-004 rerun if the analyzer or ranking changed (FR-034). Tenant by tenant, 30-day hold, removal | SC-015, SC-017 |
 

@@ -92,7 +92,7 @@ cd packages/api && npm run test:search-live
 
 ## 7. Operator path on a non-production tenant (US3, SC-017)
 
-Runs with `languages: [en]` until FR-045's answers arrive ([R-02](research.md#r-02-language-data-delivery)), with the `is` checks deferred to stage 8. Follow [runbook.md](runbook.md):
+Runs with `languages: [en]` until T146's image is ready ([R-02](research.md#r-02-language-data-delivery)), with the `is` checks deferred to stage 8. Follow [runbook.md](runbook.md):
 
 1. Turn search data on and request `node config/search-job.js backfill`. `status` shows progress; kill a process mid-way and confirm it resumes; pause and resume it.
 2. Confirm `/api/search/enable` stays Meilisearch-driven until `backend: search` and verification has passed.

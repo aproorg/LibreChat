@@ -37,10 +37,10 @@
 **Purpose**: Answers that can stop or reshape everything after them. T017 must finish before Phase 6 starts and before T021; the owner lifted it for Phase 4's code (see Blocking gates). T022 must finish before T151, and T149's tenant must already be on 8.0. T010 must finish before Phase 3 starts.
 
 - [ ] T007 [OP] Gather per-user message counts per tenant and identify the Azure deployments' database (§10 step 1, FR-031)
-- [ ] T008 [OP] Name an owner for the licence answers, then send the §11 questions: BÍN terms, CC BY-SA "Share", the licences of `lemma-is` and its `tokenize-is` dependency, whether `STOP_LEMMA`, `IS_STOP_EXTRA` and the function-verb block list count as BÍN-derived, and where FR-043's attribution must appear (FR-045)
+- [X] T008 [OP] Closed by owner decision, with no questions sent: the data is used under BÍN's published conditions, and `STOP_LEMMA`, `IS_STOP_EXTRA` and the function-verb block list are treated as BÍN-derived (FR-045). npm lists `lemma-is` and `tokenize-is` as MIT
 - [X] T009 [OP] Copy the private language data out of tree, trimmed per §9, including `node_modules/tokenize-is`, the one bare import in `lemma-is/dist/index.mjs`, in the copy and the manifest, and build `fold-table.bin` with `node foldtable.mjs build`. Record upstream's package checksums as provenance (FR-044), and a manifest sha512 over the delivered files for T052, since a trimmed directory cannot match upstream's checksum. T146 copies this built table rather than rebuilding it, so the check holds. No tenant image holds any of it until T011. The copy also holds `STOP_LEMMA`, `IS_STOP_EXTRA` and the function-verb block list, so they stay out of the public repository until T011 records otherwise. Use R-02's layout
 - [X] T010 [OP] Check upstream's own search direction before Phase 3 starts and record it. If upstream has shipped or announced a conflicting search, the owner decides in writing whether to continue (§9)
-- [ ] T011 [OP] Record FR-045's answers, including FR-043's attribution location, and update FR-043's surfaces if they differ. A negative answer stops tenant rollout and reopens the choice of language data. This stays open until the answers arrive and gates T146 and T151
+- [X] T011 [OP] Record the owner's decision in FR-043 and FR-045: the attribution goes in the About tab in Settings, and the data may enter tenant images but not this public repository
 - [ ] T012 [OP] Write the B4 DocumentDB harness in `search-experiments`, outside this repository, because the existing DocumentDB scripts run the earlier build and `final/` targets local Docker: a B4 loader, latency for the 100k, 20k and 2k users at each floor, both surfaces firing per user, stream load, and load-then-index time (§10 step 3)
 - [ ] T013 [OP] Run §10 step 3 in the sandbox on 8.0 and on 5.0 with planner v2, using T012's harness. Record the results in `specs/001-conversation-search/research.md` under R-05, without tenant data
 - [ ] T014 [OP] Write sandbox scripts for every [R-05](research.md#r-05-what-the-sandbox-must-also-answer) question in `search-experiments`, outside this repository, because no existing script covers them, including the `$nor` plan, `modifyChangeStreams`, the tie read and the word list rebuild
@@ -248,7 +248,7 @@
 - [ ] T129 [US3] Move the Meilisearch hydration in the `search` branch of `api/server/routes/messages.js` into `packages/api/src/search/http/meili.ts`, which the route calls, so the private-field stripping stays in one place. Default-backend tests stay unmodified
 - [ ] T130 [US3] Create `packages/api/src/search/shadow/panel.ts` and panel routes in `api/server/routes/search.js` per [contracts/http.md](contracts/http.md), with `panel/compare` calling `http/meili.ts` and running the new search under `shadow.maxConcurrent`. Verdicts stored under `panel:<round>:<uuid>` with only `verdict` and `knownMissed`. Add the `panel` tally to `config/search-job.js`
 - [ ] T131 [US3] Add `/api/search/meta` and panel endpoints to `packages/data-provider/src/api-endpoints.ts`, services to `data-service.ts` and keys to `keys.ts`, plus React Query hooks in `client/src/data-provider/`
-- [ ] T132 [US3] Create `client/src/components/Search/Attribution.tsx` and render it on `client/src/routes/Search.tsx` from `/api/search/meta`: FR-043's text verbatim in every locale with `https://bin.arnastofnun.is`, the surrounding label localized, with a focused test
+- [ ] T132 [US3] Create `client/src/components/Nav/SettingsTabs/About/Attribution.tsx` and render it in `client/src/components/Nav/SettingsTabs/About/About.tsx` from `/api/search/meta`: FR-043's text verbatim in every locale with `https://bin.arnastofnun.is`, the surrounding label localized, with a focused test
 - [ ] T133 [US3] Create `client/src/components/Search/ShadowPanel.tsx` and render it on `client/src/routes/Search.tsx`: localized side-by-side of the user's own search, keyboard usable, saying when the new search was dropped or failed, a Jotai toggle and a local rated-query atom via `client/src/store/jotai-utils.ts`, cleared on opt-out and at logout through `client/src/hooks/Config/useClearStates.ts` (FR-033, [R-18](research.md#r-18-fr-011s-panel-re-run)), with a focused test
 - [ ] T134 [US3] Add round 2 to `ShadowPanel.tsx`: list the rated queries, re-run each as the panellist's own search and record a new verdict, with a focused test
 - [ ] T135 [US3] Add `packages/data-schemas/misc/documentdb/search.documentdb.spec.ts` for the search data methods
@@ -268,12 +268,12 @@
 - [ ] T143 [OP] [US3] In the infrastructure repository: metric filters and CloudWatch alarms per [contracts/telemetry.md](contracts/telemetry.md), including the SC-006 p95 and SC-009 alarms (FR-035, FR-039, FR-040), the probe schedule, and a metric filter on tenant logs for the probe sentinels that trips SC-005's abort
 - [ ] T144 [OP] [US3] Turn on the `/metrics` scrape, and carry chat save p95 from the scrape to an alarm, so SC-008's abort threshold has a path. A tenant on `api/server/experimental.js` has no `/metrics`, so the entry check fails there. Confirm the query returns data
 - [ ] T145 [OP] [US3] Per tenant, before its backfill: run `modifyChangeStreams` on the source collections, raise change stream retention to 7 days, and record each tenant's value (FR-039)
-- [ ] T146 [OP] [US3] After T011, add the private image step placing the language data in the infrastructure repository
+- [ ] T146 [OP] [US3] Add the private image step placing the language data in the infrastructure repository
 - [ ] T147 [OP] [US3] Get the owner's written decision on FR-036: accept timing after-removal rollback on a snapshot clone of the shadow tenant's data, or amend the requirement. The spec says it is timed on the shadow tenant with new search serving; the plan uses a clone because resetting sync flags live would flood sync
 - [ ] T148 [OP] [US3] Run T135 and T136 on the sandbox and record the results under R-05, without tenant data. A failure stops T149 (stage 5's exit)
-- [ ] T149 [OP] [US3] On a non-production tenant already on 8.0 with streams set up (T145), run [quickstart.md](quickstart.md) §7 with `languages: [en]` if FR-045's answers have not arrived, deferring to T151 the `is` checks: pack load, tokens on real records, and attribution in the place T011's answers name. Include rollback before cutover and during the hold. Time after-removal rollback on a snapshot clone of the shadow tenant's data with a parallel Meilisearch, following T140's order, with live writes during the sync so T125's gate is proved under traffic
+- [ ] T149 [OP] [US3] On a non-production tenant already on 8.0 with streams set up (T145), run [quickstart.md](quickstart.md) §7 with `languages: [en]` if T146's image isn't ready, deferring to T151 the `is` checks: pack load, tokens on real records, and attribution in the About tab. Include rollback before cutover and during the hold. Time after-removal rollback on a snapshot clone of the shadow tenant's data with a parallel Meilisearch, following T140's order, with live writes during the sync so T125's gate is proved under traffic
 - [ ] T150 [OP] [US3] With private data, measure the `is` pack's memory and load time against §4's cost and startup with it on and off, before stage 8 (FR-046)
-- [ ] T151 [OP] [US3] Stage 8: with T022 done, T011's positive answers, T146's image, T007's shadow tenant chosen, streams set up on it (T145), SC-001 to SC-004 passing, working queries and alarms, two weeks of SC-008 and SC-012 baseline, and T150 recorded, turn search data on for the shadow tenant, then request backfill, see reconcile and verify pass, and run the `is` checks T149 deferred
+- [ ] T151 [OP] [US3] Stage 8: with T022 done, T146's image, T007's shadow tenant chosen, streams set up on it (T145), SC-001 to SC-004 passing, working queries and alarms, two weeks of SC-008 and SC-012 baseline, and T150 recorded, turn search data on for the shadow tenant, then request backfill, see reconcile and verify pass, and run the `is` checks T149 deferred
 - [ ] T152 [OP] [US3] Stage 9: the owner confirms the gate targets (§11 question 5), then `backend: shadow` for at least two weeks with the panel and probes. Record both §10 lists. The owner decides against SC-005 to SC-014 per FR-034
 - [ ] T153 [OP] [US3] Stage 10, first tenant: per-tenant entry checks, `backend: search`, 30-day hold under FR-035's thresholds, then remove Meilisearch and its volume together in the infrastructure repository (SC-015)
 - [ ] T154 [OP] [US3] Stage 10, the fleet: repeat T153 tenant by tenant, each with stage 8's entry checks, streams set up (T145) and a verified backfill first, until every tenant in scope has removed Meilisearch
@@ -309,7 +309,7 @@
 ```text
 Phase 1 Setup
   ├─► Phase 2 Operator prework
-  │     T007, T008, T009, T010 start now; T011 when the answers arrive
+  │     T007, T009, T010 start now; T008 and T011 are closed
   │     T012 ─► T013; T014 ─► T015; both ─► T017
   │     T009 ─► T016 ─► T013
   │     T007, T017, T018, T019, T020 ─► T021 ─► T022
@@ -320,7 +320,7 @@ Phase 1 Setup
               ├─► T157 US4 (after T069 and T125), T158 US4
               └─► T142, T143, T144, T145, T147, T148 ─► T149 ─► T150 ─► T151 ─► T152 ─► T153 ─► T154
 T022 ─► T151; T149's tenant on 8.0 first
-T011 ─► T146 ─► T151
+T146 ─► T151
 T007 ─► T149, T151
 Phase 8 after the code tasks
 ```
@@ -339,7 +339,7 @@ Tests first, then data methods, then services, then routes, then client.
 
 - **FR-031 engine**: T151 cannot start before T022, and T149 needs its tenant on 8.0. "The upgrade precedes search work on tenants."
 - **FR-031 sandbox**: The owner lifted this gate for Phase 4's code on 2026-11-04, because that code stays off by default and reaches no tenant; sandbox results may force rework. Otherwise T017 precedes Phase 6 and T021, and T149 needs T148. It can stop all tenant work, or replace T111, T113 and T124 and their tests T100 and T101 through R-17.
-- **FR-045**: No tenant image holds Icelandic data before T011, so T149 runs with `languages: [en]` until then, and T151 cannot start. A negative answer stops rollout.
+- **FR-045**: No tenant image holds Icelandic data before T146, so T149 runs with `languages: [en]` until then, and T151 cannot start.
 - **SC-001 to SC-004**: Must pass before T151, and again before a later tenant's cutover on any analyzer or ranking change.
 
 ## Parallel Example: Phase 5
@@ -351,7 +351,7 @@ T094 signal pass-through and retry predicate
 
 ## Implementation Strategy
 
-1. **Answers first**: T007 to T017, apart from T011's wait, are an estimated two weeks, most of it T012 and T014's scripts and §10 step 3's budgeted 3 days, plus a small sandbox bill, and can change the plan.
+1. **Answers first**: T007 to T017 are an estimated two weeks, most of it T012 and T014's scripts and §10 step 3's budgeted 3 days, plus a small sandbox bill, and can change the plan.
 2. **Merge dark**: Phases 3 to 7 ship with the default configuration, each with the Every PR checks.
 3. **Prove quality early**: T055, T057 and T076 run before any tenant work, and a miss there stops the rollout cheaply.
 4. **One tenant, then the fleet**: T151 to T153 on the shadow tenant; T154 tenant by tenant, each reversible by one setting until removal.

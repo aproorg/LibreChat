@@ -38,7 +38,7 @@ The shared layer holds word splitting, folding, the token format, the read plan,
 ## Today's packs
 
 - **`en`**: stemmer, Snowball, stop list from the reference.
-- **`is`**: dictionary. `knows` is the library's core; `claims` is the Icelandic-letter test; `lemmas` covers core, fold table and the guarded suffix fallback; `parts` guards `word in Object.prototype` and the function-verb block list; `stopWords` is the library's list plus the reference's additions; `attribution` is FR-043's text. The stop-lemma list, the additions and the block list load from `languageDataDir` until FR-045's answers clear them for this repository.
+- **`is`**: dictionary. `knows` is the library's core; `claims` is the Icelandic-letter test; `lemmas` covers core, fold table and the guarded suffix fallback; `parts` guards `word in Object.prototype` and the function-verb block list; `stopWords` is the library's list plus the reference's additions; `attribution` is FR-043's text. The stop-lemma list, the additions and the block list load from `languageDataDir`, because FR-045 keeps them out of this repository.
 
 ## Contract tests (every pack, `languages/__tests__/helpers/contract.ts`)
 

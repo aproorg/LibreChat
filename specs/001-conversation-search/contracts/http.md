@@ -36,7 +36,7 @@ Misconfiguration (`data` off): `shadow` serves Meilisearch with no detached run 
 
 ## GET /api/search/meta (new)
 
-Called only by the `/search` view. JWT required. Applies whenever `search.data` is on, on any backend, and until FR-043's re-analysis finishes.
+Called by the `/search` view for the panel and by the About tab in Settings for the attribution. JWT required. Applies whenever `search.data` is on, on any backend, and until FR-043's re-analysis finishes.
 
 ```json
 {

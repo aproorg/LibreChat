@@ -8,7 +8,7 @@ The Database of Icelandic Morphology. The Árni Magnússon Institute for Iceland
 
 <https://bin.arnastofnun.is>
 
-The data is used under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). While the pack is enabled, the product shows this credit in its search view.
+The data is used under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). While the pack is enabled, the product shows this credit in the About tab in Settings.
 
 ## Changes to the data
 
@@ -28,4 +28,4 @@ Under CC BY-SA 4.0, these are all the changes made to the data the pack reads:
 
 The delivered directory's `manifest.json` records the upstream package checksums and the data source's own. It also holds a sha512 over the delivered files, which the pack checks at load against the constant in `index.ts`. The checksum holds none of the data.
 
-Until the licence questions are answered (FR-045), the library, the data, the derived table and the stop and block lists stay out of this repository.
+The library, the data, the derived table and the stop and block lists stay out of this repository (FR-045).
