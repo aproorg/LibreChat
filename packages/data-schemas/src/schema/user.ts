@@ -85,6 +85,10 @@ const userSchema: Schema<IUser> = new Schema<IUser>(
     openidIssuer: {
       type: String,
     },
+    /** Federated IdP (Cognito `identities[0].providerName`) of the most recent browser login; unset for native logins */
+    openidFederatedIdp: {
+      type: String,
+    },
     samlId: {
       type: String,
     },
@@ -234,6 +238,10 @@ const userSchema: Schema<IUser> = new Schema<IUser>(
       type: String,
       sparse: true,
     },
+    /** Entra `oid` of a remote Agents API caller linked to this (differently-issued) login account */
+    remoteAgentOid: {
+      type: String,
+    },
     tenantId: {
       type: String,
       index: true,
@@ -256,6 +264,7 @@ userSchema.index({ idOnTheSource: 1, openidIssuer: 1, tenantId: 1 });
    the one that does not (`$in` over a batch of ids) is a maintenance write, not a page. */
 userSchema.index({ tenantId: 1, 'favorites.agentId': 1 });
 applySearchTokens(userSchema, USER_SEARCH_TOKEN_FIELDS);
+userSchema.index({ remoteAgentOid: 1 }, { unique: true, sparse: true });
 
 const oAuthIdFields = [
   'googleId',

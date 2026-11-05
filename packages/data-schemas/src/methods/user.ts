@@ -93,6 +93,8 @@ export function createUserMethods(
   ) => Promise<IUser | null>;
   awaitAuthUserDocEviction: (userId: string) => Promise<void>;
   consumeBackupCode: (userId: string, codeHash: string) => Promise<boolean>;
+  linkRemoteAgentOid: (userId: string, oid: string) => Promise<boolean>;
+  setOpenidFederatedIdp: (userId: string, value: string | null) => Promise<void>;
   claimSamlIdentity: (
     userId: string,
     samlId: string,
@@ -499,6 +501,38 @@ export function createUserMethods(
     }
     await invalidateAuthUserDocCache(userId);
     return true;
+  }
+
+  /**
+   * Atomically sets `remoteAgentOid` only if the user has none (idempotent for the same oid). Returns false when the user is
+   * already linked, missing, or the oid belongs to another account (unique index).
+   */
+  async function linkRemoteAgentOid(userId: string, oid: string): Promise<boolean> {
+    const User = mongoose.models.User;
+    try {
+      const updated = await User.findOneAndUpdate(
+        { _id: userId, $or: [{ remoteAgentOid: { $exists: false } }, { remoteAgentOid: oid }] },
+        { $set: { remoteAgentOid: oid } },
+        { new: true },
+      ).lean<IUser>();
+      if (updated) {
+        await invalidateAuthUserDocCache(userId);
+      }
+      return updated != null;
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return false;
+      throw err;
+    }
+  }
+
+  /** Records (or, with null, clears) the federated IdP of the user's latest browser login. */
+  async function setOpenidFederatedIdp(userId: string, value: string | null): Promise<void> {
+    const User = mongoose.models.User;
+    await User.updateOne(
+      { _id: userId },
+      value ? { $set: { openidFederatedIdp: value } } : { $unset: { openidFederatedIdp: '' } },
+    );
+    await invalidateAuthUserDocCache(userId);
   }
 
   /** Atomically updates a SAML user only when the incoming identity can claim the document. */
@@ -1190,6 +1224,8 @@ export function createUserMethods(
     updateUser,
     awaitAuthUserDocEviction,
     consumeBackupCode,
+    linkRemoteAgentOid,
+    setOpenidFederatedIdp,
     claimSamlIdentity,
     updateTwoFactorEnrollment,
     acceptTerms,
