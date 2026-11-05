@@ -252,6 +252,24 @@ function allowedLinkEmail(value: unknown, domains: string[]): string | undefined
   return local && domain && !domain.endsWith('.') && domains.includes(domain) ? email : undefined;
 }
 
+/** Admin power is capability-based (user/group/role grants), so check ACCESS_ADMIN too; fail closed. */
+async function isPrivileged(user: IUser, hasCapability: HasCapabilityFn): Promise<boolean> {
+  if (user.role === SystemRoles.ADMIN) return true;
+  try {
+    const check = () =>
+      hasCapability(
+        { id: String(user._id), role: user.role ?? SystemRoles.USER, tenantId: user.tenantId },
+        SystemCapabilities.ACCESS_ADMIN,
+      );
+    return user.tenantId && getTenantId() !== user.tenantId
+      ? await tenantStorage.run({ tenantId: user.tenantId }, check)
+      : await check();
+  } catch (err) {
+    logger.error('[remoteAgentAuth] admin capability check failed; refusing link', err);
+    return true;
+  }
+}
+
 /**
  * Opt-in: resolves an Entra token to the existing browser-login account (bound to a different
  * issuer, e.g. Cognito). Later calls match by `remoteAgentOid`; the first call links by
@@ -291,7 +309,19 @@ async function linkLoginAccountByOid(
   };
 
   const byOid = await findUser({ remoteAgentOid: oid });
-  if (!firstLink) return isLoginAccount(byOid) ? resolved(byOid) : undefined;
+  const trustedIdp = (user: IUser) =>
+    Boolean(user.openidFederatedIdp) && config.idps.includes(user.openidFederatedIdp as string);
+  if (!firstLink) {
+    // Re-checked on every call (never auto-unlinks): a link must not outlive the conditions it was made under.
+    if (
+      !isLoginAccount(byOid) ||
+      !trustedIdp(byOid) ||
+      (await isPrivileged(byOid, hasCapability))
+    ) {
+      return undefined;
+    }
+    return resolved(byOid);
+  }
   // oid already on some (non-login) account: never fall through to the email link
   if (byOid) return undefined;
 
@@ -306,7 +336,7 @@ async function linkLoginAccountByOid(
   if (!isLoginAccount(user)) return undefined;
   // Native pool users can edit their own email, so only accounts whose latest browser login came
   // through a trusted federated IdP (verified ID-token `identities` claim) may be first-linked.
-  if (!user.openidFederatedIdp || !config.idps.includes(user.openidFederatedIdp)) {
+  if (!trustedIdp(user)) {
     logger.warn(
       '[remoteAgentAuth] link refused: account did not log in through a trusted federated IdP',
     );
@@ -325,25 +355,7 @@ async function linkLoginAccountByOid(
   // email_verified, so it is false for everyone. The matched value is the token's preferred_username
   // (UPN, admin-controlled in the pinned tenant), the same value Cognito copied into the stored email.
   // Residual risk: preferred_username is mutable (UPN reuse); never first-link a privileged account.
-  // Admin power is capability-based (user/group/role grants), so check ACCESS_ADMIN too; fail closed.
-  let privileged = user.role === SystemRoles.ADMIN;
-  if (!privileged) {
-    try {
-      const check = () =>
-        hasCapability(
-          { id: String(user._id), role: user.role ?? SystemRoles.USER, tenantId: user.tenantId },
-          SystemCapabilities.ACCESS_ADMIN,
-        );
-      privileged =
-        user.tenantId && getTenantId() !== user.tenantId
-          ? await tenantStorage.run({ tenantId: user.tenantId }, check)
-          : await check();
-    } catch (err) {
-      logger.error('[remoteAgentAuth] admin capability check failed; refusing link', err);
-      privileged = true;
-    }
-  }
-  if (privileged) {
+  if (await isPrivileged(user, hasCapability)) {
     logger.warn('[remoteAgentAuth] link refused: admin accounts are not linked by username');
     return undefined;
   }

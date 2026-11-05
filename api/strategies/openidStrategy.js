@@ -28,7 +28,13 @@ const {
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { resizeAvatar } = require('~/server/services/Files/images/avatar');
-const { findUser, createUser, updateUser, findRolesByNames } = require('~/models');
+const {
+  findUser,
+  createUser,
+  updateUser,
+  findRolesByNames,
+  setOpenidFederatedIdp,
+} = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
 
@@ -549,6 +555,11 @@ async function applyOpenIdRoleSync({
   user.role = result.selectedRole;
 }
 
+/** Federated-IdP recording is only needed when the Agents API oid linking is configured. */
+function isFederatedIdpLinkingConfigured() {
+  return (process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS ?? '').trim() !== '';
+}
+
 /**
  * Federated IdP name from the verified ID-token `identities` claim (Cognito); undefined for
  * native logins or anything malformed or inconsistent with `cognito:username`. May arrive as a JSON string.
@@ -711,7 +722,6 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       name: fullName,
       idOnTheSource: userinfo.oid,
       openidIssuer,
-      openidFederatedIdp: getFederatedIdp(claims),
     };
 
     const balanceConfig = getBalanceConfig(appConfig);
@@ -725,7 +735,6 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     user.username = username;
     user.name = fullName;
     user.idOnTheSource = userinfo.oid;
-    user.openidFederatedIdp = getFederatedIdp(claims);
     if (email && email !== user.email) {
       user.email = email;
       user.emailVerified = userinfo.email_verified || false;
@@ -840,6 +849,10 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   }
 
   user = await updateUser(user._id, user);
+  if (isFederatedIdpLinkingConfigured()) {
+    // Latest login wins: a native login (undefined) clears the recorded IdP.
+    await setOpenidFederatedIdp(user._id, getFederatedIdp(claims) ?? null);
+  }
 
   logger.info(
     `[openidStrategy] login success openidId: ${user.openidId} | email: ${user.email} | username: ${user.username} `,

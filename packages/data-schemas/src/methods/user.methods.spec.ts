@@ -1464,19 +1464,17 @@ describe('User Methods - Database Tests', () => {
     });
   });
 
-  describe('updateUser openidFederatedIdp', () => {
-    test('sets the value, and unsets it when the login no longer carries one', async () => {
+  describe('setOpenidFederatedIdp', () => {
+    test('sets the value, and unsets it with null', async () => {
       const u = await User.create({ name: 'f', email: 'f@example.com', provider: 'openid' });
-      await methods.updateUser(String(u._id), { openidFederatedIdp: 'Entra' });
+      await methods.setOpenidFederatedIdp(String(u._id), 'Entra');
       expect((await User.findById(u._id).lean())?.openidFederatedIdp).toBe('Entra');
 
-      await methods.updateUser(String(u._id), { name: 'g', openidFederatedIdp: undefined });
-      const after = await User.findById(u._id).lean();
-      expect(after?.name).toBe('g');
-      expect(after).not.toHaveProperty('openidFederatedIdp');
+      await methods.setOpenidFederatedIdp(String(u._id), null);
+      expect(await User.findById(u._id).lean()).not.toHaveProperty('openidFederatedIdp');
     });
 
-    test('leaves the field alone when the update does not mention it', async () => {
+    test('updateUser does not touch the field', async () => {
       const u = await User.create({
         name: 'h',
         email: 'h@example.com',

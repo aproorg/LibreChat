@@ -48,6 +48,7 @@ export function createUserMethods(
   ) => Promise<mongoose.Types.ObjectId | Partial<IUser>>;
   updateUser: (userId: string, updateData: Partial<IUser>) => Promise<IUser | null>;
   linkRemoteAgentOid: (userId: string, oid: string) => Promise<boolean>;
+  setOpenidFederatedIdp: (userId: string, value: string | null) => Promise<void>;
   claimSamlIdentity: (
     userId: string,
     samlId: string,
@@ -291,15 +292,10 @@ export function createUserMethods(
    */
   async function updateUser(userId: string, updateData: Partial<IUser>): Promise<IUser | null> {
     const User = mongoose.models.User;
-    const $unset: Record<string, ''> = { expiresAt: '' }; // Remove the expiresAt field to prevent TTL
-    const { openidFederatedIdp, ...rest } = updateData;
-    const $set: Partial<IUser> = rest;
-    // Always reflects the most recent login: an absent value (native login) clears the field.
-    if ('openidFederatedIdp' in updateData) {
-      if (openidFederatedIdp) $set.openidFederatedIdp = openidFederatedIdp;
-      else $unset.openidFederatedIdp = '';
-    }
-    const updateOperation = { $set, $unset };
+    const updateOperation = {
+      $set: updateData,
+      $unset: { expiresAt: '' }, // Remove the expiresAt field to prevent TTL
+    };
     const updated = await User.findByIdAndUpdate(userId, updateOperation, {
       new: true,
       runValidators: true,
@@ -328,6 +324,16 @@ export function createUserMethods(
       if ((err as { code?: number }).code === 11000) return false;
       throw err;
     }
+  }
+
+  /** Records (or, with null, clears) the federated IdP of the user's latest browser login. */
+  async function setOpenidFederatedIdp(userId: string, value: string | null): Promise<void> {
+    const User = mongoose.models.User;
+    await User.updateOne(
+      { _id: userId },
+      value ? { $set: { openidFederatedIdp: value } } : { $unset: { openidFederatedIdp: '' } },
+    );
+    await invalidateAuthUserDocCache(userId);
   }
 
   /** Atomically updates a SAML user only when the incoming identity can claim the document. */
@@ -860,6 +866,7 @@ export function createUserMethods(
     createUser,
     updateUser,
     linkRemoteAgentOid,
+    setOpenidFederatedIdp,
     claimSamlIdentity,
     acceptTerms,
     searchUsers,

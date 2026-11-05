@@ -1387,12 +1387,78 @@ describe('createRemoteAgentAuth', () => {
       expect(deps.hasCapability).toHaveBeenCalledTimes(1);
     });
 
-    it('does not run the capability check for an already-linked account', async () => {
-      enable();
-      const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
-      const { status } = await call(cognitoUser({ remoteAgentOid: OID }), payload, deps);
-      expect(status).not.toHaveBeenCalledWith(401);
-      expect(deps.hasCapability).not.toHaveBeenCalled();
+    describe('linked accounts are re-checked on every call', () => {
+      const linked = (o: Partial<IUser> = {}) => cognitoUser({ remoteAgentOid: OID, ...o });
+
+      it('still resolves a healthy linked account (and runs the capability check)', async () => {
+        enable();
+        const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+        const { status } = await call(linked(), payload, deps);
+        expect(status).not.toHaveBeenCalled();
+        expect(deps.hasCapability).toHaveBeenCalledWith(expect.anything(), 'access:admin');
+      });
+
+      it('linked user later promoted to ADMIN -> 401', async () => {
+        enable();
+        const { deps, status } = await call(linked({ role: 'ADMIN' }));
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it('linked user later granted ACCESS_ADMIN -> 401', async () => {
+        enable();
+        const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+        deps.hasCapability.mockImplementation(
+          async (_u: unknown, cap: string) => cap === 'access:admin',
+        );
+        const { status } = await call(linked({ role: 'SUPERADMIN' }), payload, deps);
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it('linked user whose latest login was native (field cleared) -> 401', async () => {
+        enable();
+        const { deps, status } = await call(linked({ openidFederatedIdp: undefined }));
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it('linked user whose recorded IdP is no longer allowed -> 401', async () => {
+        enable();
+        process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = 'Other';
+        const { deps, status } = await call(linked());
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it('capability lookup failure fails closed for linked users -> 401', async () => {
+        enable();
+        const deps = makeDeps(makeConfig({ issuer: ENTRA_ISSUER }, { enabled: false }));
+        deps.hasCapability.mockRejectedValue(new Error('db down'));
+        const { status } = await call(linked(), payload, deps);
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it.each([
+        ['flag', 'REMOTE_AGENTS_LINK_LOGIN_ACCOUNT_BY_OID'],
+        ['domains', 'REMOTE_AGENTS_LINK_EMAIL_DOMAINS'],
+        ['idps', 'REMOTE_AGENTS_LINK_FEDERATED_IDPS'],
+      ])('removing the %s env -> 401 for linked users too', async (_n, key) => {
+        enable();
+        delete process.env[key];
+        const { deps, status } = await call(linked());
+        expect(status).toHaveBeenCalledWith(401);
+        expectNoLink(deps, status);
+      });
+
+      it('never unlinks automatically', async () => {
+        enable();
+        const user = linked({ role: 'ADMIN' });
+        const { deps } = await call(user);
+        expect(user.remoteAgentOid).toBe(OID);
+        expect(deps.updateUser).not.toHaveBeenCalled();
+      });
     });
   });
 
