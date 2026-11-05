@@ -3224,6 +3224,11 @@ export const searchConfigSchema = z
         batchSize: searchLimit(200),
         /** Pause between batches, in milliseconds. */
         batchDelayMs: searchLimit(1000),
+        /**
+         * The lease holder requests a backfill after startup if no chain has finished, so a
+         * deploy can start it. Off, a backfill starts only when an operator requests one.
+         */
+        backfillOnStart: z.boolean().default(false),
       })
       .strict()
       .default({}),

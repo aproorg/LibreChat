@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { AppService, createMethods, createModels, loadSearchConfig } from '@librechat/data-schemas';
-import type { SearchServiceDeps } from '../service';
+import type { BindSearchDeps } from '../start';
 import {
   createSearchConfigSnapshot,
   isSearchDataOn,
@@ -43,6 +43,30 @@ describe('search with the default configuration', () => {
       );
       /* Builds every model's indexes, which can pass the default limit on a loaded machine. */
     }, 120_000);
+
+    it('startup with no `search` block creates no collection and starts no runner', async () => {
+      const methods = createMethods(database) as unknown as BindSearchDeps['methods'];
+      const resolvePacks = jest.fn();
+      const binding = bindSearch({
+        app: { locals: {} },
+        appConfig: {},
+        methods,
+        setSearchPort: () => undefined,
+        logger: { info: () => undefined, warn: () => undefined },
+        resolvePacks,
+      });
+
+      await binding.startBackground();
+
+      expect(binding.jobs()).toBeNull();
+      expect(resolvePacks).not.toHaveBeenCalled();
+      const names = (await database.connection.db!.listCollections().toArray()).map(
+        ({ name }) => name,
+      );
+      for (const name of ['msearch', 'csearch', 'search_vocab', 'search_state']) {
+        expect(names).not.toContain(name);
+      }
+    }, 60_000);
   });
 
   describe('config', () => {
@@ -51,6 +75,7 @@ describe('search with the default configuration', () => {
         data: false,
         backend: 'meilisearch',
         meiliResyncPending: false,
+        jobs: { backfillOnStart: false },
       });
     });
 
@@ -70,7 +95,7 @@ describe('search service with the default configuration', () => {
   const noRead = () => {
     throw new Error('a default-config search read');
   };
-  const methods = new Proxy({}, { get: () => noRead }) as SearchServiceDeps['methods'];
+  const methods = new Proxy({}, { get: () => noRead }) as BindSearchDeps['methods'];
   const context = {
     user: 'user-a',
     signal: new AbortController().signal,

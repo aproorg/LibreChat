@@ -1271,6 +1271,7 @@ endpoints:
 #   jobs:
 #     batchSize: 200           # Documents read per batch in backfill and repair jobs
 #     batchDelayMs: 1000       # Pause between batches
+#     backfillOnStart: false   # Request a backfill after startup if no chain has finished, so a deploy can start it
 #   rank:
 #     lengthBucket: true       # Prefer shorter messages among equal matches
 #   prefix:

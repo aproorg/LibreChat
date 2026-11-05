@@ -54,13 +54,13 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 |---|---|---|
 | `lease` | `holder`, `epoch`, `leaseUntil` | One writer per database |
 | `stream` | `resumeToken`, `epoch`, `savedAt`, `gapAt?` | Where sync resumes |
-| `backfill:messages`, `backfill:conversations` | `lastId`, `status`, `pause`, `pausedReason?`, `startedAt` | Crash resume, pause flag |
+| `backfill:messages`, `backfill:conversations` | `lastId`, `status`, `pause`, `pausedReason?`, `startedAt`, `processed`, `total`, `skipped`, `rate`, `rateAt`, `finishedAt?`, `finishedAtId?` | Crash resume, pause flag, progress. `finishedAtId` bounds verification while no writer runs |
 | `reconcile` | `pass`, `phase`, `lastId` per phase, `status`, `missing`, `orphans`, `stale`, `finishedAt?` | Reports before repair |
-| `verification` | `status` (`pending`, `passed`, `failed`), `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds` | Readiness (FR-019, FR-037) |
+| `verification` | `status` (`pending`, `passed`, `failed`), `reason?`, `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds`, `checked`, `missing`, `missingIds` (a sample), `orphans`, `changedSinceBackfill`, `finishedAt` | Readiness (FR-019, FR-037) |
 | `analyzer` | `version`, `packs` with attribution text and URL, `attributionUntilReanalyzed`, `tenantId` | Token changes (FR-026), FR-043 after a disable, tenant pin |
-| `chain` | `requestId`, `step`, `finishedAt?` | Backfill chain position, resumed by each new lease holder. Automatic reconcile waits for `finishedAt` |
+| `chain` | `requestId`, `step`, `startedAt`, `finishedAt?` | Backfill chain position, resumed by each new lease holder. Automatic reconcile waits for `finishedAt` |
 | `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |
-| `vocab` | `run` | Rebuild run number |
+| `vocab` | `run`, `phase`, `lastId`, `status`, `startedAt`, `finishedAt?` | Rebuild run number and resume position |
 | `jobRequest:<id>` | `job`, `requestedAt` | Written by `config/search-job.js` |
 | `panel:<round>:<uuid>` | `verdict`, `knownMissed` | Panel facts: no query text, user ID or date (FR-033); rounds kept apart (R-18) |
 

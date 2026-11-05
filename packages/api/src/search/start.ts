@@ -1,5 +1,6 @@
-import type { SearchPort } from '@librechat/data-schemas';
+import type { SearchMethods, SearchPort } from '@librechat/data-schemas';
 import type { SearchContextRequest, SearchContextResponse } from './http/context';
+import type { SearchJobMethods, SearchJobRunner } from './jobs/runner';
 import type { SearchService, SearchServiceDeps } from './service';
 import type { ConversationSearch } from './http/conversations';
 import type { SearchMessagesRoute } from './http/messages';
@@ -11,6 +12,7 @@ import { createSearchConfigSnapshot, isSearchDataOn } from './config';
 import { createConversationSearch } from './http/conversations';
 import { createSearchMessagesRoute } from './http/messages';
 import { getSafeErrorMetadata } from '~/utils/errors';
+import { createSearchJobRunner } from './jobs/runner';
 import { createSearchContext } from './http/context';
 import { createSearchStatus } from './http/status';
 import { createSearchService } from './service';
@@ -20,7 +22,9 @@ export interface BindSearchDeps {
   app: { locals: Record<string, unknown> };
   /** From `getAppConfig({ baseOnly: true })`, so no config document can change search. */
   appConfig: { search?: Parameters<typeof createSearchConfigSnapshot>[0]['search'] };
-  methods: SearchServiceDeps['methods'];
+  methods: SearchServiceDeps['methods'] &
+    SearchJobMethods &
+    Pick<SearchMethods, 'ensureSearchCollections'>;
   setSearchPort(port: SearchPort): void;
   jwtSecret?: string;
   logger: SearchMetricsLogger;
@@ -41,6 +45,8 @@ export interface SearchBinding {
   ): Promise<SearchHttpResponse | null>;
   conversations: ConversationSearch;
   enabled: SearchStatus['enabled'];
+  /** The running job runner, or `null` before packs load, or with search data off. */
+  jobs(): SearchJobRunner | null;
 }
 
 /**
@@ -61,6 +67,7 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
   });
   const route: SearchMessagesRoute = createSearchMessagesRoute({ service, methods, metrics });
   const status = createSearchStatus({ service, methods, logger });
+  let jobs: SearchJobRunner | null = null;
 
   const binding: SearchBinding = {
     service,
@@ -72,6 +79,14 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
       try {
         metrics.startRealtextFlush();
         await service.loadPacks();
+        /* A failed pack takes no lease, so one bad task cannot stall the tenant (R-09). */
+        if (service.packState() !== 'loaded') {
+          return;
+        }
+        /* First, or the lease write would create `search_state` implicitly. */
+        await methods.ensureSearchCollections();
+        jobs = createSearchJobRunner({ config, methods, metrics, logger, service });
+        jobs.start();
       } catch (error) {
         logger.warn('[search] Background start failed', getSafeErrorMetadata(error));
       }
@@ -82,6 +97,7 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
         : Promise.resolve(null),
     conversations: createConversationSearch({ service, metrics, logger }),
     enabled: status.enabled,
+    jobs: () => jobs,
   };
 
   setSearchPort(service);
