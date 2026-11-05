@@ -179,7 +179,7 @@ const buildRetentionIndexableQuery = (schema: Schema): FilterQuery<unknown> => {
   return {};
 };
 
-const buildIndexableQuery = (
+export const buildIndexableQuery = (
   schema: Schema,
   excludeFromIndexPath?: string,
 ): FilterQuery<unknown> => {

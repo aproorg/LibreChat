@@ -1,4 +1,5 @@
 import type { RoleMethods, RoleDeps } from './role';
+import type { SearchPort } from '~/types/search';
 import {
   createOpenIDRefreshFlightMethods,
   type OpenIDRefreshFlightMethods,
@@ -58,6 +59,7 @@ import {
   type AuditLogMethods,
 } from './auditLog';
 import { createShareMethods, type ShareMethods } from './share';
+import { createSearchMethods, type SearchMethods } from './search';
 /* Tier 1 — Simple CRUD */
 import { createActionMethods, type ActionMethods } from './action';
 import { createAssistantMethods, type AssistantMethods } from './assistant';
@@ -269,7 +271,8 @@ export type AllMethods = UserMethods &
   AgentMethods &
   ConfigMethods &
   MCPAuthorityMethods &
-  InsightsMethods;
+  InsightsMethods &
+  SearchMethods;
 
 /** Dependencies injected from the api layer into createMethods */
 export interface CreateMethodsDeps {
@@ -286,6 +289,8 @@ export interface CreateMethodsDeps {
   getCache?: RoleDeps['getCache'];
   /** Recognizes agent skill IDs supplied by an external, non-database registry. */
   isExternalSkillId?: AgentDeps['isExternalSkillId'];
+  /** Returns the search service's port, or `null` until the server has bound it after config loads. */
+  getSearchPort?: () => SearchPort | null;
 }
 
 /**
@@ -330,6 +335,7 @@ export function createMethods(
     getMessages: messageMethods.getMessages,
     deleteMessages: messageMethods.deleteMessages,
     searchMessages: messageMethods.searchMessages,
+    getSearchPort: deps.getSearchPort,
     eraseAgentTriggerDeliveryConversationResults:
       agentTriggerDeliveryMethods.eraseAgentTriggerDeliveryConversationResults,
     prepareAgentTriggerConversationResultErasure:
@@ -507,6 +513,8 @@ export function createMethods(
     ...createMCPAuthorityMethods(mongoose),
     /* Insights */
     ...createInsightsMethods(mongoose),
+    /* Search */
+    ...createSearchMethods(mongoose),
   };
 }
 
@@ -589,6 +597,17 @@ export type {
   MCPAuthorityConfigSourceDocument,
   MCPAuthorityCredentialSourceDocument,
   InsightsMethods,
+  SearchMethods,
 };
+export type {
+  SearchReadOptions,
+  SearchVocabFrequency,
+  SearchWindowParams,
+  SearchWindowRow,
+  SearchRecordTokens,
+  SearchMessageText,
+  SearchableMessage,
+  SearchHitConversation,
+} from './search';
 
 export { recordAgentEventActorReceiptMetric, setAgentEventActorReceiptMetricObserver };

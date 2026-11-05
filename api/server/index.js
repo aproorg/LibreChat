@@ -61,6 +61,8 @@ const {
   waitForKeyvRedisClient,
   warnOnUnreachableDeliveryPaths,
   createCodeApiUploadRegistry,
+  bindSearch,
+  startSearchBackground,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const {
@@ -68,6 +70,7 @@ const {
   sweepOrphanedPreviews,
   getRoleByName,
   seedDatabase,
+  setSearchPort,
 } = require('~/models');
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
@@ -231,6 +234,14 @@ const startServer = async () => {
     logger.error('[sweepOrphanedPreviews] Background sweep failed:', err);
   });
   const appConfig = await getAppConfig({ baseOnly: true });
+  bindSearch({
+    app,
+    appConfig,
+    methods: agentEventMethods,
+    setSearchPort,
+    jwtSecret: process.env.JWT_SECRET,
+    logger,
+  });
   registerBackgroundTaskShutdown({
     interruptGraceMs: appConfig?.endpoints?.agents?.backgroundTasks?.shutdownInterruptGraceMs,
   });
@@ -485,6 +496,9 @@ const startServer = async () => {
     } else {
       logger.info(`Server listening at http://${host == '0.0.0.0' ? 'localhost' : host}:${port}`);
     }
+
+    /* Un-awaited and outside the `try` below: a search failure must not exit the process. */
+    startSearchBackground(app.locals.search);
 
     /**
      * The listen callback is async, so any rejection from these awaits would

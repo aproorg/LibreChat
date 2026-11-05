@@ -1,6 +1,7 @@
 export * from './agents';
 export * from './interface';
 export * from './memory';
+export * from './search';
 export * from './service';
 export * from './specs';
 export * from './turnstile';

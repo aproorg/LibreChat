@@ -431,3 +431,44 @@ These fixes have had no further review.
 | M4 | `data: false` only postpones the flood | Applied: off to on discards the token, new R-05 question, release check. Lag unmeasured | T111, T141, R-05, R-09 |
 | L1 to L3, L5 to L8 | R-11 triggers, live suite flag, missing env var, `JWT_SECRET` owner, private data layout, T016 before T013 (inferred), T020's module name | Applied | R-11, T136, quickstart, T074, R-02, graph, T020 |
 | L4 | The scenario's order differed from T140 | Applied in the spec: reset, then redeploy | `spec.md` |
+
+## Code review of the uncommitted implementation
+
+### Code loop 1
+
+No High, 1 Medium, 7 Low. All fixed except where noted.
+
+- **M1:** hydration lost hits past one 16 MB batch. Reads that hold whole messages now read again for what is missing.
+- **L1:** a pack throwing on a word gave the sidebar a raw log and a non-contract body. It is now `search_failed` on every surface.
+- **L2:** a sidebar search ran `readConcurrency` + 1 reads. Reads now share one gate per search (FR-017). A read another search started still runs on that search's gate.
+- **L3:** served reads counted as database reads, and sidebar events carried no figures. Both fixed. Not changed: `tierShare` still counts `/search` only, so a query from both surfaces counts once.
+- **L4:** the comment and test title claimed an invalid block never fails startup. `configSchema` rejects it first, so both are corrected.
+- **L5:** expired shared-read entries waited for byte pressure. They now drop when another read finishes. With no later search they stay until the next one.
+- **L6:** the block-list test could pass with no split at all. It now requires at least one split on the real data. Rejected: moving the stub case to public CI, because the stub needs `--experimental-vm-modules`.
+- **L7:** `test:lighthouse-database` ran in no workflow. It now runs in `lighthouse.yml`. Rejected: asserting on the built Playwright config, because that config only spreads the tested helper's result.
+- **Unresolved:** `messages-get.spec.js` "does not hydrate branch files for an inert file policy" returned 401 once in a parallel run and passed on reruns. It is not known whether it also flakes on the base commit.
+
+### Code loop 2
+
+No High, 2 Medium, 8 Low. All fixed except where noted.
+
+- **M1:** a word of marks alone, such as an emoji's variation selector, became an empty token on both sides, so `❤️` could find a message holding only `☀️`. Marks alone are no longer a word. The reference corpus holds no such token in 1,273,607 messages and 708,172 query words, so this does not change FR-007 parity on it. The reference code was not changed.
+- **M2:** a client leaving during the sidebar's message read raised the `search.partial` alarm. It now ends as `aborted`.
+- **L1, rejected:** `/search` and a sidebar joining its read can run `readConcurrency` per surface. They are two requests, so this is recorded under R-12 rather than changed.
+- **L2:** the plan's concurrency test could not fail. It now uses two common tokens in one tier, with a limit of 2, and asserts both the single-token reads and the high-water mark.
+- **L3:** added a test that one user ID in two tenants never shares a read.
+- **L4:** the test loader counted rows that failed validation. It now throws, with a test.
+- **L5:** quality suites skipped silently without their inputs. A missing input now fails the run.
+- **L6:** the stub-data `is` pack and scoring suites now run in public CI, shard 1. This reverses loop 1's rejection: the flag can be set in that one step.
+- **L7:** shared-read entries outlived their time on an idle process. An unreferenced sweep timer now removes them, and the config text now says the budget is a per-process total.
+- **L8:** the runbook hard-coded its base branch. `BASE` must now be set, or the check stops.
+
+### Code loop 3
+
+No High, no Medium, 5 Low. Four fixed, one rejected.
+
+- **L1:** tests of hidden conversations could pass on a failed search. They now assert the status, and a visible conversation is the control.
+- **L2:** the reason a pack failed was never logged. It now logs the pack ID and a stable code.
+- **L3:** the invented-data suite could be skipped when a push touched only its files, because selection drops `misc/`. It now has its own job.
+- **L4:** a conversation list read failing after a good search left the coded contract and the outcome metrics. Any failure with a search context is now `search_failed`, with a sanitized log.
+- **L5, rejected:** a stub word that is a real dictionary word. Checked against the private lists: none of the stub entries appear there.

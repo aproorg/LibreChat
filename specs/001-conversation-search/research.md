@@ -126,6 +126,8 @@ Scope is never in the cursor: `user` comes from the session. Every decoded field
 - **Rationale**: §5's window plus FR-015. The reference sizes the window by caller limit, which would make the first page depend on the sidebar limit.
 - **Alternatives**: Separate reads per surface: doubles the cost of every search (§7's "5 users is nearer 2–3").
 
+**Owner's decision, 2026-11-04**: the sidebar trusts `msearch` and doesn't check each message through `getSearchableMessages`. So a stale record can list a user's own visible conversation for a query it no longer matches, showing no message text, until sync or reconcile corrects it. Accepted, because edits are rare and the check would slow every sidebar search.
+
 ## R-09 Sync writer
 
 **Lease.** `search_state` `_id: 'lease'`, with holder, epoch and `leaseUntil`. TTL 30 s, heartbeat 10 s (`search.syncTakeoverSeconds`). The epoch increments on each takeover. `LeaderElection` is not used: it is Redis-based, one key per deployment, and returns true without Redis, while a lease beside the data follows §9 and works in every deployment shape.
@@ -183,7 +185,7 @@ Scope is never in the cursor: `user` comes from the session. Every decoded field
 
 ## R-12 Concurrency, retry, cancellation
 
-- **Decision**: A per-instance limiter admits `maxConcurrentSearches` and fails immediately at the cap with `search_busy`. Each search runs up to `readConcurrency` reads, and its read stops on the timeout or when its last waiter leaves ([R-08](#r-08-shared-read)). Reads pass `maxTimeMS`, `singleBatch` and a `batchSize` equal to the limit. `read/retry.ts` retries code 2 "Cannot open a new cursor" twice with jitter, then raises `search_busy`. Serving title reads bypass the limiter, per FR-017. Shadow has its own limiter and never touches the request's, and it covers detached title reads too, counting their drops, because that exemption is about the serving cap and an uncapped detached read could cost up to 50,000 word list rows at the floor. A client disconnect before the response finishes aborts the detached run too (FR-017); a normally completed response does not. A process whose pack failed returns `search_failed`.
+- **Decision**: A per-instance limiter admits `maxConcurrentSearches` and fails immediately at the cap with `search_busy`. Each search runs up to `readConcurrency` reads, with title and message reads sharing them. A search joining a read another one started runs its own reads under its own limit, since `/search` and the sidebar are two requests; so one query from both surfaces can run `readConcurrency` per surface. Its read stops on the timeout or when its last waiter leaves ([R-08](#r-08-shared-read)). Reads pass `maxTimeMS`, `singleBatch` and a `batchSize` equal to the limit. `read/retry.ts` retries code 2 "Cannot open a new cursor" twice with jitter, then raises `search_busy`. Serving title reads bypass the limiter, per FR-017. Shadow has its own limiter and never touches the request's, and it covers detached title reads too, counting their drops, because that exemption is about the serving cap and an uncapped detached read could cost up to 50,000 word list rows at the floor. A client disconnect before the response finishes aborts the detached run too (FR-017); a normally completed response does not. A process whose pack failed returns `search_failed`.
 - **Superseded requests**: `useMessagesInfiniteQuery` and `listMessages` pass no `signal` today, and `SearchBar.tsx` debounces at 500 ms, so a typing user could hold several slots on different queries. React Query's `signal` is passed through `listMessages` and `listConversations`, so a superseded request closes and its slot frees.
 - **Rationale**: FR-017, FR-018. No queue is a spec decision.
 
@@ -245,3 +247,10 @@ Query text is not stored (FR-033), so the server cannot name "the failed queries
 - **Decision**: `search` joins `BASE_ONLY_CONFIG_SECTIONS` (`packages/data-provider/src/config.ts`), so no config document can change it. It is read from the YAML base config once at process start, and `createSearchService` holds that snapshot for the process's life. So "one setting change" is a `librechat.yaml` change plus a rolling restart, which the runbook times (SC-017). `search` is not read through per-principal merging, so no role or user override can give one user a different backend, and the writer and requests always agree.
 - **Rationale**: `AppConfigService` caches the base config indefinitely (`packages/api/src/app/service.ts`), so polling would see nothing, while DB overrides merge per principal on a 60-second cache and the writer has no principal. Request paths need no new read, which keeps the load path clean.
 - **Alternatives**: Polling with `getAppConfig({ refresh: true })`: flips one process at a time with no order, for little gain given abort thresholds act in hours. A `search_state` flag flipped by script: a faster flip, but it adds a read to every search and a second source of truth.
+
+## R-20 Upstream search check
+
+- **Checked 2026-11-04** (T010, §9). Upstream has shipped no replacement for Meilisearch. Its `main` holds proof-of-concept infrastructure in `search/` (Postgres, FerretDB, ClickHouse), with no application code, and `aproorg/0.8.8` has the same directory. Unmerged `claude/chat-search-*` and `claude/search-track*` branches were last touched on 2026-08-11. They need those separate services, which this feature's spec rules out.
+- **Owner's decision, 2026-11-04**: continue with this design and keep the directory name.
+- **Risk accepted**: one of those branches adds 41 files under `packages/api/src/search`, the directory this plan uses, so a fork sync would conflict if it merges. The check repeats before cutover.
+
