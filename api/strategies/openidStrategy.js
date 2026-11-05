@@ -848,7 +848,10 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     }
   }
 
-  user = await updateUser(user._id, user);
+  // Never write back the Agents API link fields from this (possibly stale) copy: an operator unlink
+  // or a concurrent link must not be undone by a browser login.
+  const { remoteAgentOid: _linkedOid, openidFederatedIdp: _idp, ...userUpdate } = user;
+  user = await updateUser(user._id, userUpdate);
   if (isFederatedIdpLinkingConfigured()) {
     // Latest login wins: a native login (undefined) clears the recorded IdP.
     await setOpenidFederatedIdp(user._id, getFederatedIdp(claims) ?? null);

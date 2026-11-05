@@ -1514,6 +1514,16 @@ describe('setupOpenId', () => {
         process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = 'Entra';
       });
 
+      it('never writes back stale remoteAgentOid / openidFederatedIdp from the loaded user', async () => {
+        await login(
+          { identities: [{ providerName: 'Entra' }] },
+          { ...existing, remoteAgentOid: 'stale-oid', openidFederatedIdp: 'Entra' },
+        );
+        const written = updateUser.mock.calls.at(-1)[1];
+        expect(written).not.toHaveProperty('remoteAgentOid');
+        expect(written).not.toHaveProperty('openidFederatedIdp');
+      });
+
       it('records the provider name for a federated login via the dedicated method', async () => {
         const { user } = await login({
           identities: [{ providerName: 'Entra', providerType: 'OIDC' }],
