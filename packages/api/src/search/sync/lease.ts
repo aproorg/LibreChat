@@ -14,6 +14,8 @@ export interface SearchLease {
   tick(): Promise<boolean>;
   /** Local only: a holder past its deadline stops before writing, even if nobody took over. */
   isHeld(): boolean;
+  /** The current turn, or `null` between turns. A job holds only the turn it started under. */
+  epoch(): number | null;
   release(): Promise<void>;
 }
 
@@ -85,6 +87,7 @@ export function createSearchLease({
     heartbeatMs: Math.ceil(ttlMs / 3),
     tick,
     isHeld: () => epoch !== null && now() < until,
+    epoch: () => epoch,
     release,
   };
 }

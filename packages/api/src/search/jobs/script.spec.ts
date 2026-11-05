@@ -114,6 +114,7 @@ describe('search-job script', () => {
         processed: 1000,
         total: 3000,
         skipped: 2,
+        analysisFailures: 0,
         rate: 100,
         estimatedFinish: new Date(NOW + 20_000),
       });
@@ -128,6 +129,22 @@ describe('search-job script', () => {
       expect(text).toContain('rate 100/s');
       expect(text).toContain(new Date(NOW + 20_000).toISOString());
       expect(text).toContain('verify: failed  reason mismatch  mismatched users 2  missing 3');
+    });
+
+    it('still reports progress when the tenant read fails', async () => {
+      await harness.methods.writeSearchState('chain', { step: 'vocab', failures: 3 });
+      const methods = {
+        ...harness.methods,
+        readSearchSourceTenants: () => Promise.reject(new Error('timed out')),
+      };
+
+      const status = await readSearchJobStatus(methods, NOW);
+
+      expect(status.tenants).toBeNull();
+      expect(status.chain).toMatchObject({ step: 'vocab', failures: 3 });
+      const text = formatSearchJobStatus(status).join('\n');
+      expect(text).toContain('read timed out');
+      expect(text).toContain('failed attempts: 3');
     });
 
     it('gives no rate from a process that stopped reporting', async () => {
@@ -157,7 +174,7 @@ describe('search-job script', () => {
 
       const status = await readSearchJobStatus(harness.methods, NOW);
 
-      expect(status.tenants.sort()).toEqual(['tenant-one', 'tenant-two']);
+      expect(status.tenants?.sort()).toEqual(['tenant-one', 'tenant-two']);
       expect(status.pendingRequests).toEqual(['pause']);
     });
   });

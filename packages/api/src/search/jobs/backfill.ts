@@ -16,7 +16,7 @@ import {
   objectIdFloor,
   SOURCE_COLLECTIONS,
 } from './control';
-import { buildConversationRecord, buildMessageRecord } from '../sync/record';
+import { belongsInSearch, buildConversationRecord, buildMessageRecord } from '../sync/record';
 
 export type BackfillMethods = Pick<
   SearchMethods,
@@ -83,6 +83,7 @@ async function walkCollection(
   let lastId = typeof saved?.lastId === 'string' ? saved.lastId : undefined;
   let processed = typeof saved?.processed === 'number' ? saved.processed : 0;
   let skipped = typeof saved?.skipped === 'number' ? saved.skipped : 0;
+  let analysisFailures = typeof saved?.analysisFailures === 'number' ? saved.analysisFailures : 0;
   let rate = 0;
   let batchStart = now();
   let reportedAt = 0;
@@ -134,8 +135,15 @@ async function walkCollection(
             records.push(record);
           }
         } catch {
-          /* A row with no usable `user` or date, or a pack throwing on a word. No text is logged. */
-          skipped += 1;
+          /*
+           * No text is logged. A row with no usable `user` or date can never have a record.
+           * One that should have, where a pack threw on a word, is a gap verification must see.
+           */
+          if (belongsInSearch(collection, row)) {
+            analysisFailures += 1;
+          } else {
+            skipped += 1;
+          }
         }
         await giveWay();
       }
@@ -145,6 +153,9 @@ async function walkCollection(
       }
       await methods.insertSearchRecords(collection, records);
       await removeRecordsOfGoneSources(methods, collection, records);
+      if (!control.holds()) {
+        return 'lost';
+      }
 
       lastId = rows[rows.length - 1]._id;
       processed += rows.length;
@@ -154,6 +165,7 @@ async function walkCollection(
         lastId,
         processed,
         skipped,
+        analysisFailures,
         rate,
         rateAt: new Date(now()),
       });
@@ -164,6 +176,9 @@ async function walkCollection(
       batchStart = now();
     }
 
+    if (!control.holds()) {
+      return 'lost';
+    }
     await methods.writeSearchState(key, {
       status: 'finished',
       finishedAt: new Date(now()),
@@ -174,7 +189,10 @@ async function walkCollection(
     return 'done';
   } catch (error) {
     report('failed');
-    await methods.writeSearchState(key, { status: 'failed' }).catch(() => undefined);
+    /* A stale holder must not mark a walk failed that the new holder is running or finished. */
+    if (control.holds()) {
+      await methods.writeSearchState(key, { status: 'failed' }).catch(() => undefined);
+    }
     throw error;
   }
 }

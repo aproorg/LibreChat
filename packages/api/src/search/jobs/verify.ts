@@ -32,6 +32,8 @@ interface VerifyTally {
   orphans: number;
   /** Sources with no record that changed after backfill began, which only a writer picks up. */
   changedSinceBackfill: number;
+  /** Rows backfill could not analyze, whatever has happened to them since. */
+  analysisFailures: number;
   users: Set<string>;
   missingIds: string[];
 }
@@ -77,6 +79,7 @@ export async function runVerify({
     missing: 0,
     orphans: 0,
     changedSinceBackfill: 0,
+    analysisFailures: 0,
     users: new Set(),
     missingIds: [],
   };
@@ -98,6 +101,9 @@ export async function runVerify({
     if (backfill?.status !== 'finished' || typeof position !== 'string') {
       return finish('failed', 'backfill_not_finished');
     }
+    if (typeof backfill.analysisFailures === 'number') {
+      tally.analysisFailures += backfill.analysisFailures;
+    }
     const outcome = await walkCollection({
       methods,
       control,
@@ -111,7 +117,9 @@ export async function runVerify({
     }
   }
 
-  return tally.missing > 0 ? finish('failed', 'mismatch') : finish('passed', null);
+  return tally.missing + tally.analysisFailures > 0
+    ? finish('failed', 'mismatch')
+    : finish('passed', null);
 }
 
 async function walkCollection({

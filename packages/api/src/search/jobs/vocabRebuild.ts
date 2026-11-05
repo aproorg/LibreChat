@@ -90,6 +90,9 @@ export async function runVocabRebuild({
       }
       lastId = rows[rows.length - 1]._id;
       if (counts.size >= MAX_COUNTS_IN_MEMORY) {
+        if (!control.holds()) {
+          return 'lost';
+        }
         await flush();
         await save({ lastId });
       }
@@ -113,6 +116,9 @@ export async function runVocabRebuild({
     const rows = await methods.readSearchVocabBatch({ afterId: lastId, limit: control.batchSize });
     if (rows.length === 0) {
       break;
+    }
+    if (!control.holds()) {
+      return 'lost';
     }
     await methods.settleSearchVocab({
       copy: rows

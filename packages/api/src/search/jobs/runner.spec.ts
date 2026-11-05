@@ -225,6 +225,93 @@ describe('search job runner', () => {
       expect((await chain())?.finishedAt).toBeInstanceOf(Date);
     });
 
+    it('a failure that repeats backs off and shows on the chain, and clears when it moves on', async () => {
+      await seed();
+      let clock = Date.now();
+      let attempts = 0;
+      let broken = true;
+      const runner = createRunner(harness, {
+        now: () => clock,
+        methods: withMethods(harness, {
+          ensureSearchIndexes: async () => {
+            attempts += 1;
+            if (broken) {
+              throw new Error('index build refused');
+            }
+            return harness.methods.ensureSearchIndexes();
+          },
+        }),
+      });
+      await request('backfill');
+
+      await settle(runner, 6);
+
+      expect(attempts).toBe(2);
+      expect(await chain()).toMatchObject({ step: 'indexes', failures: 2 });
+      expect((await chain())?.lastFailureAt).toBeInstanceOf(Date);
+
+      broken = false;
+      clock += 11 * 60_000;
+      await settle(runner, 5);
+
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+      expect(await chain()).toMatchObject({ failures: 0 });
+    });
+
+    it('a standalone verify that fails writes no chain, so none starts', async () => {
+      await request('verify');
+      const runner = createRunner(harness, {
+        methods: withMethods(harness, {
+          writeSearchState: async (key, fields) => {
+            if (key === 'verification') {
+              throw new Error('killed');
+            }
+            return harness.methods.writeSearchState(key, fields);
+          },
+        }),
+      });
+
+      await settle(runner);
+
+      expect(await chain()).toBeNull();
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(1);
+    });
+
+    it('a job stalled past its turn does not carry on after this process wins the lease back', async () => {
+      await seed(4);
+      let clock = Date.now();
+      const read = harness.methods.readSearchSources;
+      let stalled = false;
+      let reads = 0;
+      const runner = createRunner(harness, {
+        now: () => clock,
+        methods: withMethods(harness, {
+          readSearchSources: async (params) => {
+            reads += 1;
+            if (!stalled) {
+              stalled = true;
+              /* Past the lease, another holder takes a turn and leaves, then this one returns. */
+              clock += 31_000;
+              await createRunner(harness, { now: () => clock }).tick();
+              clock += 31_000;
+              await runner.tick();
+            }
+            return read(params);
+          },
+        }),
+      });
+      await request('backfill');
+
+      await runner.tick();
+      while (!stalled) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      await runner.idle();
+
+      expect(reads).toBe(1);
+      expect(await recordCount(harness, 'msearch')).toBe(0);
+    });
+
     it('verify reports a mismatch and fails, and the chain still ends', async () => {
       await seed();
       const insert = harness.methods.insertSearchRecords;
@@ -306,6 +393,26 @@ describe('search job runner', () => {
   });
 
   describe('pause and resume', () => {
+    it('a pause before a new backfill of a finished chain holds it', async () => {
+      await seed();
+      const runner = createRunner(harness);
+      await request('backfill');
+      await settle(runner);
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
+
+      await request('pause');
+      await settle(runner, 1);
+      await request('backfill');
+      await settle(runner);
+
+      expect(await recordCount(harness, 'msearch')).toBe(3);
+      expect((await chain())?.finishedAt).toBeUndefined();
+
+      await request('resume');
+      await settle(runner, 4);
+      expect(await recordCount(harness, 'msearch')).toBe(4);
+    });
+
     it('stops between batches, keeps its position, and resumes on request', async () => {
       await seed(6);
       const runner = createRunner(harness, { search: { jobs: { batchDelayMs: 20 } } });
@@ -417,6 +524,27 @@ describe('search job runner', () => {
       expect((await chain())?.finishedAt).toBeInstanceOf(Date);
       expect(await stateOf(harness, 'vocab')).toMatchObject({ run: 1 });
       write.mockRestore();
+    });
+
+    it('a failed first request is tried again at the next heartbeat', async () => {
+      await seed();
+      let broken = true;
+      const runner = createRunner(harness, {
+        ...on,
+        methods: withMethods(harness, {
+          writeSearchState: async (key, fields) => {
+            if (broken && key.startsWith('jobRequest:')) {
+              broken = false;
+              throw new Error('transient');
+            }
+            return harness.methods.writeSearchState(key, fields);
+          },
+        }),
+      });
+
+      await settle(runner);
+
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
     });
 
     it('a restart mid-chain resumes it rather than starting another', async () => {

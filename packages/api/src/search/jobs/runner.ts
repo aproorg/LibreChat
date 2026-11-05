@@ -23,6 +23,8 @@ export type SearchJobMethods = BackfillMethods &
   Pick<SearchMethods, 'ensureSearchIndexes' | 'listSearchJobRequests' | 'deleteSearchState'>;
 
 const CHAIN_KEY = 'chain';
+/** The longest wait between attempts at a job that keeps failing. */
+const MAX_RETRY_DELAY_MS = 10 * 60_000;
 const VERIFICATION_KEY = 'verification';
 /** Fixed, so every restart of every process asks for the same one backfill. */
 const ON_START_REQUEST = 'jobRequest:backfill-on-start';
@@ -70,29 +72,40 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
   let held = false;
+  let failures = 0;
+  let retryAt = 0;
   let ticking: Promise<void> | null = null;
   let active: Promise<void> | null = null;
 
   const readState = (key: string) => methods.readSearchState(key, JOB_STATE_READ);
   const isPaused = async () => (await readState(BACKFILL_KEYS.messages))?.pause === true;
 
-  const control: JobControl = {
-    batchSize,
-    holds: () => !stopped && lease.isHeld(),
-    async check() {
-      if (!control.holds()) {
-        return 'lost';
-      }
-      return (await isPaused()) ? 'paused' : null;
-    },
-    wait: () =>
-      new Promise((resolve) => {
-        setTimeout(resolve, batchDelayMs).unref();
-      }),
+  /**
+   * Tied to the turn it starts under. A job that stalled past its lease must not carry on
+   * from memory if this process later wins the lease back. State writes are fenced by this
+   * local check rather than per write, because a stale job's records are insert-only.
+   */
+  const jobControl = (): JobControl => {
+    const epoch = lease.epoch();
+    const holds = () => !stopped && lease.isHeld() && lease.epoch() === epoch;
+    return {
+      batchSize,
+      holds,
+      async check() {
+        if (!holds()) {
+          return 'lost';
+        }
+        return (await isPaused()) ? 'paused' : null;
+      },
+      wait: () =>
+        new Promise((resolve) => {
+          setTimeout(resolve, batchDelayMs).unref();
+        }),
+    };
   };
 
   /** The chain's order. Reconcile joins between `vocab` and `verify` when it lands. */
-  const chainSteps = (): ChainStep[] => {
+  const chainSteps = (control: JobControl): ChainStep[] => {
     const ready = service.jobAnalyzer();
     if (!ready) {
       return [];
@@ -112,7 +125,8 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   };
 
   async function runChain(chain: SearchStateEntry): Promise<void> {
-    const steps = chainSteps();
+    const control = jobControl();
+    const steps = chainSteps(control);
     const start = Math.max(
       steps.findIndex(({ name }) => name === chain.step),
       0,
@@ -130,11 +144,34 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     }
   }
 
-  /** Only one job runs at a time. A failure is logged and the next heartbeat tries again. */
-  function startJob(run: () => Promise<void>): void {
+  /**
+   * Only one job runs at a time. A failure is logged and tried again, soon at first and then
+   * backing off, because a failure that repeats must neither hammer the tenant nor stay
+   * invisible: a chain's count reaches `search-job.js status`.
+   */
+  function startJob(run: () => Promise<void>, { inChain }: { inChain: boolean }): void {
+    const record = (fields: Record<string, unknown>) =>
+      inChain
+        ? methods.writeSearchState(CHAIN_KEY, fields).catch((error: unknown) => {
+            logger.warn('[search] Job state write failed', getSafeErrorMetadata(error));
+          })
+        : Promise.resolve();
     active = run()
-      .catch((error: unknown) => {
+      .then(async () => {
+        if (failures > 0) {
+          failures = 0;
+          retryAt = 0;
+          await record({ failures: 0 });
+        }
+      })
+      .catch(async (error: unknown) => {
         logger.warn('[search] Job failed', getSafeErrorMetadata(error));
+        failures += 1;
+        retryAt =
+          failures > 1
+            ? now() + Math.min(lease.heartbeatMs * 2 ** (failures - 1), MAX_RETRY_DELAY_MS)
+            : 0;
+        await record({ failures, lastFailureAt: new Date(now()) });
       })
       .finally(() => {
         active = null;
@@ -146,8 +183,12 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     const finishedOther = chain?.finishedAt != null && chain.requestId !== key;
     if (finishedOther) {
       /* A deliberate new run. It re-reads every source, and an existing record stays. */
+      const paused = await isPaused();
       for (const collection of SOURCE_COLLECTIONS) {
         await methods.deleteSearchState(BACKFILL_KEYS[collection]);
+      }
+      if (paused) {
+        await setPause(true);
       }
       await methods.deleteSearchState(CHAIN_KEY);
     }
@@ -185,17 +226,26 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       case 'verify': {
         /* Waits its turn: a verify mid-chain would judge a half-built index. */
         const chain = await readState(CHAIN_KEY);
-        if (active || (chain && chain.finishedAt == null) || (await isPaused())) {
+        if (
+          active ||
+          now() < retryAt ||
+          (chain && chain.finishedAt == null) ||
+          (await isPaused())
+        ) {
           return;
         }
         const previous = await readState(VERIFICATION_KEY);
         const round = (typeof previous?.rounds === 'number' ? previous.rounds : 0) + 1;
-        startJob(async () => {
-          const outcome = await runVerify({ methods, control, metrics, round, now });
-          if (outcome === 'done') {
-            await methods.deleteSearchState(key);
-          }
-        });
+        const control = jobControl();
+        startJob(
+          async () => {
+            const outcome = await runVerify({ methods, control, metrics, round, now });
+            if (outcome === 'done') {
+              await methods.deleteSearchState(key);
+            }
+          },
+          { inChain: false },
+        );
         return;
       }
       default:
@@ -223,18 +273,19 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       return;
     }
     if (!held) {
-      held = true;
+      /* Only after it worked, so a failed read or write is tried again next heartbeat. */
       await requestBackfillOnStart();
+      held = true;
     }
     for (const request of await methods.listSearchJobRequests()) {
       await handleRequest(request);
     }
-    if (active) {
+    if (active || now() < retryAt) {
       return;
     }
     const chain = await readState(CHAIN_KEY);
     if (chain && chain.finishedAt == null && !(await isPaused())) {
-      startJob(() => runChain(chain));
+      startJob(() => runChain(chain), { inChain: true });
     }
   }
 

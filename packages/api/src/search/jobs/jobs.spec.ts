@@ -212,6 +212,23 @@ describe('search jobs', () => {
       expect(await recordCount(harness, 'msearch')).toBe(4);
     });
 
+    it('a stale holder does not mark failed a walk another holder owns', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
+      let holds = true;
+      const failing = withMethods(harness, {
+        insertSearchRecords: async () => {
+          holds = false;
+          await harness.methods.writeSearchState(BACKFILL_KEYS.messages, { status: 'finished' });
+          throw new Error('stalled write failed');
+        },
+      });
+      const control = { ...freeControl(), holds: () => holds };
+
+      await expect(runBackfill(backfillDeps(control, failing))).rejects.toThrow();
+
+      expect(await stateOf(harness, BACKFILL_KEYS.messages)).toMatchObject({ status: 'finished' });
+    });
+
     it('writes nothing once the lease is gone', async () => {
       await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
       const control = { ...freeControl(), holds: () => false };
@@ -511,6 +528,37 @@ describe('search jobs', () => {
       await verify(methods);
 
       expect(await verification()).toMatchObject({ status: 'passed', missing: 0 });
+    });
+
+    it('fails on a row a pack threw on, even if it changed later', async () => {
+      const row = sourceMessage({ text: 'kerfi' });
+      await storeSources(harness, 'messages', [row]);
+      await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
+      const throwing = {
+        ...harness.analyzer,
+        analyzeMessage: () => {
+          throw new Error('pack threw');
+        },
+      };
+      await runBackfill({ ...backfillDeps(), analyzer: throwing });
+      await harness.database.connection
+        .db!.collection('messages')
+        .updateOne(
+          { _id: new mongoose.Types.ObjectId(String(row._id)) },
+          { $set: { updatedAt: new Date(Date.now() + 1000) } },
+        );
+
+      await verify();
+
+      expect(await stateOf(harness, BACKFILL_KEYS.messages)).toMatchObject({
+        analysisFailures: 1,
+        skipped: 0,
+      });
+      expect(await verification()).toMatchObject({
+        status: 'failed',
+        reason: 'mismatch',
+        analysisFailures: 1,
+      });
     });
 
     it('fails rather than passes when no backfill has finished', async () => {

@@ -22,19 +22,29 @@ export interface SearchCollectionStatus {
   /** An estimate taken when the walk started. */
   total: number | null;
   skipped: number;
+  /** Rows that should have a record, where a language pack threw. Verification fails on these. */
+  analysisFailures: number;
   /** Source rows per second, or `null` when nothing is running. */
   rate: number | null;
   estimatedFinish: Date | null;
 }
 
 export interface SearchJobStatus {
-  chain: { step: string | null; startedAt: Date | null; finishedAt: Date | null };
+  chain: {
+    step: string | null;
+    startedAt: Date | null;
+    finishedAt: Date | null;
+    /** Failed attempts since the chain last moved. Above zero, the chain is retrying. */
+    failures: number;
+    lastFailureAt: Date | null;
+  };
   paused: boolean;
   collections: Record<SearchSourceCollection, SearchCollectionStatus>;
   verification: Record<string, unknown> | null;
   leaseHeld: boolean;
   pendingRequests: string[];
-  tenants: string[];
+  /** `null` when the read timed out, so a slow `distinct` cannot hide a running job's progress. */
+  tenants: string[] | null;
 }
 
 const dateOf = (value: unknown): Date | null => (value instanceof Date ? value : null);
@@ -55,6 +65,7 @@ function collectionStatus(
     processed,
     total,
     skipped: numberOf(entry?.skipped) ?? 0,
+    analysisFailures: numberOf(entry?.analysisFailures) ?? 0,
     rate,
     estimatedFinish:
       rate !== null && total !== null
@@ -77,13 +88,15 @@ export async function readSearchJobStatus(
       read('verification'),
       read('lease'),
       methods.listSearchJobRequests(),
-      methods.readSearchSourceTenants(),
+      methods.readSearchSourceTenants().catch(() => null),
     ]);
   return {
     chain: {
       step: typeof chain?.step === 'string' ? chain.step : null,
       startedAt: dateOf(chain?.startedAt),
       finishedAt: dateOf(chain?.finishedAt),
+      failures: numberOf(chain?.failures) ?? 0,
+      lastFailureAt: dateOf(chain?.lastFailureAt),
     },
     paused: messages?.pause === true,
     collections: {
@@ -109,13 +122,14 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
   const lines = [
     `chain step: ${chain.finishedAt ? 'finished' : show(chain.step)}`,
     `chain started: ${show(chain.startedAt)}  finished: ${show(chain.finishedAt)}`,
+    `failed attempts: ${chain.failures}  last failure: ${show(chain.lastFailureAt)}`,
     `paused: ${status.paused}  lease held: ${status.leaseHeld}`,
   ];
   for (const name of SOURCE_COLLECTIONS) {
     const entry = collections[name];
     lines.push(
       `${name}: ${show(entry.status)}  processed ${entry.processed} of about ${show(entry.total)}` +
-        `  skipped ${entry.skipped}` +
+        `  skipped ${entry.skipped}  analysis failures ${entry.analysisFailures}` +
         `  rate ${entry.rate === null ? '-' : `${Math.round(entry.rate)}/s`}` +
         `  estimated finish ${show(entry.estimatedFinish)}`,
     );
@@ -127,7 +141,7 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
       `  changed since backfill ${show(verification?.changedSinceBackfill)}` +
       `  passed at ${show(verification?.passedAt)}`,
     `pending requests: ${status.pendingRequests.join(', ') || '-'}`,
-    `distinct tenantId values: ${status.tenants.join(', ') || '-'}`,
+    `distinct tenantId values: ${status.tenants === null ? 'read timed out' : status.tenants.join(', ') || '-'}`,
   );
   return lines;
 }
