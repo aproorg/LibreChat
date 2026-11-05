@@ -2,7 +2,13 @@ const undici = require('undici');
 const fetch = require('node-fetch');
 const jwtDecode = require('jsonwebtoken/decode');
 const { ErrorTypes, FileSources } = require('librechat-data-provider');
-const { findUser, createUser, updateUser, findRolesByNames } = require('~/models');
+const {
+  findUser,
+  createUser,
+  updateUser,
+  findRolesByNames,
+  setOpenidFederatedIdp,
+} = require('~/models');
 const {
   getOpenIdProxyDispatcher,
   resolveAppConfigForUser,
@@ -100,6 +106,7 @@ jest.mock('~/models', () => ({
   createUser: jest.fn(),
   updateUser: jest.fn(),
   findRolesByNames: jest.fn(),
+  setOpenidFederatedIdp: jest.fn(),
 }));
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/api'),
@@ -1467,6 +1474,111 @@ describe('setupOpenId', () => {
       }),
     );
     expect(user.avatar).toBe('/fake/path/to/avatar.png');
+  });
+
+  describe('openidFederatedIdp from ID-token identities claim', () => {
+    const existing = { _id: 'existingId', provider: 'openid', email: 'test@example.com' };
+    const fed = { 'cognito:username': 'Entra_abc' };
+    const login = async (extraClaims, found = existing) => {
+      findUser.mockResolvedValue(found ? { ...found } : null);
+      return validate({
+        ...tokenset,
+        claims: () => ({ ...tokenset.claims(), ...fed, ...extraClaims }),
+      });
+    };
+    const recorded = () => setOpenidFederatedIdp.mock.calls.at(-1)?.[1];
+
+    afterEach(() => {
+      delete process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS;
+      setOpenidFederatedIdp.mockClear();
+    });
+
+    describe('gate off (env unset or blank)', () => {
+      it.each([[undefined], [''], ['  ']])('writes nothing new for env %j', async (env) => {
+        if (env !== undefined) process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = env;
+        const { user } = await login({ identities: [{ providerName: 'Entra' }] });
+        expect(user).toBeTruthy();
+        expect(setOpenidFederatedIdp).not.toHaveBeenCalled();
+        expect(updateUser.mock.calls.at(-1)[1]).not.toHaveProperty('openidFederatedIdp');
+      });
+
+      it('does not put the field on newly created users', async () => {
+        await login({ identities: [{ providerName: 'Entra' }] }, null);
+        expect(createUser.mock.calls.at(-1)[0]).not.toHaveProperty('openidFederatedIdp');
+        expect(setOpenidFederatedIdp).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('gate on', () => {
+      beforeEach(() => {
+        process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS = 'Entra';
+      });
+
+      it('never writes back stale remoteAgentOid / openidFederatedIdp from the loaded user', async () => {
+        await login(
+          { identities: [{ providerName: 'Entra' }] },
+          { ...existing, remoteAgentOid: 'stale-oid', openidFederatedIdp: 'Entra' },
+        );
+        const written = updateUser.mock.calls.at(-1)[1];
+        expect(written).not.toHaveProperty('remoteAgentOid');
+        expect(written).not.toHaveProperty('openidFederatedIdp');
+      });
+
+      it('records the provider name for a federated login via the dedicated method', async () => {
+        const { user } = await login({
+          identities: [{ providerName: 'Entra', providerType: 'OIDC' }],
+        });
+        expect(user).toBeTruthy();
+        expect(setOpenidFederatedIdp).toHaveBeenCalledWith('existingId', 'Entra');
+        expect(updateUser.mock.calls.at(-1)[1]).not.toHaveProperty('openidFederatedIdp');
+      });
+
+      it('accepts identities delivered as a JSON string', async () => {
+        await login({ identities: JSON.stringify([{ providerName: 'Entra' }]) });
+        expect(recorded()).toBe('Entra');
+      });
+
+      it('records for newly created users too', async () => {
+        await login({ identities: [{ providerName: 'Entra' }] }, null);
+        expect(createUser.mock.calls.at(-1)[0]).not.toHaveProperty('openidFederatedIdp');
+        expect(setOpenidFederatedIdp).toHaveBeenCalledWith('newUserId', 'Entra');
+      });
+
+      it('clears a previous value on a native login', async () => {
+        const { user } = await login({}, { ...existing, openidFederatedIdp: 'Entra' });
+        expect(user).toBeTruthy();
+        expect(recorded()).toBeNull();
+      });
+
+      it.each([
+        ['garbage string', 'not json'],
+        ['empty array', []],
+        ['non-string providerName', [{ providerName: 42 }]],
+        ['missing providerName', [{}]],
+        ['non-array object', { providerName: 'Entra' }],
+      ])('treats %s as native and still logs in', async (_name, identities) => {
+        const { user } = await login({ identities }, { ...existing, openidFederatedIdp: 'Entra' });
+        expect(user).toBeTruthy();
+        expect(recorded()).toBeNull();
+      });
+
+      it('rejects forged identities on a native account (username lacks the provider prefix)', async () => {
+        await login(
+          { 'cognito:username': 'native-user', identities: [{ providerName: 'Entra' }] },
+          { ...existing, openidFederatedIdp: 'Entra' },
+        );
+        expect(recorded()).toBeNull();
+      });
+
+      it('ignores identities that only appear in userinfo, not the ID token', async () => {
+        require('openid-client').fetchUserInfo.mockResolvedValueOnce({
+          sub: '1234',
+          identities: [{ providerName: 'Entra' }],
+        });
+        await login({}, { ...existing, openidFederatedIdp: 'Entra' });
+        expect(recorded()).toBeNull();
+      });
+    });
   });
 
   it('should not attempt to download avatar if picture is not provided', async () => {

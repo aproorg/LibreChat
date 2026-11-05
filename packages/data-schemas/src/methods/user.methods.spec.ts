@@ -1427,4 +1427,62 @@ describe('User Methods - Database Tests', () => {
       expect(users).toHaveLength(5);
     });
   });
+
+  describe('linkRemoteAgentOid', () => {
+    const mk = (email: string) =>
+      User.create({ name: email, email, provider: 'openid', openidId: `sub-${email}` });
+
+    test('links once, never overwrites, and enforces oid uniqueness', async () => {
+      await User.syncIndexes();
+      const a = await mk('a@example.com');
+      const b = await mk('b@example.com');
+
+      expect(await methods.linkRemoteAgentOid(String(a._id), 'oid-1')).toBe(true);
+      expect(await methods.linkRemoteAgentOid(String(a._id), 'oid-2')).toBe(false);
+      expect(await methods.linkRemoteAgentOid(String(b._id), 'oid-1')).toBe(false);
+
+      expect((await User.findById(a._id).lean())?.remoteAgentOid).toBe('oid-1');
+      expect((await User.findById(b._id).lean())?.remoteAgentOid).toBeUndefined();
+    });
+
+    test('linking the same oid again is idempotent', async () => {
+      const u = await mk('d@example.com');
+      const results = await Promise.all([
+        methods.linkRemoteAgentOid(String(u._id), 'oid-same'),
+        methods.linkRemoteAgentOid(String(u._id), 'oid-same'),
+      ]);
+      expect(results).toEqual([true, true]);
+    });
+
+    test('concurrent links with different oids on one account: exactly one wins', async () => {
+      const u = await mk('c@example.com');
+      const results = await Promise.all([
+        methods.linkRemoteAgentOid(String(u._id), 'oid-x'),
+        methods.linkRemoteAgentOid(String(u._id), 'oid-y'),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+  });
+
+  describe('setOpenidFederatedIdp', () => {
+    test('sets the value, and unsets it with null', async () => {
+      const u = await User.create({ name: 'f', email: 'f@example.com', provider: 'openid' });
+      await methods.setOpenidFederatedIdp(String(u._id), 'Entra');
+      expect((await User.findById(u._id).lean())?.openidFederatedIdp).toBe('Entra');
+
+      await methods.setOpenidFederatedIdp(String(u._id), null);
+      expect(await User.findById(u._id).lean()).not.toHaveProperty('openidFederatedIdp');
+    });
+
+    test('updateUser does not touch the field', async () => {
+      const u = await User.create({
+        name: 'h',
+        email: 'h@example.com',
+        provider: 'openid',
+        openidFederatedIdp: 'Entra',
+      });
+      await methods.updateUser(String(u._id), { name: 'i' });
+      expect((await User.findById(u._id).lean())?.openidFederatedIdp).toBe('Entra');
+    });
+  });
 });
