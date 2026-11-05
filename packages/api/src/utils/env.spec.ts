@@ -9,6 +9,7 @@ import {
   processMCPEnv,
   encodeHeaderValue,
   OMIT_UNAVAILABLE_OPENID_HEADERS,
+  IGNORE_OPENID_TOKENS_IN_HEADERS,
 } from './env';
 import { OpenIDReauthRequiredError } from './oidc';
 import { applyRequestHeaders } from '~/mcp/utils';
@@ -2712,6 +2713,85 @@ describe('resolveHeaders with unavailable OpenID tokens for unattended requests'
     });
 
     expect(result).toEqual({ 'x-openid-access-token': 'live-access-token' });
+  });
+});
+
+describe('resolveHeaders for Agents API requests (remote agents flags)', () => {
+  const CALLER_TOKEN = 'caller-bearer-for-librechat';
+  const headers = {
+    authorization: 'Bearer {{LIBRECHAT_OPENID_ID_TOKEN}}',
+    'x-openid-access-token': '{{LIBRECHAT_OPENID_ACCESS_TOKEN}}',
+    'x-user-email': '{{LIBRECHAT_USER_EMAIL}}',
+  };
+  const flags = {
+    [OMIT_UNAVAILABLE_OPENID_HEADERS]: true,
+    [IGNORE_OPENID_TOKENS_IN_HEADERS]: true,
+  };
+  /** Mirrors what requireRemoteAgentAuth builds for OIDC callers: access_token only */
+  const oidcTokens = {
+    federatedTokens: {
+      access_token: CALLER_TOKEN,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    },
+  };
+  function remoteUser(extra: Record<string, unknown>) {
+    return createSafeUser({
+      ...createTestUser({ id: 'user-123', provider: 'openid' }),
+      openidId: 'oidc-sub-456',
+      email: 'me@example.com',
+      ...extra,
+    } as unknown as IUser);
+  }
+
+  it('T1: API-key caller with the flags omits credential headers without throwing', () => {
+    const user = remoteUser(flags);
+    expect((user as Record<string, unknown>)[OMIT_UNAVAILABLE_OPENID_HEADERS]).toBe(true);
+    expect(resolveHeaders({ headers, user, stripUnresolved: true })).toEqual({
+      'x-user-email': 'me@example.com',
+    });
+  });
+
+  it('T2: API-key caller without the flags still throws OpenIDReauthRequiredError', () => {
+    expect(() => resolveHeaders({ headers, user: remoteUser({}), stripUnresolved: true })).toThrow(
+      OpenIDReauthRequiredError,
+    );
+  });
+
+  it('T3: OIDC caller with the flags never forwards the caller bearer', () => {
+    const user = remoteUser({ ...flags, ...oidcTokens });
+    const result = resolveHeaders({ headers, user, stripUnresolved: true });
+    expect(result).toEqual({ 'x-user-email': 'me@example.com' });
+    expect(JSON.stringify(result)).not.toContain(CALLER_TOKEN);
+  });
+
+  it('T4: OIDC caller without the flags is unchanged (bearer resolves, ID token throws)', () => {
+    const user = remoteUser(oidcTokens);
+    expect(
+      resolveHeaders({
+        headers: { 'x-openid-access-token': headers['x-openid-access-token'] },
+        user,
+      }),
+    ).toEqual({ 'x-openid-access-token': CALLER_TOKEN });
+    expect(() => resolveHeaders({ headers, user, stripUnresolved: true })).toThrow(
+      OpenIDReauthRequiredError,
+    );
+  });
+
+  it('T7: processMCPEnv ignores the flags (valid tokens still resolve, missing ones still signal re-auth)', () => {
+    const mcp = (user: Partial<IUser>) =>
+      processMCPEnv({
+        user,
+        options: {
+          type: 'streamable-http',
+          url: 'https://mcp.example.com',
+          headers: { 'x-token': '{{LIBRECHAT_OPENID_ACCESS_TOKEN}}' },
+        } as MCPOptions,
+      });
+    const withTokens = mcp(remoteUser({ ...flags, ...oidcTokens }));
+    expect((withTokens as { headers?: Record<string, string> }).headers?.['x-token']).toBe(
+      CALLER_TOKEN,
+    );
+    expect(() => mcp(remoteUser(flags))).toThrow(OpenIDReauthRequiredError);
   });
 });
 
