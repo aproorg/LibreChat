@@ -59,12 +59,12 @@ const connect = require('./connect');
     console.orange('No linked users matched; nothing changed.');
     silentExit(0);
   }
-  await User.updateMany(
-    { _id: { $in: users.map((u) => u._id) } },
-    // Durable revoke: a per-user sentinel (unique index safe) fails the first-link "no remoteAgentOid"
-    // check and never equals a real oid, so the same token cannot re-link. Clear with --reset.
-    [{ $set: { remoteAgentOid: { $concat: ['revoked:', { $toString: '$_id' }] } } }],
-  );
+  // Durable revoke: a per-user sentinel (unique index safe) fails the first-link "no remoteAgentOid"
+  // check and never equals a real oid, so the same token cannot re-link. Clear with --reset.
+  // One update per user: DocumentDB does not support aggregation-pipeline updates.
+  for (const u of users) {
+    await User.updateOne({ _id: u._id }, { $set: { remoteAgentOid: `revoked:${u._id}` } });
+  }
   for (const u of users) {
     console.green(`Unlinked ${u.email} (was oid ${u.remoteAgentOid})`);
   }
