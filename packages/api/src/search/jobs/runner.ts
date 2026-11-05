@@ -120,7 +120,10 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         },
       },
       { name: 'vocab', run: () => runVocabRebuild({ methods, control, now }) },
-      { name: 'verify', run: () => runVerify({ methods, control, metrics, round: 1, now }) },
+      {
+        name: 'verify',
+        run: () => runVerify({ methods, control, metrics, version: ready.version, round: 1, now }),
+      },
     ];
   };
 
@@ -139,7 +142,8 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       const next = steps[index + 1];
       await methods.writeSearchState(
         CHAIN_KEY,
-        next ? { step: next.name } : { finishedAt: new Date(now()) },
+        /* Moving on clears the count, whichever process's attempts it was. */
+        next ? { step: next.name, failures: 0 } : { finishedAt: new Date(now()), failures: 0 },
       );
     }
   }
@@ -147,15 +151,13 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   /**
    * Only one job runs at a time. A failure is logged and tried again, soon at first and then
    * backing off, because a failure that repeats must neither hammer the tenant nor stay
-   * invisible: a chain's count reaches `search-job.js status`.
+   * invisible: the count on `stateKey` reaches `search-job.js status`.
    */
-  function startJob(run: () => Promise<void>, { inChain }: { inChain: boolean }): void {
+  function startJob(run: () => Promise<void>, stateKey: string): void {
     const record = (fields: Record<string, unknown>) =>
-      inChain
-        ? methods.writeSearchState(CHAIN_KEY, fields).catch((error: unknown) => {
-            logger.warn('[search] Job state write failed', getSafeErrorMetadata(error));
-          })
-        : Promise.resolve();
+      methods.writeSearchState(stateKey, fields).catch((error: unknown) => {
+        logger.warn('[search] Job state write failed', getSafeErrorMetadata(error));
+      });
     active = run()
       .then(async () => {
         if (failures > 0) {
@@ -236,16 +238,18 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         }
         const previous = await readState(VERIFICATION_KEY);
         const round = (typeof previous?.rounds === 'number' ? previous.rounds : 0) + 1;
+        const ready = service.jobAnalyzer();
+        if (!ready) {
+          return;
+        }
         const control = jobControl();
-        startJob(
-          async () => {
-            const outcome = await runVerify({ methods, control, metrics, round, now });
-            if (outcome === 'done') {
-              await methods.deleteSearchState(key);
-            }
-          },
-          { inChain: false },
-        );
+        const { version } = ready;
+        startJob(async () => {
+          const outcome = await runVerify({ methods, control, metrics, version, round, now });
+          if (outcome === 'done') {
+            await methods.deleteSearchState(key);
+          }
+        }, VERIFICATION_KEY);
         return;
       }
       default:
@@ -285,7 +289,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     }
     const chain = await readState(CHAIN_KEY);
     if (chain && chain.finishedAt == null && !(await isPaused())) {
-      startJob(() => runChain(chain), { inChain: true });
+      startJob(() => runChain(chain), CHAIN_KEY);
     }
   }
 

@@ -56,7 +56,7 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 | `stream` | `resumeToken`, `epoch`, `savedAt`, `gapAt?` | Where sync resumes |
 | `backfill:messages`, `backfill:conversations` | `lastId`, `status`, `pause`, `pausedReason?`, `startedAt`, `processed`, `total`, `skipped`, `analysisFailures`, `rate`, `rateAt`, `finishedAt?`, `finishedAtId?` | Crash resume, pause flag, progress. `finishedAtId` bounds verification while no writer runs |
 | `reconcile` | `pass`, `phase`, `lastId` per phase, `status`, `missing`, `orphans`, `stale`, `finishedAt?` | Reports before repair |
-| `verification` | `status` (`pending`, `passed`, `failed`), `reason?`, `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds`, `checked`, `missing`, `missingIds` (a sample), `orphans`, `changedSinceBackfill`, `analysisFailures`, `finishedAt` | Readiness (FR-019, FR-037) |
+| `verification` | `status` (`pending`, `passed`, `failed`), `reason?`, `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds`, `checked`, `missing`, `missingIds` (a sample), `orphans`, `changedSinceBackfill`, `analysisFailures`, `otherVersion`, `failures?`, `finishedAt` | Readiness (FR-019, FR-037) |
 | `analyzer` | `version`, `packs` with attribution text and URL, `attributionUntilReanalyzed`, `tenantId` | Token changes (FR-026), FR-043 after a disable, tenant pin |
 | `chain` | `requestId`, `step`, `startedAt`, `finishedAt?`, `failures?`, `lastFailureAt?` | Backfill chain position, resumed by each new lease holder. Automatic reconcile waits for `finishedAt` |
 | `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |

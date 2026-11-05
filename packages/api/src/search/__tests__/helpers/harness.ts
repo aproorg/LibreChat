@@ -60,6 +60,10 @@ export async function createSearchHarness(): Promise<SearchHarness> {
   const server = await MongoMemoryServer.create();
   const database = new mongoose.Mongoose();
   database.set('autoIndex', false);
+  /* So a test can see exactly which collections its code created. */
+  database.set('autoCreate', false);
+  /* As `api/db/connect.js` sets it, which strips any filter field a schema does not declare. */
+  database.set('strictQuery', true);
   await database.connect(server.getUri());
   const models = createModels(database);
   const methods = createMethods(database) as SearchHarness['methods'];

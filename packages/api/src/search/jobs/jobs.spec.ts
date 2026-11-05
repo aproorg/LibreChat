@@ -30,7 +30,13 @@ describe('search jobs', () => {
     metrics: harness.metrics,
   });
   const verify = (methods = harness.methods) =>
-    runVerify({ methods, control: freeControl(), metrics: harness.metrics, round: 1 });
+    runVerify({
+      methods,
+      control: freeControl(),
+      metrics: harness.metrics,
+      version: computeAnalyzerVersion(harness.packs),
+      round: 1,
+    });
   const verification = () => stateOf(harness, 'verification');
   const lastEvent = (name: string) =>
     harness.logged.filter(({ event }) => event === name).pop()?.meta;
@@ -227,6 +233,41 @@ describe('search jobs', () => {
       await expect(runBackfill(backfillDeps(control, failing))).rejects.toThrow();
 
       expect(await stateOf(harness, BACKFILL_KEYS.messages)).toMatchObject({ status: 'finished' });
+    });
+
+    it('reports a rate that includes the throttle', async () => {
+      await storeSources(
+        harness,
+        'messages',
+        Array.from({ length: 4 }, (_, index) => sourceMessage({ text: `word${index}` })),
+      );
+      let clock = 1_000_000;
+      const rates: number[] = [];
+      const read = harness.methods.readSearchSources;
+      const methods = withMethods(harness, {
+        readSearchSources: async (params) => {
+          clock += 100;
+          return read(params);
+        },
+        writeSearchState: async (key, fields) => {
+          if (typeof fields.rate === 'number' && fields.rate > 0) {
+            rates.push(fields.rate);
+          }
+          return harness.methods.writeSearchState(key, fields);
+        },
+      });
+      const control = {
+        ...freeControl(),
+        wait: async () => {
+          clock += 900;
+        },
+      };
+
+      await runBackfill({ ...backfillDeps(control, methods), now: () => clock });
+
+      /* 2 rows in 0.1 s, then 2 rows in a whole second including its throttle: 20, then a blend. */
+      expect(rates[0]).toBeCloseTo(20);
+      expect(rates[1]).toBeCloseTo(20 * 0.7 + 2 * 0.3);
     });
 
     it('writes nothing once the lease is gone', async () => {
@@ -559,6 +600,32 @@ describe('search jobs', () => {
         reason: 'mismatch',
         analysisFailures: 1,
       });
+    });
+
+    it('reports records another analyzer wrote, without failing on them', async () => {
+      await load([sourceMessage({ text: 'kerfi' }), sourceMessage({ text: 'kerfi' })]);
+      await harness.database.connection
+        .db!.collection('msearch')
+        .updateOne({}, { $set: { v: 'older' } });
+
+      await verify();
+
+      expect(await verification()).toMatchObject({ status: 'passed', otherVersion: 1 });
+    });
+
+    it('a stale holder does not overwrite the result', async () => {
+      await load();
+
+      const outcome = await runVerify({
+        methods: harness.methods,
+        control: { ...freeControl(), holds: () => false },
+        metrics: harness.metrics,
+        version: 'v',
+        round: 1,
+      });
+
+      expect(outcome).toBe('lost');
+      expect(await verification()).toMatchObject({ status: 'pending' });
     });
 
     it('fails rather than passes when no backfill has finished', async () => {

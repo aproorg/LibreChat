@@ -258,6 +258,17 @@ describe('search job runner', () => {
       expect(await chain()).toMatchObject({ failures: 0 });
     });
 
+    it('a new holder moving a step on clears a count it did not make', async () => {
+      await seed();
+      await request('backfill');
+      await harness.methods.writeSearchState('chain', { failures: 5 });
+      const runner = createRunner(harness);
+
+      await settle(runner);
+
+      expect(await chain()).toMatchObject({ failures: 0 });
+    });
+
     it('a standalone verify that fails writes no chain, so none starts', async () => {
       await request('verify');
       const runner = createRunner(harness, {
@@ -275,6 +286,7 @@ describe('search job runner', () => {
 
       expect(await chain()).toBeNull();
       expect(await harness.methods.listSearchJobRequests()).toHaveLength(1);
+      expect(harness.logged.some(({ event }) => event === '[search] Job failed')).toBe(true);
     });
 
     it('a job stalled past its turn does not carry on after this process wins the lease back', async () => {

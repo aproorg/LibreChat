@@ -339,7 +339,7 @@ Tests first, then data methods, then services, then routes, then client.
 
 - **FR-031 engine**: T151 cannot start before T022, and T149 needs its tenant on 8.0. "The upgrade precedes search work on tenants."
 - **FR-031 sandbox**: The owner lifted this gate for Phase 4's code on 2026-11-04, because that code stays off by default and reaches no tenant; sandbox results may force rework. Otherwise T017 precedes Phase 6 and T021, and T149 needs T148. It can stop all tenant work, or replace T111, T113 and T124 and their tests T100 and T101 through R-17.
-- **Backfill test, one exception**: On 2026-11-05 the owner lifted T017 and the engine upgrade for apro-sandbox's backfill test only. Every other tenant stays behind both gates.
+- **Backfill test, one exception**: On 2026-11-05 the owner lifted T017 and the engine upgrade for the sandbox tenant's backfill test only. Every other tenant stays behind both gates.
 - **FR-045**: No tenant image holds Icelandic data before T146, so T149 runs with `languages: [en]` until then, and T151 cannot start.
 - **SC-001 to SC-004**: Must pass before T151, and again before a later tenant's cutover on any analyzer or ranking change.
 

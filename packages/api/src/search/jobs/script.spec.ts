@@ -132,7 +132,11 @@ describe('search-job script', () => {
     });
 
     it('still reports progress when the tenant read fails', async () => {
-      await harness.methods.writeSearchState('chain', { step: 'vocab', failures: 3 });
+      await harness.methods.writeSearchState('chain', {
+        step: 'verify',
+        failures: 3,
+        finishedAt: new Date(NOW),
+      });
       const methods = {
         ...harness.methods,
         readSearchSourceTenants: () => Promise.reject(new Error('timed out')),
@@ -141,10 +145,23 @@ describe('search-job script', () => {
       const status = await readSearchJobStatus(methods, NOW);
 
       expect(status.tenants).toBeNull();
-      expect(status.chain).toMatchObject({ step: 'vocab', failures: 3 });
+      expect(status.chain).toMatchObject({ step: 'verify', failures: 3 });
       const text = formatSearchJobStatus(status).join('\n');
-      expect(text).toContain('read timed out');
+      expect(text).toContain('distinct tenantId values: not read');
       expect(text).toContain('failed attempts: 3');
+    });
+
+    it('does not walk the sources for tenants while a chain is running', async () => {
+      await harness.methods.writeSearchState('chain', { step: 'backfill' });
+      const readTenants = jest.fn(harness.methods.readSearchSourceTenants);
+
+      const status = await readSearchJobStatus(
+        { ...harness.methods, readSearchSourceTenants: readTenants },
+        NOW,
+      );
+
+      expect(readTenants).not.toHaveBeenCalled();
+      expect(status.tenants).toBeNull();
     });
 
     it('gives no rate from a process that stopped reporting', async () => {

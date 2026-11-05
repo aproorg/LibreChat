@@ -525,6 +525,8 @@ describe('search job methods', () => {
     server = await MongoMemoryServer.create();
     database = new mongoose.Mongoose();
     database.set('autoIndex', false);
+    /* As `api/db/connect.js` sets it, which strips any filter field a schema does not declare. */
+    database.set('strictQuery', true);
     await database.connect(server.getUri());
     createModels(database);
     methods = createSearchMethods(database);

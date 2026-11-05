@@ -131,6 +131,9 @@ export async function runVocabRebuild({
     await control.wait();
   }
 
+  if (!control.holds()) {
+    return 'lost';
+  }
   await methods.writeSearchState(VOCAB_KEY, {
     status: 'finished',
     lastId: null,

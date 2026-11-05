@@ -15,6 +15,7 @@ export type VerifyMethods = Pick<
   | 'readSearchSources'
   | 'readSearchSourcesById'
   | 'readSearchRecordIds'
+  | 'countSearchRecordsAtOtherVersion'
   | 'readSearchRecordIdsIn'
 >;
 
@@ -34,6 +35,11 @@ interface VerifyTally {
   changedSinceBackfill: number;
   /** Rows backfill could not analyze, whatever has happened to them since. */
   analysisFailures: number;
+  /**
+   * Records another analyzer wrote. Insert-only backfill keeps them, and only reconcile
+   * rewrites them, so they are reported rather than failed: they still match by exact form.
+   */
+  otherVersion: number;
   users: Set<string>;
   missingIds: string[];
 }
@@ -42,6 +48,8 @@ export interface VerifyDeps {
   methods: VerifyMethods;
   control: JobControl;
   metrics: Pick<SearchMetrics, 'verify'>;
+  /** The analyzer version in use now. */
+  version: string;
   /** Which verification round this is, for `search.verify`. */
   round: number;
   now?: () => number;
@@ -64,6 +72,7 @@ export async function runVerify({
   methods,
   control,
   metrics,
+  version,
   round,
   now = Date.now,
 }: VerifyDeps): Promise<JobOutcome> {
@@ -80,10 +89,14 @@ export async function runVerify({
     orphans: 0,
     changedSinceBackfill: 0,
     analysisFailures: 0,
+    otherVersion: 0,
     users: new Set(),
     missingIds: [],
   };
   const finish = async (status: 'passed' | 'failed', reason: string | null) => {
+    if (!control.holds()) {
+      return 'lost' as const;
+    }
     await methods.writeSearchState(VERIFICATION_KEY, {
       ...figures(tally),
       status,
@@ -110,6 +123,7 @@ export async function runVerify({
       collection,
       upToId: lowerOf(position, objectIdFloor(snapshotAt - MIN_AGE_MS)),
       backfillStartedAt: timeOf(backfill.startedAt),
+      version,
       tally,
     });
     if (outcome !== 'done') {
@@ -128,6 +142,7 @@ async function walkCollection({
   collection,
   upToId,
   backfillStartedAt,
+  version,
   tally,
 }: {
   methods: VerifyMethods;
@@ -135,6 +150,7 @@ async function walkCollection({
   collection: SearchSourceCollection;
   upToId: string;
   backfillStartedAt: number | null;
+  version: string;
   tally: VerifyTally;
 }): Promise<JobOutcome> {
   let afterId: string | undefined;
@@ -156,6 +172,12 @@ async function walkCollection({
       rows.filter((row) => belongsInSearch(collection, row)).map(({ _id }) => _id),
     );
     tally.checked += rows.length;
+    tally.otherVersion += await methods.countSearchRecordsAtOtherVersion({
+      collection,
+      afterId,
+      upToId: upper,
+      version,
+    });
     await recheckSources(
       methods,
       collection,

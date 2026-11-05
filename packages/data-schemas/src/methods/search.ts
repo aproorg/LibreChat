@@ -210,6 +210,10 @@ export interface SearchMethods {
     collection: SearchSourceCollection,
     ids: readonly string[],
   ): Promise<SearchSourceRow[]>;
+  /** Records in a range that an analyzer other than this one wrote. */
+  countSearchRecordsAtOtherVersion(
+    params: Omit<SearchRecordBatchParams, 'limit'> & { version: string },
+  ): Promise<number>;
   /** A cheap estimate for progress reports, never a verification figure. */
   countSearchSources(collection: SearchSourceCollection): Promise<number>;
   /** Distinct non-null source `tenantId` values, for the operator's check before a backfill. */
@@ -694,6 +698,20 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     });
   }
 
+  function countSearchRecordsAtOtherVersion({
+    collection: kind,
+    afterId,
+    upToId,
+    version,
+  }: Omit<SearchRecordBatchParams, 'limit'> & { version: string }): Promise<number> {
+    return runAsSystem(async () =>
+      mongoose.models[RECORD_MODELS[kind]]
+        .countDocuments({ ...idRange(afterId, upToId), v: { $ne: version } })
+        .maxTimeMS(JOB_READ_MAX_TIME_MS)
+        .exec(),
+    );
+  }
+
   function readSearchRecordIdsIn(
     kind: SearchSourceCollection,
     ids: readonly string[],
@@ -812,6 +830,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     replaceSearchRecords,
     deleteSearchRecords,
     readSearchRecordIds,
+    countSearchRecordsAtOtherVersion,
     readSearchRecordIdsIn,
     readSearchRecordTokenBatch,
     incrementSearchVocabNext,

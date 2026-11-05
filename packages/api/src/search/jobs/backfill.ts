@@ -161,6 +161,8 @@ async function walkCollection(
       processed += rows.length;
       const current = rows.length / (Math.max(now() - batchStart, 1) / 1000);
       rate = rate === 0 ? current : rate * (1 - RATE_WEIGHT) + current * RATE_WEIGHT;
+      /* From here, so the next batch's rate includes the throttle, as the real pace does. */
+      batchStart = now();
       await methods.writeSearchState(key, {
         lastId,
         processed,
@@ -173,7 +175,6 @@ async function walkCollection(
         report('running');
       }
       await control.wait();
-      batchStart = now();
     }
 
     if (!control.holds()) {

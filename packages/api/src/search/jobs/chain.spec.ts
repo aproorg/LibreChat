@@ -43,6 +43,16 @@ describe('backfill chain, end to end', () => {
       sourceConversation({ title: 'something', user: 'user-b', conversationId: 'convo-b' }),
     ]);
 
+    const database = harness.database.connection.db!;
+    const snapshot = async () => ({
+      messages: await database.collection('messages').find().sort({ _id: 1 }).toArray(),
+      conversations: await database.collection('conversations').find().sort({ _id: 1 }).toArray(),
+    });
+    const collectionNames = async () =>
+      (await database.listCollections().toArray()).map(({ name }) => name);
+    const sourcesBefore = await snapshot();
+    const namesBefore = await collectionNames();
+
     const app = { locals: {} as Record<string, unknown> };
     const binding = bindSearch({
       app,
@@ -73,6 +83,15 @@ describe('backfill chain, end to end', () => {
     expect(code).toBe(0);
 
     await settle(jobs, 4);
+
+    /* The sources are untouched, and only search collections appeared. */
+    expect(await snapshot()).toEqual(sourcesBefore);
+    expect((await collectionNames()).filter((name) => !namesBefore.includes(name)).sort()).toEqual([
+      'csearch',
+      'msearch',
+      'search_state',
+      'search_vocab',
+    ]);
 
     /* Records exist. */
     expect(await recordCount(harness, 'msearch')).toBe(4);

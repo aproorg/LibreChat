@@ -43,7 +43,11 @@ export interface SearchJobStatus {
   verification: Record<string, unknown> | null;
   leaseHeld: boolean;
   pendingRequests: string[];
-  /** `null` when the read timed out, so a slow `distinct` cannot hide a running job's progress. */
+  /**
+   * Read for the check before a backfill. `null` while a chain runs, because this is polled
+   * then and each read walks both source collections, or when the read fails, so that a slow
+   * `distinct` cannot hide progress.
+   */
   tenants: string[] | null;
 }
 
@@ -80,16 +84,16 @@ export async function readSearchJobStatus(
   now: number = Date.now(),
 ): Promise<SearchJobStatus> {
   const read = (key: string) => methods.readSearchState(key, JOB_STATE_READ);
-  const [chain, messages, conversations, verification, lease, requests, tenants] =
-    await Promise.all([
-      read('chain'),
-      read(BACKFILL_KEYS.messages),
-      read(BACKFILL_KEYS.conversations),
-      read('verification'),
-      read('lease'),
-      methods.listSearchJobRequests(),
-      methods.readSearchSourceTenants().catch(() => null),
-    ]);
+  const chain = await read('chain');
+  const running = chain != null && chain.finishedAt == null;
+  const [messages, conversations, verification, lease, requests, tenants] = await Promise.all([
+    read(BACKFILL_KEYS.messages),
+    read(BACKFILL_KEYS.conversations),
+    read('verification'),
+    read('lease'),
+    methods.listSearchJobRequests(),
+    running ? null : methods.readSearchSourceTenants().catch(() => null),
+  ]);
   return {
     chain: {
       step: typeof chain?.step === 'string' ? chain.step : null,
@@ -139,9 +143,12 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
       `  mismatched users ${show(verification?.mismatchedUsers)}` +
       `  missing ${show(verification?.missing)}  orphans ${show(verification?.orphans)}` +
       `  changed since backfill ${show(verification?.changedSinceBackfill)}` +
+      `  analysis failures ${show(verification?.analysisFailures)}` +
+      `  other analyzer version ${show(verification?.otherVersion)}` +
+      `  failed attempts ${show(verification?.failures)}` +
       `  passed at ${show(verification?.passedAt)}`,
     `pending requests: ${status.pendingRequests.join(', ') || '-'}`,
-    `distinct tenantId values: ${status.tenants === null ? 'read timed out' : status.tenants.join(', ') || '-'}`,
+    `distinct tenantId values: ${status.tenants === null ? 'not read' : status.tenants.join(', ') || '-'}`,
   );
   return lines;
 }

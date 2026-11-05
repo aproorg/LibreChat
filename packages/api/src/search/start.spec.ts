@@ -145,7 +145,24 @@ describe('search startup', () => {
       expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_START_DB');
     });
 
-    it('a job heartbeat failing never rejects, and readiness does not wait on it', async () => {
+    it('readiness does not wait on the runner, even if its first read never answers', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            acquireSearchLease: () => new Promise(() => undefined),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+
+      await expect(startSearchBackground(binding)).resolves.toBeUndefined();
+
+      expect(binding.jobs()).not.toBeNull();
+    });
+
+    it('a job heartbeat failing never rejects', async () => {
       const { binding } = bind(
         { languages: ['fake'] },
         {
