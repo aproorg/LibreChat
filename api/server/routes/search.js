@@ -12,6 +12,11 @@ router.get('/enable', async function (req, res) {
     return res.send(false);
   }
 
+  const enabled = await req.app.locals.search?.enabled();
+  if (enabled != null) {
+    return res.send(enabled);
+  }
+
   try {
     const client = new MeiliSearch({
       host: process.env.MEILI_HOST,
@@ -20,7 +25,7 @@ router.get('/enable', async function (req, res) {
 
     const { status } = await client.health();
     return res.send(status === 'available');
-  } catch (error) {
+  } catch {
     return res.send(false);
   }
 });

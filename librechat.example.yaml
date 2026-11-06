@@ -1246,6 +1246,47 @@ endpoints:
 # # See the Custom Configuration Guide for more information on Assistants Config:
 # # https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/assistants_endpoint
 
+# Conversation Search Configuration (optional)
+# Omitted, the app behaves as it does without this block. Read once from this file
+# at process start, so a change takes effect by rolling restart, and no config
+# document can change it. Values below are the defaults.
+# search:
+#   data: false                # Sync, backfill and language packs. Off: no pack loaded, no new records, no attribution
+#   backend: meilisearch       # meilisearch | shadow | search. The last two need data: true
+#   languages: [is, en]        # Enabled language packs
+#   languageDataDir: ''        # Directory of language data delivered outside this repository; required when `is` is enabled
+#   sidebarLimit: 1000         # Most messages the sidebar reads for one search
+#   rankWindow: 200            # Rows ranked per read window (max 200)
+#   readConcurrency: 2         # Most database reads one search runs at once
+#   maxConcurrentSearches: 4   # Most searches a process serves at once
+#   queryWordLimit: 10         # Most query words used, after stop-word removal
+#   searchTimeoutMs: 10000     # Time allowed for one search
+#   syncTakeoverSeconds: 30    # Seconds before another process takes over from a silent sync writer
+#   vocabFlushSeconds: 300     # Seconds between word list flushes
+#   reconcileDays: 30          # Days between automatic reconcile runs
+#   sharedReadMaxBytes: 67108864 # Total finished shared reads kept in memory, per process
+#   statusCacheSeconds: 15     # Seconds /api/search/enable stays cached
+#   analysisCacheWords: 100000 # Words in the analyzer's cache. Affects speed only
+#   meiliResyncPending: false  # Rollback after Meilisearch removal: hide search until its full sync has caught up
+#   jobs:
+#     batchSize: 200           # Documents read per batch in backfill and repair jobs
+#     batchDelayMs: 1000       # Pause between batches
+#     backfillOnStart: false   # Request a backfill after startup if no chain has finished, so a deploy can start it
+#   rank:
+#     lengthBucket: true       # Prefer shorter messages among equal matches
+#   prefix:
+#     maxCommonReads: 4        # Most separate reads for common expansions of the last word
+#     maxRareTokens: 200       # Most rare expansions in one read
+#     maxVocabRows: 50000      # Most word list rows read for one expansion
+#   typo:
+#     maxCorrections: 8        # Most corrections tried for a word that matches nothing
+#     maxVocabRows: 50000      # Most word list rows read for one correction
+#   shadow:
+#     maxConcurrent: 4         # Most detached runs a process holds at once
+#     panelRound: 1            # Comparison panel round
+#     panelUsers: []           # User IDs in the comparison panel
+#     largestUserId: ''        # User ID whose searches are flagged as the largest; only a boolean reaches logs
+
 # Web Search Configuration (optional)
 # webSearch:
 #   # Jina Reranking Configuration

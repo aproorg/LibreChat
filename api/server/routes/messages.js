@@ -151,6 +151,11 @@ router.get('/', async (req, res) => {
       }
       response = messageResult.value;
     } else if (search) {
+      const searched = await req.app.locals.search?.messages(req, res, search, cursor);
+      if (searched) {
+        return res.status(searched.status).json(searched.body);
+      }
+
       const searchResults = await db.searchMessages(
         search,
         {
