@@ -78,6 +78,110 @@ describe('search startup', () => {
     expect(binding.service.packState()).toBe('loaded');
   });
 
+  describe('with search data on', () => {
+    afterEach(async () => {
+      await started?.jobs()?.stop();
+      started = null;
+    });
+
+    let started: ReturnType<typeof bind>['binding'] | null = null;
+
+    it('loads packs, then ensures the collections, then starts the runner', async () => {
+      const order: string[] = [];
+      const load = jest.fn(async () => void order.push('packs'));
+      const methods = {
+        ...harness.methods,
+        ensureSearchCollections: async () => {
+          order.push('collections');
+          await harness.methods.ensureSearchCollections();
+        },
+        acquireSearchLease: async (
+          claim: Parameters<typeof harness.methods.acquireSearchLease>[0],
+        ) => {
+          order.push('lease');
+          return harness.methods.acquireSearchLease(claim);
+        },
+      };
+      const { binding } = bind(
+        { languages: ['fake'] },
+        { methods, resolvePacks: () => ({ ok: true, packs: [{ ...harness.packs[0], load }] }) },
+      );
+      started = binding;
+      expect(binding.jobs()).toBeNull();
+
+      await startSearchBackground(binding);
+      await binding.jobs()?.tick();
+
+      expect(order.slice(0, 3)).toEqual(['packs', 'collections', 'lease']);
+      expect(binding.jobs()).not.toBeNull();
+    });
+
+    it('a failed pack starts no runner and takes no lease', async () => {
+      const acquire = jest.spyOn(harness.methods, 'acquireSearchLease');
+      const { binding } = bind({ languages: ['zz'] });
+
+      await startSearchBackground(binding);
+
+      expect(binding.jobs()).toBeNull();
+      expect(acquire).not.toHaveBeenCalled();
+      acquire.mockRestore();
+    });
+
+    it('a rejected collection step leaves the process up and starts no runner', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            ensureSearchCollections: () => Promise.reject(new Error('SENTINEL_START_DB')),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+
+      await expect(startSearchBackground(binding)).resolves.toBeUndefined();
+
+      expect(binding.jobs()).toBeNull();
+      expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_START_DB');
+    });
+
+    it('readiness does not wait on the runner, even if its first read never answers', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            acquireSearchLease: () => new Promise(() => undefined),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+
+      await expect(startSearchBackground(binding)).resolves.toBeUndefined();
+
+      expect(binding.jobs()).not.toBeNull();
+    });
+
+    it('a job heartbeat failing never rejects', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            acquireSearchLease: () => Promise.reject(new Error('SENTINEL_LEASE')),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+      started = binding;
+
+      await expect(startSearchBackground(binding)).resolves.toBeUndefined();
+      await expect(binding.jobs()!.tick()).resolves.toBeUndefined();
+
+      expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_LEASE');
+    });
+  });
+
   it('an unregistered ID leaves the process up and the service failed', async () => {
     const { binding } = bind({ languages: ['zz'] });
 

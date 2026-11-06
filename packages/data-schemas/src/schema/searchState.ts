@@ -12,6 +12,11 @@ const searchStateSchema: Schema<SearchStateEntry> = new Schema(
   {
     collection: 'search_state',
     strict: false,
+    /*
+     * Each key has its own fields, and none are declared. The app's global `strictQuery: true`
+     * would strip them from filters, leaving the lease's holder, epoch and expiry checks empty.
+     */
+    strictQuery: false,
     autoCreate: false,
     autoIndex: false,
     versionKey: false,

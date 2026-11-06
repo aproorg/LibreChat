@@ -63,6 +63,7 @@ describe('createSearchMetrics', () => {
     metrics.backfill({
       collection: 'messages',
       rate: 100,
+      processed: 10,
       status: 'paused',
       pausedReason: 'operator',
     });
@@ -96,6 +97,7 @@ describe('createSearchMetrics', () => {
     expect(lines[12][1]).toEqual({
       collection: 'messages',
       rate: 100,
+      processed: 10,
       status: 'paused',
       pausedReason: 'operator',
     });

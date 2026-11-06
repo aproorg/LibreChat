@@ -16,7 +16,7 @@ Structured `logger` events under `search.*`, per [R-14](../research.md#r-14-metr
 | `search.reconcile` | `missing`, `orphans`, `stale`, `of` | SC-010 |
 | `search.verify` | `status`, `mismatchedUsers`, `round` | FR-028 |
 | `search.pack` | `id`, `state`, `ms`, `rssDelta` | FR-046, pack failure |
-| `search.backfill` | `collection`, `rate`, `status`, `pausedReason?` | FR-028 |
+| `search.backfill` | `collection`, `rate`, `processed`, `status`, `pausedReason?` | FR-028, watching a first run |
 | `search.probe` | `check`, `leak` | SC-005, FR-035 |
 | `search.realtext` | `tokensPerMessage`, `tierShare`, `prefixFanout`, `atCap`, `noLetterQueries`, `stopOnlyQueries`, `typoSkippedWordExists`, `vocabRowsTruncated` | §10's real text list, plus how often a budget cut a word list read |
 

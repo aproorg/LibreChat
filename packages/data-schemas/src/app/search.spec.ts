@@ -31,14 +31,14 @@ describe('loadSearchConfig', () => {
     expect(search.backend).toBe('meilisearch');
     expect(search.meiliResyncPending).toBe(false);
     expect(search.sidebarLimit).toBe(1000);
-    expect(search.jobs).toEqual({ batchSize: 200, batchDelayMs: 1000 });
+    expect(search.jobs).toEqual({ batchSize: 200, batchDelayMs: 1000, backfillOnStart: false });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('applies defaults under a partial block, including partial nested blocks', () => {
     const search = loadSearchConfig(asConfig({ data: true, jobs: { batchSize: 5 } }));
     expect(search.data).toBe(true);
-    expect(search.jobs).toEqual({ batchSize: 5, batchDelayMs: 1000 });
+    expect(search.jobs).toEqual({ batchSize: 5, batchDelayMs: 1000, backfillOnStart: false });
     expect(search.typo.maxCorrections).toBe(8);
     expect(errorSpy).not.toHaveBeenCalled();
   });

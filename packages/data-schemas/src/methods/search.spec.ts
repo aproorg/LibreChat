@@ -498,3 +498,286 @@ describe('search reads', () => {
     });
   });
 });
+
+describe('search job methods', () => {
+  let server: MongoMemoryServer;
+  let database: mongoose.Mongoose;
+  let methods: SearchMethods;
+
+  const record = (id: string, e = 0, tenantId?: string) => ({
+    _id: id,
+    user: 'user-a',
+    conversationId: 'convo-a',
+    messageId: `m-${id}`,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    n: 1,
+    h: `h-${e}`,
+    v: 'v1',
+    e,
+    tokens: ['kerfi'],
+    ...(tenantId ? { tenantId } : {}),
+  });
+  const ID_A = '000000000000000000000a01';
+  const ID_B = '000000000000000000000a02';
+  const collection = (name: string) => database.connection.db!.collection(name);
+
+  beforeAll(async () => {
+    server = await MongoMemoryServer.create();
+    database = new mongoose.Mongoose();
+    database.set('autoIndex', false);
+    /* As `api/db/connect.js` sets it, which strips any filter field a schema does not declare. */
+    database.set('strictQuery', true);
+    await database.connect(server.getUri());
+    createModels(database);
+    methods = createSearchMethods(database);
+  });
+
+  afterAll(async () => {
+    await database.disconnect();
+    await server.stop();
+  });
+
+  beforeEach(async () => {
+    await database.connection.db!.dropDatabase();
+    await methods.ensureSearchCollections();
+  });
+
+  describe('lease', () => {
+    const claim = (holder: string, offset = 30_000) => ({
+      holder,
+      until: new Date(Date.now() + offset),
+      now: new Date(),
+    });
+
+    it('one holder at a time, however many ask at once', async () => {
+      const results = await Promise.all(
+        ['a', 'b', 'c'].map((h) => methods.acquireSearchLease(claim(h))),
+      );
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.find(Boolean)).toEqual({ epoch: 1 });
+    });
+
+    it('an expired lease is taken over with a higher epoch, and the old holder cannot renew', async () => {
+      await methods.acquireSearchLease(claim('a', -1000));
+
+      expect(await methods.acquireSearchLease(claim('b'))).toEqual({ epoch: 2 });
+      expect(
+        await methods.renewSearchLease({
+          holder: 'a',
+          epoch: 1,
+          until: new Date(Date.now() + 1000),
+        }),
+      ).toBe(false);
+      expect(
+        await methods.renewSearchLease({
+          holder: 'b',
+          epoch: 2,
+          until: new Date(Date.now() + 1000),
+        }),
+      ).toBe(true);
+    });
+
+    it('a released lease is free at once, and its epoch never goes back', async () => {
+      await methods.acquireSearchLease(claim('a'));
+      await methods.releaseSearchLease({ holder: 'a', epoch: 1 });
+
+      expect(await methods.acquireSearchLease(claim('b'))).toEqual({ epoch: 2 });
+    });
+
+    it('a stale holder cannot release the current lease', async () => {
+      await methods.acquireSearchLease(claim('a', -1000));
+      await methods.acquireSearchLease(claim('b'));
+      await methods.releaseSearchLease({ holder: 'a', epoch: 1 });
+
+      expect(await methods.acquireSearchLease(claim('c'))).toBeNull();
+    });
+  });
+
+  describe('state', () => {
+    it('merges fields and lists only job requests, oldest first', async () => {
+      await methods.writeSearchState('chain', { step: 'backfill' });
+      await methods.writeSearchState('chain', { requestId: 'r' });
+      await methods.writeSearchState('jobRequest:b', { job: 'pause', requestedAt: new Date(2000) });
+      await methods.writeSearchState('jobRequest:a', {
+        job: 'resume',
+        requestedAt: new Date(3000),
+      });
+      await methods.writeSearchState('jobRequestx', { job: 'not-one' });
+      await methods.writeSearchState('jobRequest;', { job: 'not-one' });
+
+      expect(await methods.readSearchState('chain', { maxTimeMS: 1000 })).toEqual({
+        _id: 'chain',
+        step: 'backfill',
+        requestId: 'r',
+      });
+      const requests = await methods.listSearchJobRequests();
+      expect(requests.map(({ _id }) => _id)).toEqual(['jobRequest:b', 'jobRequest:a']);
+
+      await methods.deleteSearchState('jobRequest:b');
+      expect(await methods.listSearchJobRequests()).toHaveLength(1);
+    });
+
+    it('says whether search_state exists, and creates nothing by asking', async () => {
+      expect(await methods.searchStateExists()).toBe(true);
+      await database.connection.db!.dropDatabase();
+      expect(await methods.searchStateExists()).toBe(false);
+      expect(await methods.searchStateExists()).toBe(false);
+    });
+  });
+
+  describe('records', () => {
+    it('insert keeps what is there, and a batch with a duplicate still writes the rest', async () => {
+      await methods.insertSearchRecords('messages', [record(ID_A, 5)]);
+
+      const result = await methods.insertSearchRecords('messages', [record(ID_A), record(ID_B)]);
+
+      expect(result).toEqual({ written: 1, duplicates: 1 });
+      expect(await collection('msearch').countDocuments()).toBe(2);
+      expect(await collection('msearch').findOne({ h: 'h-5' })).not.toBeNull();
+    });
+
+    it('insert rethrows a failure that is not a duplicate', async () => {
+      await expect(
+        methods.insertSearchRecords('messages', [{ ...record(ID_A), user: undefined as never }]),
+      ).rejects.toThrow();
+    });
+
+    it('replace is guarded by epoch, and a whole-document write keeps tenantId', async () => {
+      await methods.replaceSearchRecords('messages', [record(ID_A, 3, 'tenant-one')]);
+
+      const older = await methods.replaceSearchRecords('messages', [record(ID_A, 2, 'tenant-one')]);
+      expect(older).toEqual({ written: 0, duplicates: 1 });
+      expect(await collection('msearch').findOne({})).toMatchObject({
+        e: 3,
+        tenantId: 'tenant-one',
+      });
+
+      await methods.replaceSearchRecords('messages', [record(ID_A, 4, 'tenant-one')]);
+      expect(await collection('msearch').findOne({})).toMatchObject({
+        e: 4,
+        tenantId: 'tenant-one',
+      });
+    });
+
+    it('reads IDs and tokens in order within a range, and deletes by ID', async () => {
+      await methods.insertSearchRecords('messages', [record(ID_B), record(ID_A)]);
+      const params = { collection: 'messages' as const, limit: 10 };
+
+      expect(await methods.readSearchRecordIds(params)).toEqual([ID_A, ID_B]);
+      expect(await methods.readSearchRecordIds({ ...params, afterId: ID_A })).toEqual([ID_B]);
+      expect(await methods.readSearchRecordIds({ ...params, upToId: ID_A })).toEqual([ID_A]);
+      expect(await methods.readSearchRecordIdsIn('messages', [ID_B])).toEqual([ID_B]);
+      expect(await methods.readSearchRecordTokenBatch({ ...params, afterId: ID_A })).toEqual([
+        { _id: ID_B, tokens: ['kerfi'] },
+      ]);
+
+      expect(await methods.deleteSearchRecords('messages', [ID_A])).toBe(1);
+      expect(await methods.deleteSearchRecords('messages', [])).toBe(0);
+      expect(await methods.readSearchRecordIds(params)).toEqual([ID_B]);
+    });
+  });
+
+  describe('sources', () => {
+    const store = (rows: object[]) =>
+      collection('messages').insertMany(
+        rows.map((row) => ({
+          user: 'user-a',
+          conversationId: 'convo-a',
+          createdAt: new Date(),
+          ...row,
+        })) as never[],
+      );
+    const objectId = (id: string) => new mongoose.Types.ObjectId(id);
+
+    it('a state read sees the select:false subagent field and holds no text', async () => {
+      await store([
+        {
+          _id: objectId(ID_A),
+          messageId: 'a',
+          text: 'SENTINEL',
+          subagentTask: { id: 'task' },
+          contextMeta: 'SENTINEL',
+        },
+      ]);
+
+      const [row] = await methods.readSearchSources({ collection: 'messages', limit: 5 });
+
+      expect(row).toMatchObject({ _id: ID_A, subagentTask: { id: 'task' } });
+      expect(JSON.stringify(row)).not.toContain('SENTINEL');
+      const [byId] = await methods.readSearchSourcesById('messages', [ID_A]);
+      expect(byId.subagentTask).toEqual({ id: 'task' });
+    });
+
+    it('a text read adds only canonical text fields', async () => {
+      await store([
+        {
+          _id: objectId(ID_A),
+          messageId: 'a',
+          text: 'kept',
+          contextMeta: 'SENTINEL',
+          content: [{ type: 'text', text: 'part', tool_call: { output: 'SENTINEL' } }],
+        },
+      ]);
+
+      const [row] = await methods.readSearchSources({
+        collection: 'messages',
+        limit: 5,
+        withText: true,
+      });
+
+      expect(row).toMatchObject({ text: 'kept', content: [{ type: 'text', text: 'part' }] });
+      expect(JSON.stringify(row)).not.toContain('SENTINEL');
+    });
+
+    it('pages by _id within a range, across tenants, and estimates a total', async () => {
+      await store([
+        { _id: objectId(ID_B), messageId: 'b', tenantId: 'tenant-two' },
+        { _id: objectId(ID_A), messageId: 'a', tenantId: 'tenant-one' },
+      ]);
+      const params = { collection: 'messages' as const, limit: 1 };
+
+      const first = await methods.readSearchSources(params);
+      expect(first.map(({ _id }) => _id)).toEqual([ID_A]);
+      const next = await methods.readSearchSources({ ...params, afterId: ID_A });
+      expect(next.map(({ _id }) => _id)).toEqual([ID_B]);
+      expect(await methods.readSearchSources({ ...params, afterId: ID_B })).toEqual([]);
+      expect(await methods.readSearchSources({ ...params, limit: 5, upToId: ID_A })).toHaveLength(
+        1,
+      );
+      expect(await methods.countSearchSources('messages')).toBe(2);
+      expect((await methods.readSearchSourceTenants()).sort()).toEqual([
+        'tenant-one',
+        'tenant-two',
+      ]);
+    });
+  });
+
+  describe('word list', () => {
+    it('adds to dfNext without touching df, then settles', async () => {
+      await collection('search_vocab').insertOne({ _id: 'old', df: 7 } as never);
+
+      await methods.incrementSearchVocabNext({
+        counts: [
+          ['old', 2],
+          ['new', 1],
+        ],
+        run: 3,
+      });
+      await methods.incrementSearchVocabNext({ counts: [['old', 1]], run: 3 });
+
+      const rows = await methods.readSearchVocabBatch({ limit: 10 });
+      expect(rows).toEqual([
+        { token: 'new', df: 0, dfNext: 1, r: 3 },
+        { token: 'old', df: 7, dfNext: 3, r: 3 },
+      ]);
+      expect(await methods.readSearchVocabBatch({ afterId: 'new', limit: 10 })).toHaveLength(1);
+
+      await methods.settleSearchVocab({ copy: [{ token: 'old', df: 3 }], remove: ['new'] });
+
+      expect(await methods.readSearchVocabBatch({ limit: 10 })).toEqual([
+        { token: 'old', df: 3, r: 3 },
+      ]);
+    });
+  });
+});

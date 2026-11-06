@@ -608,6 +608,13 @@ export type {
   SearchMessageText,
   SearchableMessage,
   SearchHitConversation,
+  SearchSourceCollection,
+  SearchSourceRow,
+  SearchSourceBatchParams,
+  SearchRecordBatchParams,
+  SearchRecordWriteResult,
+  SearchLeaseClaim,
+  SearchVocabBatchRow,
 } from './search';
 
 export { recordAgentEventActorReceiptMetric, setAgentEventActorReceiptMetricObserver };

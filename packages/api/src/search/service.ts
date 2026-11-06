@@ -24,6 +24,7 @@ import {
 } from './read/window';
 import { isSearchDataOn, isSearchServing, isShadowRunEnabled } from './config';
 import { createReadGate, createReadRunner } from './read/retry';
+import { computeAnalyzerVersion } from './analyzer/version';
 import { resolveSearchPacks } from './languages/registry';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchLimiter } from './read/limiter';
@@ -86,6 +87,8 @@ export interface SearchService extends SearchPort {
   packState(): SearchPackState;
   /** Called once, in the background, after the server listens. Never rejects. */
   loadPacks(): Promise<void>;
+  /** What jobs build records with, or `null` until packs have loaded. */
+  jobAnalyzer(): { analyzer: Analyzer; version: string } | null;
   /** A shadow run needs an analyzer with packs, so it is skipped in any other state. */
   canRunShadow(): boolean;
   searchMessages(ctx: SearchContext, query: string): Promise<MessageSearchHits | null>;
@@ -115,6 +118,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
 
   let state: SearchPackState = 'loading';
   let analyzer: Analyzer | null = null;
+  let analyzerVersion = '';
   let lastRequestAt: number | null = null;
   const gates = new WeakMap<SearchContext, ReadGate>();
   const sidebarStats = new WeakMap<SearchContext, SearchReadStats>();
@@ -163,6 +167,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
         cacheWords: config.analysisCacheWords,
         realtext: metrics.realtext,
       });
+      analyzerVersion = computeAnalyzerVersion(resolved.packs);
       state = 'loaded';
     } catch (error) {
       state = 'failed';
@@ -358,6 +363,8 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     isServing: () => isSearchServing(config),
     packState: () => state,
     loadPacks,
+    jobAnalyzer: () =>
+      state === 'loaded' && analyzer ? { analyzer, version: analyzerVersion } : null,
     canRunShadow: () => isShadowRunEnabled(config) && state === 'loaded',
     searchMessages,
     conversationMatches,

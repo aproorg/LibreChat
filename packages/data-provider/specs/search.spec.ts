@@ -31,7 +31,7 @@ const CONTRACT_DEFAULTS = {
   statusCacheSeconds: 15,
   analysisCacheWords: 100000,
   meiliResyncPending: false,
-  jobs: { batchSize: 200, batchDelayMs: 1000 },
+  jobs: { batchSize: 200, batchDelayMs: 1000, backfillOnStart: false },
   rank: { lengthBucket: true },
   prefix: { maxCommonReads: 4, maxRareTokens: 200, maxVocabRows: 50000 },
   typo: { maxCorrections: 8, maxVocabRows: 50000 },

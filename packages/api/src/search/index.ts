@@ -7,5 +7,6 @@ export * from './languages/pack';
 export * from './languages/registry';
 export * from './sync/extract';
 export * from './sync/record';
+export * from './jobs/script';
 export * from './service';
 export * from './start';

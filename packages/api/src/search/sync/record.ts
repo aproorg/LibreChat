@@ -1,5 +1,9 @@
 import { isIndexableSource } from '@librechat/data-schemas';
-import type { ConversationSearchRecord, MessageSearchRecord } from '@librechat/data-schemas';
+import type {
+  ConversationSearchRecord,
+  MessageSearchRecord,
+  SearchSourceCollection,
+} from '@librechat/data-schemas';
 import type { Analyzer } from '../analyzer/analyze';
 import type { SearchSource } from './extract';
 import { extractConversation, extractMessage } from './extract';
@@ -38,4 +42,25 @@ export function buildConversationRecord(
   }
   const { text, ...fields } = extractConversation(source);
   return { ...fields, v: version, e: epoch, tokens: analyzer.docTokens(text), ...tenantOf(source) };
+}
+
+/**
+ * Whether this source should have a record: the question verification asks. A row missing
+ * a field a record needs can never have one, so it is not a gap. Text is not read here.
+ */
+export function belongsInSearch(collection: SearchSourceCollection, source: SearchSource): boolean {
+  const isMessage = collection === 'messages';
+  if (!isIndexableSource(source, isMessage ? 'subagentTask' : 'subagentThread')) {
+    return false;
+  }
+  try {
+    if (isMessage) {
+      extractMessage(source);
+    } else {
+      extractConversation(source);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }

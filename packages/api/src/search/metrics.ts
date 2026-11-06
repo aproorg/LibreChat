@@ -110,6 +110,8 @@ export interface SearchPackEvent {
 export interface SearchBackfillEvent {
   collection: (typeof COLLECTIONS)[number];
   rate: number;
+  /** Source rows walked so far in this collection. */
+  processed: number;
   status: (typeof BACKFILL_STATUSES)[number];
   pausedReason?: (typeof PAUSE_REASONS)[number];
 }
@@ -210,6 +212,7 @@ const PACK: FieldSpec<SearchPackEvent> = {
 const BACKFILL: FieldSpec<SearchBackfillEvent> = {
   collection: oneOf(COLLECTIONS),
   rate: count,
+  processed: count,
   status: oneOf(BACKFILL_STATUSES),
   pausedReason: oneOf(PAUSE_REASONS),
 };

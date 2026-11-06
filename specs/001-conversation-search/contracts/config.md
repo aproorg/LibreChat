@@ -26,6 +26,7 @@ search:
   jobs:
     batchSize: 200
     batchDelayMs: 1000
+    backfillOnStart: false   # the lease holder requests a backfill after startup if no chain has finished
   rank:
     lengthBucket: true       # FR-011
   prefix:
