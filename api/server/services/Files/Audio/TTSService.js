@@ -13,6 +13,7 @@ const {
   listConfiguredSpeechProviders,
 } = require('librechat-data-provider');
 const { getRandomVoiceId, createChunkProcessor, splitTextIntoChunks } = require('./streamAudio');
+const { speechUserHeaders } = require('./speechUserHeaders');
 const { getAppConfig } = require('~/server/services/Config');
 
 /**
@@ -258,17 +259,19 @@ class TTSService {
    * @param {string} options.input - The input text.
    * @param {string} options.voice - The voice to use.
    * @param {boolean} [options.stream=true] - Whether to use streaming.
+   * @param {Object} [options.user] - The requesting user (`req.user`), named per `speechUserHeaders`.
    * @param {string[]} [allowedAddresses] - Section-level SSRF exemption list of host:port pairs.
    * @returns {Promise<Object>} The axios response object.
    * @throws {Error} If the provider is invalid or the request fails.
    */
-  async ttsRequest(provider, ttsSchema, { input, voice, stream = true }, allowedAddresses) {
+  async ttsRequest(provider, ttsSchema, { input, voice, stream = true, user }, allowedAddresses) {
     const strategy = this.providerStrategies[provider];
     if (!strategy) {
       throw new Error('Invalid provider');
     }
 
     const [url, data, headers] = strategy.call(this, ttsSchema, input, voice, stream);
+    Object.assign(headers, speechUserHeaders(user));
 
     [data, headers].forEach(this.removeUndefined.bind(this));
 
@@ -317,7 +320,7 @@ class TTSService {
         const response = await this.ttsRequest(
           provider,
           ttsSchema,
-          { input, voice },
+          { input, voice, user: req.user },
           allowedAddresses,
         );
         response.data.pipe(res);
@@ -335,6 +338,7 @@ class TTSService {
               voice,
               input: chunk.text,
               stream: true,
+              user: req.user,
             },
             allowedAddresses,
           );
@@ -423,6 +427,7 @@ class TTSService {
                 voice,
                 input: update.text,
                 stream: true,
+                user: req.user,
               },
               allowedAddresses,
             );
