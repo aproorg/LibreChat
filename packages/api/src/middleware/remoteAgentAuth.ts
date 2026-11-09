@@ -1,10 +1,11 @@
 import { SystemRoles } from 'librechat-data-provider';
-import { getTenantId, logger, tenantStorage } from '@librechat/data-schemas';
+import { getTenantId, logger, tenantStorage, SystemCapabilities } from '@librechat/data-schemas';
 import type { AppConfig, IUser, RoleMethods, UserMethods } from '@librechat/data-schemas';
 import type { RequestHandler, Request, Response, NextFunction } from 'express';
 import type { TAgentsEndpoint } from 'librechat-data-provider';
 import type { JwtPayload } from 'jsonwebtoken';
 import type { GetAppConfigOptions } from '../app/service';
+import type { HasCapabilityFn } from './capabilities';
 import type { ServerRequest } from '~/types/http';
 import type { ContextRequest } from './tenant';
 import {
@@ -22,7 +23,11 @@ export interface RemoteAgentAuthDeps {
   findUser: UserMethods['findUser'];
   getRolesByNames: RoleMethods['findRolesByNames'];
   updateUser: UserMethods['updateUser'];
+  /** Atomically sets `remoteAgentOid` if unset; false when refused (already linked / oid taken). */
+  linkRemoteAgentOid: UserMethods['linkRemoteAgentOid'];
   isPrincipalActive: (userId: string) => Promise<boolean>;
+  /** Used to refuse first-linking capability-based admins (any principal: user, group, role). */
+  hasCapability: HasCapabilityFn;
   getAppConfig: (options?: GetAppConfigOptions) => Promise<AppConfig>;
 }
 
@@ -34,7 +39,7 @@ type AgentAuthConfig = NonNullable<NonNullable<TAgentsEndpoint['remoteApi']>['au
 type EnabledOidcConfig = OidcConfig & { audience: string; issuer: string };
 type ScopeClaim = string | string[] | undefined;
 type UserResolution =
-  | { status: 'resolved'; user: IUser; updateData: Partial<IUser> }
+  | { status: 'resolved'; user: IUser; updateData: Partial<IUser>; linkOid?: string }
   | { status: 'missing' }
   | { status: 'rejected'; error: string };
 
@@ -220,14 +225,163 @@ async function enforceOidcTenantPolicy(
   return false;
 }
 
+/** Link config; all three env vars are required (flag, email domains, federated IdP names). */
+function getLinkConfig(): { domains: string[]; idps: string[] } | undefined {
+  if (process.env.REMOTE_AGENTS_LINK_LOGIN_ACCOUNT_BY_OID !== 'true') return undefined;
+  const domains = (process.env.REMOTE_AGENTS_LINK_EMAIL_DOMAINS ?? '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  // provider names are compared exactly (case-sensitive)
+  const idps = (process.env.REMOTE_AGENTS_LINK_FEDERATED_IDPS ?? '')
+    .split(',')
+    .map((d) => d.trim())
+    .filter(Boolean);
+  return domains.length > 0 && idps.length > 0 ? { domains, idps } : undefined;
+}
+
+const GUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/** Exact-domain check on a lowercase `preferred_username`; rejects whitespace, extra `@`, trailing dot. */
+function allowedLinkEmail(value: unknown, domains: string[]): string | undefined {
+  // ASCII only: toLowerCase() folds e.g. U+212A (Kelvin sign) onto ASCII 'k'
+  if (typeof value !== 'string' || !/^[\x21-\x7e]+$/.test(value)) return undefined;
+  const email = value.toLowerCase();
+  if (/\s/.test(email) || email.split('@').length !== 2) return undefined;
+  const [local, domain] = email.split('@');
+  return local && domain && !domain.endsWith('.') && domains.includes(domain) ? email : undefined;
+}
+
+/** Admin power is capability-based (user/group/role grants), so check ACCESS_ADMIN too; fail closed. */
+async function isPrivileged(user: IUser, hasCapability: HasCapabilityFn): Promise<boolean> {
+  if (user.role === SystemRoles.ADMIN) return true;
+  try {
+    const check = () =>
+      hasCapability(
+        { id: String(user._id), role: user.role ?? SystemRoles.USER, tenantId: user.tenantId },
+        SystemCapabilities.ACCESS_ADMIN,
+      );
+    return user.tenantId && getTenantId() !== user.tenantId
+      ? await tenantStorage.run({ tenantId: user.tenantId }, check)
+      : await check();
+  } catch (err) {
+    logger.error('[remoteAgentAuth] admin capability check failed; refusing link', err);
+    return true;
+  }
+}
+
+/**
+ * Opt-in: resolves an Entra token to the existing browser-login account (bound to a different
+ * issuer, e.g. Cognito). Later calls match by `remoteAgentOid`; the first call links by
+ * `preferred_username` (domain-allowlisted, tenant-checked). The link itself is persisted by the
+ * caller after all policy checks pass. Never touches openidId/openidIssuer/provider/email.
+ */
+async function linkLoginAccountByOid(
+  payload: JwtPayload,
+  oidcConfig: EnabledOidcConfig,
+  findUser: UserMethods['findUser'],
+  firstLink: boolean,
+  hasCapability: HasCapabilityFn,
+): Promise<Extract<UserResolution, { status: 'resolved' }> | undefined> {
+  const config = getLinkConfig();
+  const domains = config?.domains;
+  const oid = payload['oid'];
+  const loginIssuer = normalizeOpenIdIssuer(process.env.OPENID_ISSUER);
+  if (!config || !domains || typeof oid !== 'string' || oid.trim() === '' || !loginIssuer)
+    return undefined;
+  // Same login and remote issuer: findOpenIDUser's sub/oid guard is authoritative; linking only
+  // makes sense across issuers.
+  if (loginIssuer === normalizeOpenIdIssuer(oidcConfig.issuer)) return undefined;
+
+  const isLoginAccount = (user: IUser | null | undefined): user is IUser =>
+    user != null &&
+    user.provider === 'openid' &&
+    Boolean(user.openidId) &&
+    normalizeOpenIdIssuer(user.openidIssuer) === loginIssuer;
+  const resolved = (user: IUser, linkOid?: string) => {
+    user.id = String(user._id);
+    const updateData: Partial<IUser> = {};
+    if (!user.role) {
+      user.role = SystemRoles.USER;
+      updateData.role = SystemRoles.USER;
+    }
+    return { status: 'resolved' as const, user, updateData, linkOid };
+  };
+
+  const byOid = await findUser({ remoteAgentOid: oid });
+  const trustedIdp = (user: IUser) =>
+    Boolean(user.openidFederatedIdp) && config.idps.includes(user.openidFederatedIdp as string);
+  if (!firstLink) {
+    // Re-checked on every call (never auto-unlinks): a link must not outlive the conditions it was made under.
+    if (
+      !isLoginAccount(byOid) ||
+      !trustedIdp(byOid) ||
+      (await isPrivileged(byOid, hasCapability))
+    ) {
+      return undefined;
+    }
+    return resolved(byOid);
+  }
+  // oid already on some (non-login) account: never fall through to the email link
+  if (byOid) return undefined;
+
+  const tenantGuid = oidcConfig.issuer.match(GUID_RE)?.[0].toLowerCase();
+  const tid = payload['tid'];
+  if (!tenantGuid || typeof tid !== 'string' || tid.toLowerCase() !== tenantGuid) return undefined;
+  const email = allowedLinkEmail(payload['preferred_username'], domains);
+  if (!email) return undefined;
+
+  const user = await findUser({ email });
+  // legacy (empty-issuer) accounts are not linked: findOpenIDUser would re-bind them on next call
+  if (!isLoginAccount(user)) return undefined;
+  // Native pool users can edit their own email, so only accounts whose latest browser login came
+  // through a trusted federated IdP (verified ID-token `identities` claim) may be first-linked.
+  if (!trustedIdp(user)) {
+    logger.warn(
+      '[remoteAgentAuth] link refused: account did not log in through a trusted federated IdP',
+    );
+    return undefined;
+  }
+  if (user.remoteAgentOid) {
+    logger.warn('[remoteAgentAuth] link refused: account already linked to a different oid');
+    return undefined;
+  }
+  // A stored Entra oid that differs from the caller's is proof of a different person.
+  if (user.idOnTheSource && user.idOnTheSource !== oid) {
+    logger.warn('[remoteAgentAuth] link refused: account stores a different Entra oid');
+    return undefined;
+  }
+  // emailVerified is deliberately NOT required: accounts federated through Cognito never carry
+  // email_verified, so it is false for everyone. The matched value is the token's preferred_username
+  // (UPN, admin-controlled in the pinned tenant), the same value Cognito copied into the stored email.
+  // Residual risk: preferred_username is mutable (UPN reuse); never first-link a privileged account.
+  if (await isPrivileged(user, hasCapability)) {
+    logger.warn('[remoteAgentAuth] link refused: admin accounts are not linked by username');
+    return undefined;
+  }
+  return resolved(user, oid);
+}
+
 async function resolveUser(
   token: string,
   payload: JwtPayload,
   oidcConfig: EnabledOidcConfig,
   findUser: UserMethods['findUser'],
+  hasCapability: HasCapabilityFn,
 ): Promise<UserResolution> {
   if (typeof payload.sub !== 'string' || payload.sub.trim() === '') {
     return { status: 'rejected', error: 'missing_sub_claim' };
+  }
+
+  // Steady state: match by the immutable oid first so linked calls never hit the email fallback
+  // (which logs the full email and a spurious "Rejected email fallback" warning).
+  const byOid = await linkLoginAccountByOid(payload, oidcConfig, findUser, false, hasCapability);
+  if (byOid) {
+    byOid.user.federatedTokens = {
+      access_token: token,
+      ...(payload.exp != null ? { expires_at: payload.exp } : {}),
+    };
+    return byOid;
   }
 
   const { user, error, migration } = await findOpenIDUser({
@@ -239,8 +393,17 @@ async function resolveUser(
     strategyName: 'remoteAgentAuth',
   });
 
-  if (error != null) return { status: 'rejected', error };
-  if (user == null) return { status: 'missing' };
+  if (error != null || user == null) {
+    const linked = await linkLoginAccountByOid(payload, oidcConfig, findUser, true, hasCapability);
+    if (linked) {
+      linked.user.federatedTokens = {
+        access_token: token,
+        ...(payload.exp != null ? { expires_at: payload.exp } : {}),
+      };
+      return linked;
+    }
+    return error != null ? { status: 'rejected', error } : { status: 'missing' };
+  }
 
   user.id = String(user._id);
 
@@ -372,7 +535,9 @@ export function createRemoteAgentAuth({
   findUser,
   getRolesByNames,
   updateUser,
+  linkRemoteAgentOid,
   isPrincipalActive,
+  hasCapability,
   getAppConfig,
 }: RemoteAgentAuthDeps): RequestHandler {
   /**
@@ -443,7 +608,7 @@ export function createRemoteAgentAuth({
         return;
       }
 
-      const userResolution = await resolveUser(token, payload, oidcConfig, findUser);
+      const userResolution = await resolveUser(token, payload, oidcConfig, findUser, hasCapability);
 
       if (userResolution.status === 'rejected') {
         logger.warn(`[remoteAgentAuth] OpenID user rejected: ${userResolution.error}`);
@@ -507,6 +672,23 @@ export function createRemoteAgentAuth({
           code: 'ACCOUNT_DELETION_IN_PROGRESS',
         });
         return;
+      }
+
+      if (userResolution.linkOid) {
+        const { user, linkOid } = userResolution;
+        const link = () => linkRemoteAgentOid(user.id, linkOid);
+        const linked =
+          user.tenantId && getTenantId() !== user.tenantId
+            ? await tenantStorage.run({ tenantId: user.tenantId }, link)
+            : await link();
+        if (!linked) {
+          logger.warn('[remoteAgentAuth] link refused: account or oid already linked');
+          res.status(401).json({ error: 'Unauthorized' });
+          return;
+        }
+        logger.info(
+          `[remoteAgentAuth] Linked remote OIDC oid to existing login account ${user.id}`,
+        );
       }
 
       await updateResolvedUser(userResolution, updateUser);

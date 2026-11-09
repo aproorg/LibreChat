@@ -9,6 +9,7 @@ const {
   createCheckRemoteAgentAccess,
 } = require('@librechat/api');
 const { getEffectivePermissions } = require('~/server/services/PermissionService');
+const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getAppConfig } = require('~/server/services/Config');
 const db = require('~/models');
 
@@ -23,7 +24,9 @@ const requireRemoteAgentAuth = createRemoteAgentAuth({
   findUser: db.findUser,
   getRolesByNames: db.findRolesByNames,
   updateUser: db.updateUser,
+  linkRemoteAgentOid: db.linkRemoteAgentOid,
   isPrincipalActive: db.isAgentTriggerPrincipalActive,
+  hasCapability,
   getAppConfig,
 });
 
