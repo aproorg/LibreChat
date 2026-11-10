@@ -30,7 +30,7 @@ export class SyncApplyError extends Error {
    */
   readonly poison: boolean;
 
-  constructor(code: SyncApplyCode, poison = code === 'analyze_failed') {
+  constructor(code: SyncApplyCode, poison: boolean = code === 'analyze_failed') {
     super(code);
     this.name = 'SyncApplyError';
     this.code = code;
