@@ -16,6 +16,7 @@ import {
 import { computeAnalyzerVersion } from '../analyzer/version';
 import { BACKFILL_KEYS, objectIdFloor } from './control';
 import { runVocabRebuild } from './vocabRebuild';
+import { runReconcile } from './reconcile';
 import { runBackfill } from './backfill';
 import { runVerify } from './verify';
 
@@ -597,7 +598,8 @@ describe('search jobs', () => {
       });
       expect(await verification()).toMatchObject({
         status: 'failed',
-        reason: 'mismatch',
+        /* Its own reason, so the mismatch loop does not reconcile in vain. */
+        reason: 'analysis_failed',
         analysisFailures: 1,
       });
     });
@@ -676,6 +678,412 @@ describe('search jobs', () => {
         status: 'failed',
         reason: 'backfill_not_finished',
       });
+    });
+  });
+
+  describe('reconcile', () => {
+    const version = () => computeAnalyzerVersion(harness.packs);
+    const msearch = () => harness.database.connection.db!.collection('msearch');
+    const reconcile = (
+      overrides: {
+        control?: ReturnType<typeof freeControl>;
+        methods?: typeof harness.methods;
+      } = {},
+      inChain = false,
+    ) =>
+      runReconcile({
+        methods: overrides.methods ?? harness.methods,
+        analyzer: harness.analyzer,
+        version: version(),
+        control: overrides.control ?? freeControl(),
+        metrics: harness.metrics,
+        inChain,
+      });
+    const reconcileState = () => stateOf(harness, 'reconcile');
+    const oid = (id: unknown) => new mongoose.Types.ObjectId(String(id));
+
+    /** A backfilled tenant, then drift: one missing, one stale, one orphan, one at an older analyzer. */
+    const drift = async () => {
+      const rows = [
+        sourceMessage({ text: 'kerfi missing' }),
+        sourceMessage({ text: 'kerfi stale' }),
+        sourceMessage({ text: 'kerfi gone' }),
+        sourceMessage({ text: 'kerfi older' }),
+        sourceMessage({ text: 'kerfi fine' }),
+      ];
+      await storeSources(harness, 'messages', rows);
+      await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+      await msearch().deleteOne({ _id: oid(rows[0]._id) });
+      await harness.database.connection
+        .db!.collection('messages')
+        .updateOne({ _id: oid(rows[1]._id) }, { $set: { text: 'kerfi edited' } });
+      await harness.database.connection
+        .db!.collection('messages')
+        .deleteOne({ _id: oid(rows[2]._id) });
+      await msearch().updateOne({ _id: oid(rows[3]._id) }, { $set: { v: 'older' } });
+      return rows;
+    };
+
+    it('counts and logs before it repairs, then repairs every kind of drift', async () => {
+      const rows = await drift();
+      const insert = harness.methods.insertSearchRecords;
+      let loggedBeforeRepair = false;
+      const methods = withMethods(harness, {
+        insertSearchRecords: async (collection, records) => {
+          if (records.length > 0) {
+            loggedBeforeRepair = lastEvent('search.reconcile') !== undefined;
+          }
+          return insert(collection, records);
+        },
+      });
+
+      expect(await reconcile({ methods })).toBe('done');
+
+      expect(loggedBeforeRepair).toBe(true);
+      /* Four messages and a conversation on the source side, four and one on the record side. */
+      expect(lastEvent('search.reconcile')).toEqual({ missing: 1, orphans: 1, stale: 2, of: 10 });
+      expect(await reconcileState()).toMatchObject({
+        status: 'finished',
+        missing: 1,
+        orphans: 1,
+        stale: 2,
+        repaired: 4,
+      });
+      expect(await msearch().findOne({ _id: oid(rows[0]._id) })).not.toBeNull();
+      expect((await msearch().findOne({ _id: oid(rows[1]._id) }))?.tokens).toContain('edited');
+      expect(await msearch().findOne({ _id: oid(rows[2]._id) })).toBeNull();
+      expect(await msearch().findOne({ _id: oid(rows[3]._id) })).toMatchObject({ v: version() });
+      expect(await verify()).toBe('done');
+      expect(await verification()).toMatchObject({ status: 'passed', otherVersion: 0 });
+    });
+
+    it('loses to a live edit between its read and its write', async () => {
+      const rows = await drift();
+      const rewrite = harness.methods.rewriteSearchRecords;
+      const methods = withMethods(harness, {
+        rewriteSearchRecords: async (collection, rewrites) => {
+          /* The writer applies the newest edit first. */
+          await msearch().updateOne(
+            { _id: oid(rows[1]._id) },
+            { $set: { h: 'written-by-sync', tokens: ['live'] } },
+          );
+          return rewrite(collection, rewrites);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(await msearch().findOne({ _id: oid(rows[1]._id) })).toMatchObject({
+        h: 'written-by-sync',
+        tokens: ['live'],
+      });
+    });
+
+    it('a source deleted or turned temporary between its read and its insert leaves no record', async () => {
+      const rows = await drift();
+      const insert = harness.methods.insertSearchRecords;
+      const methods = withMethods(harness, {
+        insertSearchRecords: async (collection, records) => {
+          await harness.database.connection
+            .db!.collection('messages')
+            .updateOne(
+              { _id: oid(rows[0]._id) },
+              { $set: { isTemporary: true, expiredAt: new Date(Date.now() + 1e6) } },
+            );
+          return insert(collection, records);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(await msearch().findOne({ _id: oid(rows[0]._id) })).toBeNull();
+    });
+
+    it('a stored subagent row gets no record from repair, and verification does not count it', async () => {
+      await storeSources(harness, 'messages', [
+        sourceMessage({ text: 'kerfi' }),
+        sourceMessage({ text: 'subagent', subagentTask: { id: 'task' } }),
+      ]);
+      await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+
+      await reconcile();
+
+      expect(await recordCount(harness, 'msearch')).toBe(1);
+      expect(await reconcileState()).toMatchObject({ missing: 0, repaired: 0 });
+      await verify();
+      expect(await verification()).toMatchObject({ status: 'passed', missing: 0 });
+    });
+
+    it('resumes from any phase and pass, with the same result as an uninterrupted run', async () => {
+      const stops = new Set<string>();
+      for (let checks = 1; checks <= 26; checks += 1) {
+        await harness.reset();
+        await drift();
+        expect(await reconcile({ control: freeControl({ stopAfter: checks }) })).not.toBe('done');
+        const saved = await reconcileState();
+        stops.add(`${saved?.pass}:${saved?.phase}`);
+
+        expect(await reconcile()).toBe('done');
+        expect(await reconcileState()).toMatchObject({
+          status: 'finished',
+          missing: 1,
+          orphans: 1,
+          stale: 2,
+        });
+        expect(await recordCount(harness, 'msearch')).toBe(4);
+        expect(await msearch().countDocuments({ v: { $ne: version() } })).toBe(0);
+      }
+      expect(stops).toEqual(
+        new Set([
+          'count:messages→records',
+          'count:records→messages',
+          'count:conversations→records',
+          'count:records→conversations',
+          'repair:messages→records',
+          'repair:records→messages',
+          'repair:conversations→records',
+          'repair:records→conversations',
+          'repair:vocab',
+        ]),
+      );
+    }, 120_000);
+
+    it('a live edit between its source read and its stamp read still wins', async () => {
+      const row = sourceMessage({ text: 'kerfi old' });
+      await storeSources(harness, 'messages', [row]);
+      await runBackfill(backfillDeps());
+      const source = { _id: oid(row._id) };
+      const messagesCollection = harness.database.connection.db!.collection('messages');
+      await messagesCollection.updateOne(source, { $set: { text: 'kerfi middle' } });
+      const stamps = harness.methods.readSearchRecordStamps;
+      let edited = false;
+      const methods = withMethods(harness, {
+        readSearchRecordStamps: async (collection, ids) => {
+          if (!edited && (await reconcileState())?.pass === 'repair') {
+            /* The writer applies a newer edit after the walk's source read. */
+            edited = true;
+            await messagesCollection.updateOne(source, { $set: { text: 'kerfi newest' } });
+            await msearch().updateOne(source, { $set: { h: 'by-writer', tokens: ['newest'] } });
+          }
+          return stamps(collection, ids);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(edited).toBe(true);
+      const tokens = (await msearch().findOne(source))?.tokens;
+      expect(tokens).toContain('newest');
+      expect(tokens).not.toContain('middle');
+    });
+
+    it('puts back a record whose source came back between its read and the orphan delete', async () => {
+      const row = sourceMessage({ text: 'kerfi back' });
+      await storeSources(harness, 'messages', [row]);
+      await runBackfill(backfillDeps());
+      const source = { _id: oid(row._id) };
+      const messagesCollection = harness.database.connection.db!.collection('messages');
+      await messagesCollection.updateOne(source, {
+        $set: { isTemporary: true, expiredAt: new Date(Date.now() + 1e6) },
+      });
+      const remove = harness.methods.deleteSearchRecords;
+      const methods = withMethods(harness, {
+        deleteSearchRecords: async (collection, ids, options) => {
+          /* Turned back before the delete lands; the writer rewrote its record meanwhile. */
+          await messagesCollection.updateOne(source, {
+            $set: { isTemporary: false },
+            $unset: { expiredAt: '' },
+          });
+          return remove(collection, ids, options);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(await msearch().findOne(source)).not.toBeNull();
+    });
+
+    it('a rolling analyzer change matches by exact form until reconcile rewrites it', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi word' })]);
+      await runBackfill({ ...backfillDeps(), version: 'older' });
+      const window = () =>
+        harness.methods.readRecordWindow(
+          { user: 'user-a', tokens: ['kerfi'], limit: 10 },
+          { maxTimeMS: 5000 },
+        );
+      expect(await window()).toHaveLength(1);
+
+      await reconcile();
+
+      expect(await reconcileState()).toMatchObject({ stale: 1 });
+      expect(await msearch().findOne({})).toMatchObject({ v: version() });
+      expect(await window()).toHaveLength(1);
+    });
+
+    it('clears attribution state once no record from the older analyzer remains', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
+      await runBackfill({ ...backfillDeps(), version: 'older' });
+      await harness.methods.writeSearchState('analyzer', {
+        attributionUntilReanalyzed: [{ id: 'gone', attribution: { text: 't', url: 'u' } }],
+      });
+      const rewrite = harness.methods.rewriteSearchRecords;
+      const failing = withMethods(harness, { rewriteSearchRecords: async () => 0 });
+
+      await reconcile({ methods: failing });
+      expect(await stateOf(harness, 'analyzer')).toMatchObject({
+        attributionUntilReanalyzed: [expect.objectContaining({ id: 'gone' })],
+      });
+
+      await reconcile({ methods: withMethods(harness, { rewriteSearchRecords: rewrite }) });
+      expect(await stateOf(harness, 'analyzer')).toMatchObject({
+        attributionUntilReanalyzed: null,
+      });
+    });
+
+    it('in the chain, skips the word list only when it repaired nothing', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+      const run = async () => (await stateOf(harness, 'vocab'))?.run;
+
+      await reconcile({}, true);
+      expect(await run()).toBeUndefined();
+
+      await reconcile({}, false);
+      expect(await run()).toBe(1);
+
+      await msearch().deleteMany({});
+      await reconcile({}, true);
+      expect(await run()).toBe(2);
+    });
+  });
+
+  describe('verify with a writer running', () => {
+    const syncedFar = () =>
+      harness.methods.writeSearchState('stream', {
+        savedAt: new Date(),
+        syncedTo: new Date(Date.now() + 3_600_000),
+      });
+    const load = async (rows: Array<Record<string, unknown>>) => {
+      await storeSources(harness, 'messages', rows);
+      await runBackfill(backfillDeps());
+    };
+    const oid = (agoMs: number) => {
+      const seconds = Math.floor((Date.now() - agoMs) / 1000);
+      return (
+        mongoose.Types.ObjectId.createFromTime(seconds).toHexString().slice(0, 8) +
+        new mongoose.Types.ObjectId().toHexString().slice(8)
+      );
+    };
+
+    it('checks sources past the backfill position, and fails on one with no record', async () => {
+      await load([sourceMessage({ text: 'kerfi' })]);
+      await syncedFar();
+      await storeSources(harness, 'messages', [
+        { ...sourceMessage({ text: 'later' }), _id: oid(120_000) },
+      ]);
+
+      await verify();
+
+      expect(await verification()).toMatchObject({ status: 'failed', mode: 'writer', missing: 1 });
+    });
+
+    it('ignores an import inside the lag window, by source ID age', async () => {
+      await load([sourceMessage({ text: 'kerfi' })]);
+      await syncedFar();
+      await storeSources(harness, 'messages', [
+        { ...sourceMessage({ text: 'fresh' }), _id: oid(0) },
+      ]);
+
+      await verify();
+
+      expect(await verification()).toMatchObject({ status: 'passed', mode: 'writer', checked: 1 });
+    });
+
+    it('fails on an orphan, which no writer leaves behind', async () => {
+      const row = sourceMessage({ text: 'kerfi' });
+      await load([row]);
+      await syncedFar();
+      await harness.database.connection
+        .db!.collection('messages')
+        .deleteOne({ _id: new mongoose.Types.ObjectId(String(row._id)) });
+
+      await verify();
+
+      expect(await verification()).toMatchObject({ status: 'failed', orphans: 1 });
+    });
+
+    it('ignores a chat deleted between the walks', async () => {
+      const rows = [sourceMessage({ text: 'kerfi' }), sourceMessage({ text: 'kerfi two' })];
+      await load(rows);
+      await syncedFar();
+      const read = harness.methods.readSearchSources;
+      const methods = withMethods(harness, {
+        readSearchSources: async (params) => {
+          const found = await read(params);
+          /* Deleted after its source was read, with the writer removing its record. */
+          for (const id of [rows[1]._id]) {
+            const _id = new mongoose.Types.ObjectId(String(id));
+            await harness.database.connection.db!.collection('messages').deleteOne({ _id });
+            await harness.database.connection.db!.collection('msearch').deleteOne({ _id });
+          }
+          return found;
+        },
+      });
+
+      await verify(methods);
+
+      expect(await verification()).toMatchObject({ status: 'passed', missing: 0, orphans: 0 });
+    });
+
+    it('stops waiting for sync as soon as its turn ends', async () => {
+      await load([sourceMessage({ text: 'kerfi' })]);
+      await harness.methods.writeSearchState('stream', {
+        savedAt: new Date(),
+        syncedTo: new Date(Date.now() - 600_000),
+      });
+      await storeSources(harness, 'messages', [
+        { ...sourceMessage({ text: 'later' }), _id: oid(120_000) },
+      ]);
+      let held = true;
+      const control = { ...freeControl(), holds: () => held };
+      setTimeout(() => (held = false), 200);
+      const startedAt = Date.now();
+
+      const outcome = await runVerify({
+        methods: harness.methods,
+        control,
+        metrics: harness.metrics,
+        version: computeAnalyzerVersion(harness.packs),
+        round: 1,
+      });
+
+      expect(outcome).toBe('lost');
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    });
+
+    it('fails as sync_behind when the writer never passes the recheck', async () => {
+      await load([sourceMessage({ text: 'kerfi' })]);
+      await harness.methods.writeSearchState('stream', {
+        savedAt: new Date(),
+        syncedTo: new Date(Date.now() - 600_000),
+      });
+      await storeSources(harness, 'messages', [
+        { ...sourceMessage({ text: 'later' }), _id: oid(120_000) },
+      ]);
+      let clock = Date.now();
+
+      await runVerify({
+        methods: harness.methods,
+        control: freeControl(),
+        metrics: harness.metrics,
+        version: computeAnalyzerVersion(harness.packs),
+        round: 1,
+        now: () => (clock += 20_000),
+      });
+
+      expect(await verification()).toMatchObject({ status: 'failed', reason: 'sync_behind' });
     });
   });
 });

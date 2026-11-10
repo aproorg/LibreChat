@@ -27,6 +27,9 @@ search:
     batchSize: 200
     batchDelayMs: 1000
     backfillOnStart: false   # the lease holder requests a backfill after startup if no chain has finished
+  sync:
+    watch: database          # database | collections: R-05's fallback opens one stream per source collection
+    dropUpdatedText: true    # R-09's $project on update events; off if the engine rejects the stage
   rank:
     lengthBucket: true       # FR-011
   prefix:

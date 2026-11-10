@@ -615,6 +615,11 @@ export type {
   SearchRecordWriteResult,
   SearchLeaseClaim,
   SearchVocabBatchRow,
+  SearchStreamPosition,
+  SearchSourceEvent,
+  SearchStreamBatch,
+  WatchSearchSourcesParams,
+  SearchRecordStamp,
 } from './search';
 
 export { recordAgentEventActorReceiptMetric, setAgentEventActorReceiptMetricObserver };

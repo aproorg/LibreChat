@@ -111,11 +111,11 @@ describe('createSearchMetrics', () => {
         typeof value === 'function' && name !== 'flushRealtext' && name !== 'startRealtextFlush',
     );
 
-    expect(emitters.length).toBe(14);
+    expect(emitters.length).toBe(15);
     for (const [, emit] of emitters) {
       emit(sentinelFields);
     }
-    expect(lines).toHaveLength(14);
+    expect(lines).toHaveLength(15);
     expect(JSON.stringify(lines)).not.toContain('SENTINEL');
     expect(JSON.stringify(lines)).not.toContain('user words');
   });

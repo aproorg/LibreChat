@@ -1,4 +1,3 @@
-import { isIndexableSource } from '@librechat/data-schemas';
 import type {
   ConversationSearchRecord,
   MessageSearchRecord,
@@ -17,6 +16,7 @@ import {
   SOURCE_COLLECTIONS,
 } from './control';
 import { belongsInSearch, buildConversationRecord, buildMessageRecord } from '../sync/record';
+import { removeRecordsOfGoneSources } from './check';
 
 export type BackfillMethods = Pick<
   SearchMethods,
@@ -37,8 +37,6 @@ const RATE_WEIGHT = 0.3;
  * so a row saved just after the last read can sort below it. Older rows have all landed.
  */
 const SETTLE_MS = 60_000;
-
-const EXCLUDE_PATH = { messages: 'subagentTask', conversations: 'subagentThread' } as const;
 
 export interface BackfillDeps {
   methods: BackfillMethods;
@@ -152,7 +150,11 @@ async function walkCollection(
         return 'lost';
       }
       await methods.insertSearchRecords(collection, records);
-      await removeRecordsOfGoneSources(methods, collection, records);
+      await removeRecordsOfGoneSources(
+        methods,
+        collection,
+        records.map(({ _id }) => _id),
+      );
       if (!control.holds()) {
         return 'lost';
       }
@@ -202,24 +204,4 @@ async function walkCollection(
 function finishingPosition(lastId: string | undefined, at: number): string {
   const settled = objectIdFloor(at - SETTLE_MS);
   return lastId != null && lastId < settled ? lastId : settled;
-}
-
-/**
- * A source can be deleted or turn temporary between this batch's read and its write, and
- * the insert would bring its record back (FR-022, R-09). One read after the write settles it.
- */
-async function removeRecordsOfGoneSources(
-  methods: BackfillMethods,
-  collection: SearchSourceCollection,
-  records: ReadonlyArray<{ _id: string }>,
-): Promise<void> {
-  const ids = records.map(({ _id }) => _id);
-  const current = await methods.readSearchSourcesById(collection, ids);
-  const kept = new Set(
-    current.filter((row) => isIndexableSource(row, EXCLUDE_PATH[collection])).map(({ _id }) => _id),
-  );
-  await methods.deleteSearchRecords(
-    collection,
-    ids.filter((id) => !kept.has(id)),
-  );
 }

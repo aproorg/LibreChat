@@ -9,6 +9,7 @@ const OUTCOME_STATES = ['ok', 'empty', 'partial', 'aborted'] as const;
 const SHADOW_STATES = ['ok', 'dropped', 'failed'] as const;
 const SKIP_CODES = ['read_failed', 'analyze_failed', 'write_failed', 'unknown'] as const;
 const LEASE_EVENTS = ['acquired', 'renewed', 'lost', 'released'] as const;
+const STOP_CODES = ['tenant_mismatch'] as const;
 const VERIFY_STATUSES = ['pending', 'passed', 'failed'] as const;
 const PACK_STATES = ['loading', 'loaded', 'failed'] as const;
 const COLLECTIONS = ['messages', 'conversations'] as const;
@@ -74,6 +75,11 @@ export interface SearchSyncSkipEvent {
   id: string;
   attempts: number;
   code: (typeof SKIP_CODES)[number];
+}
+
+/** The writer stopped and will not start again in this process: the owner is called. */
+export interface SearchSyncStopEvent {
+  code: (typeof STOP_CODES)[number];
 }
 
 export interface SearchLeaseEvent {
@@ -183,6 +189,7 @@ const SYNC_SKIP: FieldSpec<SearchSyncSkipEvent> = {
   attempts: count,
   code: oneOf(SKIP_CODES),
 };
+const SYNC_STOP: FieldSpec<SearchSyncStopEvent> = { code: oneOf(STOP_CODES) };
 const LEASE: FieldSpec<SearchLeaseEvent> = {
   holder: holderId,
   epoch: count,
@@ -256,6 +263,7 @@ export interface SearchMetrics {
   syncStatus(fields: SearchSyncStatusEvent): void;
   syncGap(fields: SearchSyncGapEvent): void;
   syncSkip(fields: SearchSyncSkipEvent): void;
+  syncStop(fields: SearchSyncStopEvent): void;
   lease(fields: SearchLeaseEvent): void;
   partial(fields: SearchPartialEvent): void;
   reconcile(fields: SearchReconcileEvent): void;
@@ -376,6 +384,7 @@ export function createSearchMetrics(logger: SearchMetricsLogger): SearchMetrics 
     syncStatus: emitter('info', 'search.sync_status', SYNC_STATUS),
     syncGap: emitter('warn', 'search.sync_gap', SYNC_GAP),
     syncSkip: emitter('warn', 'search.sync_skip', SYNC_SKIP),
+    syncStop: emitter('warn', 'search.sync_stop', SYNC_STOP),
     lease: emitter('info', 'search.lease', LEASE),
     partial: emitter('warn', 'search.partial', PARTIAL),
     reconcile: emitter('info', 'search.reconcile', RECONCILE),

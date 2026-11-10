@@ -35,7 +35,7 @@ describe('search-job script', () => {
     await harness.reset();
   });
 
-  it.each(['backfill', 'pause', 'resume', 'verify'])(
+  it.each(['backfill', 'pause', 'resume', 'reconcile', 'verify'])(
     '%s writes one request and runs nothing',
     async (job) => {
       const { code } = await run(job);
@@ -49,7 +49,7 @@ describe('search-job script', () => {
     },
   );
 
-  it.each(['reconcile', 'drop', 'nonsense', undefined])('rejects %s with usage', async (job) => {
+  it.each(['drop', 'nonsense', undefined])('rejects %s with usage', async (job) => {
     const { code, lines } = await run(...(job ? [job] : []));
 
     expect(code).toBe(2);

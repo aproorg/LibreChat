@@ -19,6 +19,20 @@ export const CHAIN_KEY = 'chain';
 export const VERIFICATION_KEY = 'verification';
 export const VOCAB_KEY = 'vocab';
 export const LEASE_KEY = 'lease';
+export const RECONCILE_KEY = 'reconcile';
+export const ANALYZER_KEY = 'analyzer';
+export const STREAM_KEY = 'stream';
+export const OBSERVED_KEY = 'observed';
+export const JOB_REQUEST_PREFIX = 'jobRequest:';
+
+/** Queues a job the lease holder runs, as `config/search-job.js` does. */
+export const requestJob = (
+  methods: { writeSearchState(key: string, fields: Record<string, unknown>): Promise<void> },
+  id: string,
+  job: string,
+  at: number,
+): Promise<void> =>
+  methods.writeSearchState(`${JOB_REQUEST_PREFIX}${id}`, { job, requestedAt: new Date(at) });
 
 export const SOURCE_COLLECTIONS: readonly SearchSourceCollection[] = ['messages', 'conversations'];
 

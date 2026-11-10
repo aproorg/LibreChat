@@ -5,6 +5,7 @@ import type { SearchLease, SearchLeaseMethods } from '../sync/lease';
 import type { VocabRebuildMethods } from './vocabRebuild';
 import type { JobControl, JobOutcome } from './control';
 import type { SearchConfigSnapshot } from '../config';
+import type { ReconcileMethods } from './reconcile';
 import type { BackfillMethods } from './backfill';
 import type { SearchService } from '../service';
 import type { SearchMetrics } from '../metrics';
@@ -13,17 +14,20 @@ import {
   BACKFILL_KEYS,
   CHAIN_KEY,
   JOB_STATE_READ,
+  RECONCILE_KEY,
   SOURCE_COLLECTIONS,
   VERIFICATION_KEY,
 } from './control';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchLease } from '../sync/lease';
 import { runVocabRebuild } from './vocabRebuild';
+import { runReconcile } from './reconcile';
 import { runBackfill } from './backfill';
 import { runVerify } from './verify';
 
 export type SearchJobMethods = BackfillMethods &
   VocabRebuildMethods &
+  ReconcileMethods &
   VerifyMethods &
   SearchLeaseMethods &
   Pick<SearchMethods, 'ensureSearchIndexes' | 'listSearchJobRequests' | 'deleteSearchState'>;
@@ -32,6 +36,11 @@ export type SearchJobMethods = BackfillMethods &
 const MAX_RETRY_DELAY_MS = 10 * 60_000;
 /** Fixed, so every restart of every process asks for the same one backfill. */
 const ON_START_REQUEST = 'jobRequest:backfill-on-start';
+/** Verification rounds before the mismatch loop stops and the owner is called (R-11). */
+export const MAX_VERIFY_ROUNDS = 3;
+/** Failures a reconcile can repair, so the mismatch loop runs on them. */
+const LOOP_REASONS = new Set(['mismatch', 'sync_behind']);
+const DAY_MS = 86_400_000;
 
 export interface SearchJobRunner {
   /** Starts the heartbeat. Its timer never keeps the process alive. */
@@ -43,15 +52,19 @@ export interface SearchJobRunner {
   /** Stops the heartbeat, waits for the job to stop and gives up the lease. */
   stop(): Promise<void>;
   isHolder(): boolean;
+  /** The lease this runner keeps, which the sync writer shares. */
+  readonly lease: SearchLease;
 }
 
 export interface SearchJobRunnerDeps {
   config: SearchConfigSnapshot;
   methods: SearchJobMethods;
-  metrics: Pick<SearchMetrics, 'backfill' | 'verify' | 'lease'>;
+  metrics: Pick<SearchMetrics, 'backfill' | 'verify' | 'lease' | 'reconcile'>;
   logger: { warn(message: string, meta: object): unknown };
   service: Pick<SearchService, 'jobAnalyzer'>;
   holder?: string;
+  /** Created here when absent. The startup path passes one, so the writer can share it. */
+  lease?: SearchLease;
   now?: () => number;
 }
 
@@ -74,14 +87,16 @@ interface ChainStep {
 export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunner {
   const { config, methods, metrics, logger, service, now = Date.now } = deps;
   const { batchSize, batchDelayMs, backfillOnStart } = config.jobs;
-  const lease: SearchLease = createSearchLease({
-    methods,
-    holder: deps.holder ?? randomUUID(),
-    takeoverSeconds: config.syncTakeoverSeconds,
-    packsLoaded: () => service.jobAnalyzer() !== null,
-    metrics,
-    now,
-  });
+  const lease: SearchLease =
+    deps.lease ??
+    createSearchLease({
+      methods,
+      holder: deps.holder ?? randomUUID(),
+      takeoverSeconds: config.syncTakeoverSeconds,
+      packsLoaded: () => service.jobAnalyzer() !== null,
+      metrics,
+      now,
+    });
 
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
@@ -118,7 +133,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     };
   };
 
-  /** The chain's order. Reconcile joins between `vocab` and `verify` when it lands. */
+  /** The chain's order (T121). */
   const chainSteps = (control: JobControl): ChainStep[] => {
     const ready = service.jobAnalyzer();
     if (!ready) {
@@ -134,6 +149,10 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         },
       },
       { name: 'vocab', run: () => runVocabRebuild({ methods, control, now }) },
+      {
+        name: 'reconcile',
+        run: () => runReconcile({ methods, control, metrics, now, inChain: true, ...ready }),
+      },
       {
         name: 'verify',
         run: () => runVerify({ methods, control, metrics, version: ready.version, round: 1, now }),
@@ -251,26 +270,180 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         ) {
           return;
         }
-        const previous = await readState(VERIFICATION_KEY);
-        const round = (typeof previous?.rounds === 'number' ? previous.rounds : 0) + 1;
         const ready = service.jobAnalyzer();
         if (!ready) {
           return;
         }
         const control = jobControl();
         const { version } = ready;
+        /* An operator's request starts the mismatch loop afresh, with all its rounds. */
         startJob(async () => {
-          const outcome = await runVerify({ methods, control, metrics, version, round, now });
+          const outcome = await runVerify({ methods, control, metrics, version, round: 1, now });
           if (outcome === 'done') {
             await methods.deleteSearchState(key);
           }
         }, VERIFICATION_KEY);
         return;
       }
+      case 'reconcile':
+        await handleReconcileRequest(request);
+        return;
       default:
         logger.warn('[search] Unknown job request removed', {});
         await methods.deleteSearchState(key);
     }
+  }
+
+  /**
+   * Reconcile runs only once a chain has finished: with no chain it would be an unrequested full
+   * backfill, so the request is removed, and a request made while a chain runs waits for it.
+   * With `verifyRound`, from the mismatch loop, verification follows in the same job, and the
+   * request stays until both are done, noting when reconcile finished, so a new holder carries
+   * the loop on without walking everything again.
+   */
+  async function handleReconcileRequest(request: SearchStateEntry): Promise<void> {
+    const key = request._id;
+    const chain = await readState(CHAIN_KEY);
+    if (!chain) {
+      logger.warn('[search] Reconcile needs a finished backfill; request removed', {});
+      await methods.deleteSearchState(key);
+      return;
+    }
+    if (chain.finishedAt == null) {
+      return;
+    }
+    if (active || now() < retryAt || (await isPaused())) {
+      return;
+    }
+    const ready = service.jobAnalyzer();
+    if (!ready) {
+      return;
+    }
+    const control = jobControl();
+    const verifyRound = typeof request.verifyRound === 'number' ? request.verifyRound : null;
+    const reconciledBefore = request.reconciledAt instanceof Date;
+    startJob(async () => {
+      if (!reconciledBefore) {
+        const reconciled = await runReconcile({
+          methods,
+          control,
+          metrics,
+          now,
+          inChain: false,
+          ...ready,
+        });
+        if (reconciled !== 'done') {
+          return;
+        }
+        /*
+         * It may have resumed a run that began before this request, which cannot answer it:
+         * the request stays, and the next heartbeat starts a fresh run.
+         */
+        const startedAt = (await readState(RECONCILE_KEY))?.startedAt;
+        if (
+          request.requestedAt instanceof Date &&
+          (!(startedAt instanceof Date) || startedAt < request.requestedAt)
+        ) {
+          return;
+        }
+      }
+      if (verifyRound !== null) {
+        if (!reconciledBefore) {
+          await methods.writeSearchState(key, { reconciledAt: new Date(now()) });
+        }
+        const verified = await runVerify({
+          methods,
+          control,
+          metrics,
+          version: ready.version,
+          round: verifyRound,
+          now,
+        });
+        if (verified !== 'done') {
+          return;
+        }
+      }
+      await methods.deleteSearchState(key);
+      await dropSatisfiedReconcileRequests();
+    }, RECONCILE_KEY);
+  }
+
+  /** Requests made before the reconcile that just finished began are answered by it. */
+  async function dropSatisfiedReconcileRequests(): Promise<void> {
+    const startedAt = (await readState(RECONCILE_KEY))?.startedAt;
+    if (!(startedAt instanceof Date)) {
+      return;
+    }
+    for (const request of await methods.listSearchJobRequests()) {
+      const requestedAt = request.requestedAt;
+      if (
+        request.job === 'reconcile' &&
+        request.verifyRound == null &&
+        requestedAt instanceof Date &&
+        requestedAt <= startedAt
+      ) {
+        await methods.deleteSearchState(request._id);
+      }
+    }
+  }
+
+  /**
+   * R-11's mismatch loop: a failed verification queues reconcile and another round, up to
+   * three, after which `verification` keeps `failed` and `gaveUp`, and the owner is called.
+   * Driven by state, so a new holder carries it on, and by request, so a crash cannot drop it.
+   */
+  async function continueMismatchLoop(pending: readonly SearchStateEntry[]): Promise<void> {
+    const verification = await readState(VERIFICATION_KEY);
+    if (
+      verification?.status !== 'failed' ||
+      verification.running === true ||
+      !LOOP_REASONS.has(String(verification.reason))
+    ) {
+      return;
+    }
+    const rounds = typeof verification.rounds === 'number' ? verification.rounds : 1;
+    if (rounds >= MAX_VERIFY_ROUNDS) {
+      if (verification.gaveUp !== true) {
+        await methods.writeSearchState(VERIFICATION_KEY, { gaveUp: true });
+        logger.warn('[search] Verification failed after every round; the owner is called', {
+          rounds,
+        });
+      }
+      return;
+    }
+    const id = `mismatch-${rounds + 1}`;
+    if (pending.some(({ _id }) => _id === `jobRequest:${id}`)) {
+      return;
+    }
+    await methods.writeSearchState(`jobRequest:${id}`, {
+      job: 'reconcile',
+      verifyRound: rounds + 1,
+      requestedAt: new Date(now()),
+    });
+  }
+
+  /**
+   * Resumes a reconcile a previous holder left running, or starts the `reconcileDays` one.
+   * Both only after a chain has finished, so neither can act as an unrequested backfill.
+   */
+  async function startDueReconcile(): Promise<void> {
+    const ready = service.jobAnalyzer();
+    if (!ready) {
+      return;
+    }
+    const reconcile = await readState(RECONCILE_KEY);
+    const chain = await readState(CHAIN_KEY);
+    const last = reconcile?.finishedAt ?? chain?.finishedAt;
+    const due =
+      reconcile?.status === 'running' ||
+      (last instanceof Date && now() - last.getTime() >= config.reconcileDays * DAY_MS);
+    if (!due) {
+      return;
+    }
+    const control = jobControl();
+    startJob(async () => {
+      await runReconcile({ methods, control, metrics, now, inChain: false, ...ready });
+    }, RECONCILE_KEY);
   }
 
   /**
@@ -303,8 +476,16 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       return;
     }
     const chain = await readState(CHAIN_KEY);
-    if (chain && chain.finishedAt == null && !(await isPaused())) {
+    if (!chain || (await isPaused())) {
+      return;
+    }
+    if (chain.finishedAt == null) {
       startJob(() => runChain(chain), CHAIN_KEY);
+      return;
+    }
+    await continueMismatchLoop(await methods.listSearchJobRequests());
+    if ((await methods.listSearchJobRequests()).length === 0) {
+      await startDueReconcile();
     }
   }
 
@@ -350,5 +531,6 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       });
     },
     isHolder: () => lease.isHeld(),
+    lease,
   };
 }

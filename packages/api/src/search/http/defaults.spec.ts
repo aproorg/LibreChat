@@ -59,6 +59,7 @@ describe('search with the default configuration', () => {
       await binding.startBackground();
 
       expect(binding.jobs()).toBeNull();
+      expect(binding.writer()).toBeNull();
       expect(resolvePacks).not.toHaveBeenCalled();
       const names = (await database.connection.db!.listCollections().toArray()).map(
         ({ name }) => name,

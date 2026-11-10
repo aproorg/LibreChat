@@ -1,15 +1,16 @@
+import type { ChangeStream, ChangeStreamDocument, ChangeStreamOptions } from 'mongodb';
 import type { AnyBulkWriteOperation } from 'mongoose';
 import type {
   ConversationSearchRecord,
   MessageSearchRecord,
   SearchStateEntry,
 } from '~/types/search';
+import { SearchError, SearchStreamError } from '~/utils/searchError';
 import { buildRetentionVisibilityFilter } from '~/utils/retention';
 import { buildIndexableQuery } from '~/models/plugins/mongoMeili';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { createIndexesWithRetry } from '~/utils/retry';
 import { runAsSystem } from '~/config/tenantContext';
-import { SearchError } from '~/utils/searchError';
 import { CLIENT_MESSAGE_SELECT } from './message';
 
 const MESSAGE_RECORD_INDEX = 'user_tokens_created';
@@ -42,6 +43,157 @@ const JOB_REQUEST_PREFIX = 'jobRequest:';
 const DUPLICATE_KEY = 11000;
 /** Bounds one job read, so a stuck batch fails and retries rather than holding a slot forever. */
 const JOB_READ_MAX_TIME_MS = 60_000;
+const STREAM_STATE_KEY = 'stream';
+const STREAM_MAX_AWAIT_MS = 1000;
+const STREAM_KEY_DATABASE = 'database';
+/** Events per batch, which bounds the writer's one record read per batch. */
+const STREAM_BATCH_MAX = 500;
+/**
+ * Removes the two fields that can carry a whole message from an update event, so an edit to
+ * a message near 16 MB does not push the event past the limit along with its full document.
+ */
+const UPDATED_TEXT_PROJECTION = {
+  'updateDescription.updatedFields.content': 0,
+  'updateDescription.updatedFields.text': 0,
+};
+/** Server codes for a position that can no longer be resumed. */
+const RESUME_FAILED_CODES = new Set([
+  136, // CappedPositionLost
+  260, // InvalidResumeToken
+  280, // ChangeStreamFatalError
+  286, // ChangeStreamHistoryLost
+]);
+const RESUME_FAILED_NAMES = new Set([
+  'CappedPositionLost',
+  'InvalidResumeToken',
+  'ChangeStreamFatalError',
+  'ChangeStreamHistoryLost',
+]);
+/** Server codes for an event too large to return. */
+const OVERSIZED_CODES = new Set([10334, 17419]); // BSONObjectTooLarge, document too large
+const OVERSIZED_NAMES = new Set(['BSONObjectTooLarge']);
+/** Change types that leave the stream unable to account for the rows it covered. */
+const GAP_OPERATIONS = new Set(['invalidate', 'drop', 'rename', 'dropDatabase']);
+
+/** Turns a driver failure into a gap the writer handles, or rethrows it for a retry. */
+function classifyStreamError(error: unknown): never {
+  const { code, codeName } = (error ?? {}) as { code?: unknown; codeName?: unknown };
+  if (
+    (typeof code === 'number' && RESUME_FAILED_CODES.has(code)) ||
+    (typeof codeName === 'string' && RESUME_FAILED_NAMES.has(codeName))
+  ) {
+    throw new SearchStreamError('resume_failed');
+  }
+  if (
+    (typeof code === 'number' && OVERSIZED_CODES.has(code)) ||
+    (typeof codeName === 'string' && OVERSIZED_NAMES.has(codeName))
+  ) {
+    throw new SearchStreamError('oversized');
+  }
+  throw error;
+}
+
+async function nextChange(
+  stream: ChangeStream,
+  signal: AbortSignal,
+): Promise<ChangeStreamDocument | null> {
+  try {
+    return await stream.tryNext();
+  } catch (error) {
+    if (signal.aborted) {
+      return null;
+    }
+    return classifyStreamError(error);
+  }
+}
+
+/**
+ * A saved position from the other scope cannot be resumed here, so it reads as a resume
+ * failure: the writer treats it as a gap and reconciles, rather than replaying nothing.
+ */
+function readPosition(
+  position: SearchStreamPosition | null,
+  scope: 'database' | 'collections',
+): Record<string, unknown> | null {
+  if (position == null) {
+    return null;
+  }
+  if (position.scope !== scope || position.tokens == null || typeof position.tokens !== 'object') {
+    throw new SearchStreamError('resume_failed');
+  }
+  return position.tokens as Record<string, unknown>;
+}
+
+/**
+ * The driver's own resume token: after the last event of a reply it is that reply's
+ * `postBatchResumeToken` where the server sends one, and the last event's token otherwise.
+ */
+function writePosition(
+  streams: ReadonlyArray<{ key: string; stream: ChangeStream }>,
+  scope: 'database' | 'collections',
+): SearchStreamPosition | null {
+  const tokens: Record<string, unknown> = {};
+  for (const { key, stream } of streams) {
+    if (stream.resumeToken == null) {
+      return null;
+    }
+    tokens[key] = stream.resumeToken;
+  }
+  return { scope, tokens };
+}
+
+function changeTime(change: ChangeStreamDocument): number {
+  const { wallTime, clusterTime } = change as {
+    wallTime?: Date;
+    clusterTime?: { getHighBitsUnsigned(): number };
+  };
+  if (wallTime instanceof Date) {
+    return wallTime.getTime();
+  }
+  return clusterTime ? clusterTime.getHighBitsUnsigned() * 1000 : Date.now();
+}
+
+/** Only IDs, types and the full document leave here, so no driver object reaches the writer. */
+function toSourceEvent(
+  change: ChangeStreamDocument,
+  names: Record<string, SearchSourceCollection>,
+): SearchSourceEvent {
+  const at = changeTime(change);
+  if (GAP_OPERATIONS.has(change.operationType)) {
+    return { type: 'gap', at };
+  }
+  const { ns, documentKey } = change as {
+    ns?: { coll?: string };
+    documentKey?: { _id?: unknown };
+  };
+  const collection = ns?.coll != null ? names[ns.coll] : undefined;
+  if (!collection || documentKey?._id == null) {
+    return { type: 'gap', at };
+  }
+  const id = String(documentKey._id);
+  if (change.operationType === 'delete') {
+    return { type: 'delete', collection, id, at };
+  }
+  if (change.operationType === 'update') {
+    const updated = change.updateDescription?.updatedFields as Record<string, unknown> | undefined;
+    if (updated?._meiliIndex === true) {
+      return { type: 'meili', collection, id, at };
+    }
+  }
+  const full = (change as { fullDocument?: Record<string, unknown> | null }).fullDocument;
+  if (
+    change.operationType !== 'insert' &&
+    change.operationType !== 'update' &&
+    change.operationType !== 'replace'
+  ) {
+    return { type: 'gap', at };
+  }
+  /* The row was deleted before the lookup ran: its delete event follows. */
+  if (full == null) {
+    return { type: 'delete', collection, id, at };
+  }
+  return { type: 'upsert', collection, id, source: { ...full, _id: id }, at };
+}
 
 /** How one search read runs. No read holds a cursor open or outlives its search. */
 export interface SearchReadOptions {
@@ -139,6 +291,58 @@ export interface SearchVocabBatchRow {
   r?: number;
 }
 
+/** Where a change stream resumes. Opaque: store it as it is and hand it back. */
+export type SearchStreamPosition = Record<string, unknown>;
+
+/** One change to a source row, as plain data. */
+export type SearchSourceEvent =
+  | {
+      type: 'upsert';
+      collection: SearchSourceCollection;
+      id: string;
+      /** The whole row after the change, text included. Never log it. */
+      source: SearchSourceRow;
+      /** Epoch milliseconds of the change. */
+      at: number;
+    }
+  | { type: 'delete'; collection: SearchSourceCollection; id: string; at: number }
+  /** Meilisearch's own bookkeeping write: `_meiliIndex: true` and nothing a record holds. */
+  | { type: 'meili'; collection: SearchSourceCollection; id: string; at: number }
+  /** The stream cannot account for what happened, such as an invalidate or a dropped collection. */
+  | { type: 'gap'; at: number };
+
+export interface SearchStreamBatch {
+  /** In stream order. Empty when the server had nothing new. */
+  events: SearchSourceEvent[];
+  /** Resuming here replays nothing in this batch. */
+  position: SearchStreamPosition | null;
+  /**
+   * Every change committed before this moment is in this batch or an earlier one. `null` when a
+   * stream stopped at the batch cap with changes still waiting, so nothing new is promised.
+   */
+  caughtUpTo: number | null;
+}
+
+export interface WatchSearchSourcesParams {
+  /** `null` starts at the current position. */
+  resumeToken: SearchStreamPosition | null;
+  signal: AbortSignal;
+  /** One stream on the database, or one per source collection (R-05's fallback). */
+  scope?: 'database' | 'collections';
+  /** Drops `content` and `text` from update descriptions, so a large message's edit fits (R-09). */
+  dropUpdatedText?: boolean;
+  /** How long the server waits for a change before answering with an empty batch. */
+  maxAwaitTimeMS?: number;
+}
+
+/** What the sync writer compares before writing a record. */
+export interface SearchRecordStamp {
+  _id: string;
+  h: string;
+  v: string;
+  e: number;
+}
+
 export interface SearchMethods {
   /** Creates the four search collections. Safe to repeat. */
   ensureSearchCollections(): Promise<void>;
@@ -205,10 +409,11 @@ export interface SearchMethods {
   releaseSearchLease(claim: { holder: string; epoch: number }): Promise<void>;
   /** One page of source rows by `_id`, across tenants. Ends only on an empty page. */
   readSearchSources(params: SearchSourceBatchParams): Promise<SearchSourceRow[]>;
-  /** The current state of chosen source rows, without text. An absent row is a deleted one. */
+  /** The current state of chosen source rows, without text unless asked. Absent means deleted. */
   readSearchSourcesById(
     collection: SearchSourceCollection,
     ids: readonly string[],
+    options?: { withText?: boolean },
   ): Promise<SearchSourceRow[]>;
   /** Records in a range that an analyzer other than this one wrote. */
   countSearchRecordsAtOtherVersion(
@@ -228,7 +433,43 @@ export interface SearchMethods {
     collection: SearchSourceCollection,
     records: ReadonlyArray<MessageSearchRecord | ConversationSearchRecord>,
   ): Promise<SearchRecordWriteResult>;
-  deleteSearchRecords(collection: SearchSourceCollection, ids: readonly string[]): Promise<number>;
+  /**
+   * With `atMostEpoch`, a record a newer writer wrote stays, so a paused writer's delete
+   * cannot remove what its successor put back.
+   */
+  deleteSearchRecords(
+    collection: SearchSourceCollection,
+    ids: readonly string[],
+    options?: { atMostEpoch?: number },
+  ): Promise<number>;
+  /**
+   * Rewrites records only where `h` and `v` still hold what was read, so a live edit between
+   * the read and this write wins. Never inserts.
+   */
+  rewriteSearchRecords(
+    collection: SearchSourceCollection,
+    rewrites: ReadonlyArray<{
+      record: MessageSearchRecord | ConversationSearchRecord;
+      expect: { h: string; v: string };
+    }>,
+  ): Promise<number>;
+  /** `h`, `v` and `e` of the chosen records, in one read. */
+  readSearchRecordStamps(
+    collection: SearchSourceCollection,
+    ids: readonly string[],
+  ): Promise<SearchRecordStamp[]>;
+  /** Batches of source changes until `signal` aborts. Throws `SearchStreamError` for a gap. */
+  watchSearchSources(params: WatchSearchSourcesParams): AsyncGenerator<SearchStreamBatch>;
+  /** Saves the stream's state unless a newer writer saved after it. `false` means it did. */
+  saveSearchStreamState(params: {
+    epoch: number;
+    fields: Record<string, unknown>;
+  }): Promise<boolean>;
+  /** Adds to `df` and, during a rebuild, stamps the run so the new word survives it. */
+  incrementSearchVocab(params: {
+    counts: ReadonlyArray<readonly [string, number]>;
+    run: number | null;
+  }): Promise<void>;
   /** Record IDs in a range, in `_id` order. */
   readSearchRecordIds(params: SearchRecordBatchParams): Promise<string[]>;
   /** Which of these IDs have a record. */
@@ -591,14 +832,18 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   function readSearchSourcesById(
     kind: SearchSourceCollection,
     ids: readonly string[],
+    { withText = false }: { withText?: boolean } = {},
   ): Promise<SearchSourceRow[]> {
     if (ids.length === 0) {
       return Promise.resolve([]);
     }
+    const fields = withText
+      ? `${SOURCE_STATE_FIELDS[kind]} ${SOURCE_TEXT_FIELDS[kind]}`
+      : SOURCE_STATE_FIELDS[kind];
     return runAsSystem(async () =>
       sourceRows(
         await mongoose.models[SOURCE_MODELS[kind]]
-          .find({ _id: { $in: [...ids] } }, SOURCE_STATE_FIELDS[kind], jobRead(ids.length))
+          .find({ _id: { $in: [...ids] } }, fields, jobRead(ids.length))
           .lean<Array<Record<string, unknown>>>(),
       ),
     );
@@ -671,6 +916,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   function deleteSearchRecords(
     kind: SearchSourceCollection,
     ids: readonly string[],
+    { atMostEpoch }: { atMostEpoch?: number } = {},
   ): Promise<number> {
     if (ids.length === 0) {
       return Promise.resolve(0);
@@ -678,9 +924,192 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     return runAsSystem(async () => {
       const { deletedCount } = await mongoose.models[RECORD_MODELS[kind]].deleteMany({
         _id: { $in: [...ids] },
+        ...(atMostEpoch != null ? { e: { $lte: atMostEpoch } } : {}),
       });
       return deletedCount;
     });
+  }
+
+  async function rewriteSearchRecords(
+    kind: SearchSourceCollection,
+    rewrites: ReadonlyArray<{
+      record: MessageSearchRecord | ConversationSearchRecord;
+      expect: { h: string; v: string };
+    }>,
+  ): Promise<number> {
+    if (rewrites.length === 0) {
+      return 0;
+    }
+    return runAsSystem(async () => {
+      const result = await tenantSafeBulkWrite(
+        mongoose.models[RECORD_MODELS[kind]],
+        rewrites.map(({ record, expect }) => ({
+          replaceOne: {
+            filter: { _id: record._id, h: expect.h, v: expect.v },
+            replacement: record,
+          },
+        })) as AnyBulkWriteOperation[],
+        { ordered: false, throwOnValidationError: true },
+      );
+      return result.modifiedCount;
+    });
+  }
+
+  function readSearchRecordStamps(
+    kind: SearchSourceCollection,
+    ids: readonly string[],
+  ): Promise<SearchRecordStamp[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+    return runAsSystem(async () => {
+      const rows = await mongoose.models[RECORD_MODELS[kind]]
+        .find({ _id: { $in: [...ids] } }, 'h v e', jobRead(ids.length))
+        .lean<Array<Omit<SearchRecordStamp, '_id'> & { _id: unknown }>>();
+      return rows.map((row) => ({ ...row, _id: String(row._id) }));
+    });
+  }
+
+  const sourceCollectionNames = (): Record<string, SearchSourceCollection> => ({
+    // eslint-disable-next-line no-restricted-syntax -- reads the collection's name only, no driver call
+    [mongoose.models[SOURCE_MODELS.messages].collection.collectionName]: 'messages',
+    // eslint-disable-next-line no-restricted-syntax -- reads the collection's name only, no driver call
+    [mongoose.models[SOURCE_MODELS.conversations].collection.collectionName]: 'conversations',
+  });
+
+  async function* watchSearchSources({
+    resumeToken,
+    signal,
+    scope = 'database',
+    dropUpdatedText = true,
+    maxAwaitTimeMS = STREAM_MAX_AWAIT_MS,
+  }: WatchSearchSourcesParams): AsyncGenerator<SearchStreamBatch> {
+    const db = mongoose.connection.db;
+    if (!db) {
+      throw new Error('Search sources watched before the database connected');
+    }
+    const names = sourceCollectionNames();
+    const saved = readPosition(resumeToken, scope);
+    const pipeline = (match: object) => [
+      { $match: match },
+      ...(dropUpdatedText ? [{ $project: UPDATED_TEXT_PROJECTION }] : []),
+    ];
+    const options = (token: unknown): ChangeStreamOptions => ({
+      fullDocument: 'updateLookup',
+      maxAwaitTimeMS,
+      ...(token != null ? { resumeAfter: token } : {}),
+    });
+
+    /*
+     * System context: only the sync writer opens this, under `runAsSystem`, on a database that
+     * holds one tenant (R-04). Its tenant guard is the writer's pin rather than a `$match`: the
+     * first non-null `tenantId` is pinned in `search_state`, and a second one stops sync and
+     * alarms, where a filter would hide the second tenant's writes instead.
+     */
+    const streams: Array<{ key: string; stream: ChangeStream }> =
+      scope === 'database'
+        ? [
+            {
+              key: STREAM_KEY_DATABASE,
+              // eslint-disable-next-line no-restricted-syntax -- system context and tenant pin above (R-04)
+              stream: db.watch(
+                pipeline({ 'ns.coll': { $in: Object.keys(names) } }),
+                options(saved?.[STREAM_KEY_DATABASE]),
+              ),
+            },
+          ]
+        : Object.entries(names).map(([name, kind]) => ({
+            key: kind,
+            // eslint-disable-next-line no-restricted-syntax -- system context and tenant pin above (R-04)
+            stream: db.collection(name).watch(pipeline({}), options(saved?.[kind])),
+          }));
+
+    const close = () => {
+      for (const { stream } of streams) {
+        void stream.close().catch(() => undefined);
+      }
+    };
+    signal.addEventListener('abort', close, { once: true });
+    try {
+      while (!signal.aborted) {
+        const events: SearchSourceEvent[] = [];
+        /* Before the first poll, so a later stream's wait cannot overstate an earlier one. */
+        const startedAt = Date.now();
+        let drained = true;
+        for (const { stream } of streams) {
+          /* Until the server has nothing more, so a bulk import arrives in full batches. */
+          let emptied = false;
+          for (let count = 0; count < STREAM_BATCH_MAX && !signal.aborted; count += 1) {
+            const change = await nextChange(stream, signal);
+            if (change === null) {
+              emptied = true;
+              break;
+            }
+            events.push(toSourceEvent(change, names));
+          }
+          drained &&= emptied;
+        }
+        if (signal.aborted) {
+          return;
+        }
+        yield {
+          events,
+          position: writePosition(streams, scope),
+          caughtUpTo: drained ? startedAt : null,
+        };
+      }
+    } finally {
+      signal.removeEventListener('abort', close);
+      close();
+    }
+  }
+
+  async function saveSearchStreamState({
+    epoch,
+    fields,
+  }: {
+    epoch: number;
+    fields: Record<string, unknown>;
+  }): Promise<boolean> {
+    try {
+      const { matchedCount, upsertedCount } = await stateModel().updateOne(
+        { _id: STREAM_STATE_KEY, $or: [{ epoch: { $lte: epoch } }, { epoch: { $exists: false } }] },
+        { $set: { ...fields, epoch } },
+        { upsert: true },
+      );
+      return matchedCount + upsertedCount > 0;
+    } catch (error) {
+      /* A newer writer's state stopped the filter, so the upsert tried to insert a second one. */
+      if ((error as { code?: number }).code === DUPLICATE_KEY) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async function incrementSearchVocab({
+    counts,
+    run,
+  }: {
+    counts: ReadonlyArray<readonly [string, number]>;
+    run: number | null;
+  }): Promise<void> {
+    if (counts.length === 0) {
+      return;
+    }
+    await runAsSystem(() =>
+      tenantSafeBulkWrite(
+        mongoose.models.SearchVocab,
+        counts.map(([token, count]) => ({
+          updateOne: {
+            filter: { _id: token },
+            update: { $inc: { df: count }, ...(run != null ? { $set: { r: run } } : {}) },
+            upsert: true,
+          },
+        })) as unknown as AnyBulkWriteOperation[],
+        { ordered: false },
+      ),
+    );
   }
 
   function readSearchRecordIds({
@@ -829,6 +1258,11 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     insertSearchRecords,
     replaceSearchRecords,
     deleteSearchRecords,
+    rewriteSearchRecords,
+    readSearchRecordStamps,
+    watchSearchSources,
+    saveSearchStreamState,
+    incrementSearchVocab,
     readSearchRecordIds,
     countSearchRecordsAtOtherVersion,
     readSearchRecordIdsIn,

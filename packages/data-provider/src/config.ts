@@ -3232,6 +3232,23 @@ export const searchConfigSchema = z
       })
       .strict()
       .default({}),
+    /** How the sync writer reads changes. Both choices depend on the engine's change streams. */
+    sync: z
+      .object({
+        /**
+         * `database` opens one change stream on the database, filtered to the two source
+         * collections. `collections` opens one per collection, for an engine whose database
+         * stream misses collections that had change streams enabled one by one.
+         */
+        watch: z.enum(['database', 'collections']).default('database'),
+        /**
+         * Drops `content` and `text` from an update's changed fields, so an edit to a large
+         * message stays under the 16 MB event limit. Off for an engine that rejects the stage.
+         */
+        dropUpdatedText: z.boolean().default(true),
+      })
+      .strict()
+      .default({}),
     /** Ranking switches. */
     rank: z
       .object({

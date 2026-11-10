@@ -11,6 +11,7 @@ Structured `logger` events under `search.*`, per [R-14](../research.md#r-14-metr
 | `search.sync_status` | `savedAgeMs`, `hasHolder`, `isHolder` | Each minute from every process with data on. Liveness for SC-009, FR-039; alarms on age and on missing data |
 | `search.sync_gap` | `resumeFailed`, `restartedAt` | FR-039 |
 | `search.sync_skip` | `id`, `attempts`, `code` | Poison event edge case |
+| `search.sync_stop` | `code` | The writer stopped for good in this process: `tenant_mismatch` when a second non-null `tenantId` appears (R-04) |
 | `search.lease` | `holder`, `epoch`, `event` | FR-024 |
 | `search.partial` | `surface`, `code` | US2, scenario 8 |
 | `search.reconcile` | `missing`, `orphans`, `stale`, `of` | SC-010 |
