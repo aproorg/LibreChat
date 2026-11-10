@@ -24,13 +24,25 @@ export type SyncApplyCode = 'read_failed' | 'analyze_failed' | 'write_failed';
 /** A batch that could not be applied, by stable code. Holds no driver or analyzer text. */
 export class SyncApplyError extends Error {
   readonly code: SyncApplyCode;
+  /**
+   * The event itself cannot be applied, as when a pack throws on its text or its record fails
+   * validation. Otherwise the database failed, and the batch is worth reading again later.
+   */
+  readonly poison: boolean;
 
-  constructor(code: SyncApplyCode) {
+  constructor(code: SyncApplyCode, poison = code === 'analyze_failed') {
     super(code);
     this.name = 'SyncApplyError';
     this.code = code;
+    this.poison = poison;
   }
 }
+
+/** A document or schema validation failure belongs to the record, not to the database. */
+const isValidationFailure = (error: unknown): boolean => {
+  const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown };
+  return name === 'ValidationError' || code === 121;
+};
 
 /** The writer's turn, as one batch sees it. */
 export interface ApplyTurn {
@@ -103,8 +115,8 @@ function build(
 async function step<T>(code: SyncApplyCode, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
-  } catch {
-    throw new SyncApplyError(code);
+  } catch (error) {
+    throw new SyncApplyError(code, isValidationFailure(error));
   }
 }
 

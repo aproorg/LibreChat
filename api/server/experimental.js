@@ -515,7 +515,9 @@ if (cluster.isMaster) {
       logger,
     });
     /* Hands the sync lease over at once, so the next process need not wait out the takeover time. */
-    registerShutdownTask('search background', () => app.locals.search.stopBackground());
+    registerShutdownTask('search background', () => app.locals.search.stopBackground(), {
+      phase: 'pre-drain',
+    });
     registerBackgroundTaskShutdown({
       interruptGraceMs: baseAppConfig?.endpoints?.agents?.backgroundTasks?.shutdownInterruptGraceMs,
       getBudgetMs: clusterShutdownBudgetMs,

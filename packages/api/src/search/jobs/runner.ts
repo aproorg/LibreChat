@@ -295,19 +295,21 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   }
 
   /**
-   * Reconcile runs only once a chain has finished: before that it would be an unrequested full
-   * backfill, and a running chain's own reconcile step covers the request. With `verifyRound`,
-   * from the mismatch loop, verification follows in the same job, and the request stays until
-   * both are done, so a new holder carries the loop on.
+   * Reconcile runs only once a chain has finished: with no chain it would be an unrequested full
+   * backfill, so the request is removed, and a request made while a chain runs waits for it.
+   * With `verifyRound`, from the mismatch loop, verification follows in the same job, and the
+   * request stays until both are done, noting when reconcile finished, so a new holder carries
+   * the loop on without walking everything again.
    */
   async function handleReconcileRequest(request: SearchStateEntry): Promise<void> {
     const key = request._id;
     const chain = await readState(CHAIN_KEY);
-    if (chain?.finishedAt == null) {
-      if (!chain) {
-        logger.warn('[search] Reconcile needs a finished backfill; request removed', {});
-      }
+    if (!chain) {
+      logger.warn('[search] Reconcile needs a finished backfill; request removed', {});
       await methods.deleteSearchState(key);
+      return;
+    }
+    if (chain.finishedAt == null) {
       return;
     }
     if (active || now() < retryAt || (await isPaused())) {
@@ -319,19 +321,25 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     }
     const control = jobControl();
     const verifyRound = typeof request.verifyRound === 'number' ? request.verifyRound : null;
+    const reconciledBefore = request.reconciledAt instanceof Date;
     startJob(async () => {
-      const reconciled = await runReconcile({
-        methods,
-        control,
-        metrics,
-        now,
-        inChain: false,
-        ...ready,
-      });
-      if (reconciled !== 'done') {
-        return;
+      if (!reconciledBefore) {
+        const reconciled = await runReconcile({
+          methods,
+          control,
+          metrics,
+          now,
+          inChain: false,
+          ...ready,
+        });
+        if (reconciled !== 'done') {
+          return;
+        }
       }
       if (verifyRound !== null) {
+        if (!reconciledBefore) {
+          await methods.writeSearchState(key, { reconciledAt: new Date(now()) });
+        }
         const verified = await runVerify({
           methods,
           control,

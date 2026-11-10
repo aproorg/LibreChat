@@ -209,7 +209,7 @@ async function walkCollection({
   tally: VerifyTally;
   now: () => number;
 }): Promise<JobOutcome> {
-  const settle: Settle = { methods, mode, tally, now };
+  const settle: Settle = { methods, control, mode, tally, now };
   let afterId: string | undefined;
   for (;;) {
     const stop = await control.check();
@@ -277,6 +277,7 @@ async function readRecordRange(
 
 interface Settle {
   methods: VerifyMethods;
+  control: JobControl;
   mode: VerifyMode;
   tally: VerifyTally;
   now: () => number;
@@ -288,7 +289,7 @@ interface Settle {
  * inside sync lag is not called a gap (R-11).
  */
 async function settleSuspects<T>(
-  { methods, mode, tally, now }: Settle,
+  { methods, control, mode, tally, now }: Settle,
   ids: readonly string[],
   read: (ids: readonly string[]) => Promise<T[]>,
   wrong: (found: T[]) => T[],
@@ -298,22 +299,28 @@ async function settleSuspects<T>(
   }
   const readAt = now();
   const suspects = wrong(await read(ids));
-  if (mode !== 'writer' || suspects.length === 0) {
+  /* Once sync is known to be behind, waiting again on each batch only holds the job slot. */
+  if (mode !== 'writer' || suspects.length === 0 || tally.syncBehind) {
     return suspects;
   }
-  if (!(await waitForSync(methods, readAt, now))) {
+  if (!(await waitForSync(methods, control, readAt, now))) {
     tally.syncBehind = true;
   }
   return wrong(await read(ids));
 }
 
+/** Gives up when this turn ends, so a shutdown or takeover is not held for the whole wait. */
 async function waitForSync(
   methods: VerifyMethods,
+  control: JobControl,
   since: number,
   now: () => number,
 ): Promise<boolean> {
   const deadline = now() + SYNC_WAIT_MS;
   for (;;) {
+    if (!control.holds()) {
+      return false;
+    }
     const stream = await methods.readSearchState(STREAM_KEY, JOB_STATE_READ);
     const syncedTo = timeOf(stream?.syncedTo);
     if (syncedTo !== null && syncedTo > since + SYNC_MARGIN_MS) {

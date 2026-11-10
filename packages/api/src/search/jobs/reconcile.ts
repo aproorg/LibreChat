@@ -305,7 +305,7 @@ async function walkSources(
 }
 
 async function walkRecords(
-  { methods, control }: ReconcileDeps,
+  { methods, analyzer, version, control }: ReconcileDeps,
   state: ReconcileState,
   pass: Pass,
   phase: Phase,
@@ -340,6 +340,7 @@ async function walkRecords(
         return 'lost';
       }
       state.repaired += await methods.deleteSearchRecords(collection, orphans);
+      await restoreReturnedSources(methods, collection, orphans, { analyzer, version });
     }
     lastId = ids[ids.length - 1];
     state.lastIds = { ...state.lastIds, [phase]: lastId };
@@ -350,6 +351,27 @@ async function walkRecords(
       repaired: state.repaired,
     });
     await control.wait();
+  }
+}
+
+/**
+ * The other half of the source check: a source can come back between this walk's read and its
+ * delete, as a chat turned temporary and back does, and the writer's record for it would be
+ * gone. One read after the delete puts those back, insert-only, so a newer record still wins.
+ */
+async function restoreReturnedSources(
+  methods: ReconcileMethods,
+  collection: SearchSourceCollection,
+  ids: readonly string[],
+  options: { analyzer: Analyzer; version: string },
+): Promise<void> {
+  const current = await methods.readSearchSourcesById(collection, ids, { withText: true });
+  const records = current
+    .filter((row) => belongsInSearch(collection, row))
+    .map((row) => buildRecord(collection, row, { ...options, epoch: 0 }))
+    .filter((record): record is MessageSearchRecord | ConversationSearchRecord => record !== null);
+  if (records.length > 0) {
+    await methods.insertSearchRecords(collection, records);
   }
 }
 

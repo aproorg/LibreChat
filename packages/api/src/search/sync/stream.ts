@@ -86,10 +86,10 @@ export async function runSyncStream(deps: SyncStreamDeps): Promise<void> {
         if (batch.events.length === 0 && now() - savedAt < idleSaveMs) {
           continue;
         }
-        const fields: Record<string, unknown> = {
-          savedAt: new Date(now()),
-          syncedTo: new Date(batch.fetchedAt),
-        };
+        const fields: Record<string, unknown> = { savedAt: new Date(now()) };
+        if (batch.caughtUpTo !== null) {
+          fields.syncedTo = new Date(batch.caughtUpTo);
+        }
         if (batch.position) {
           fields.resumeToken = batch.position;
           position = batch.position;
@@ -122,30 +122,36 @@ export async function runSyncStream(deps: SyncStreamDeps): Promise<void> {
   }
 }
 
+/** Chain steps after which the chain's own walks may already have passed rows a gap lost. */
+const LATE_CHAIN_STEPS = new Set(['reconcile', 'verify']);
+
 /**
  * Alarms, clears the saved position so the stream restarts where it is now, and queues
- * reconcile once a chain has finished. A request ID per gap, so a reconcile already running
- * for an earlier gap cannot take this one's request with it. Answers whether to carry on.
+ * reconcile when the chain's own reconcile cannot cover the gap: once a chain has finished,
+ * or while it is at its reconcile or verify step. The runner holds a request made mid-chain
+ * until the chain finishes. A request ID per gap, so a reconcile already running for an
+ * earlier gap cannot take this one's request with it. Answers whether to carry on.
  */
 async function gap(deps: SyncStreamDeps, resumeFailed: boolean, now: () => number) {
   const { methods, metrics, epoch, holds } = deps;
   const chain = await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ);
   const finished = chain?.finishedAt != null;
+  const uncovered = finished || LATE_CHAIN_STEPS.has(String(chain?.step));
   if (!holds()) {
     return false;
   }
   const restartedAt = now();
-  if (finished || resumeFailed) {
+  if (uncovered || resumeFailed) {
     metrics.syncGap({ resumeFailed, restartedAt });
   }
   const cleared = await methods.saveSearchStreamState({
     epoch,
-    fields: { resumeToken: null, ...(finished ? { gapAt: new Date(restartedAt) } : {}) },
+    fields: { resumeToken: null, ...(uncovered ? { gapAt: new Date(restartedAt) } : {}) },
   });
   if (!cleared) {
     return false;
   }
-  if (finished) {
+  if (uncovered) {
     await requestJob(methods, `gap-${restartedAt}`, 'reconcile', restartedAt);
   }
   return true;

@@ -83,6 +83,8 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
   let jobs: SearchJobRunner | null = null;
   let writer: SearchWriter | null = null;
   let stopStatus: (() => void) | null = null;
+  /* A stop can arrive while packs load; nothing may start after it. */
+  let stopping = false;
   /* With no `search` block nothing is read at all, so a tenant without search stays as today. */
   const hasBlock = appConfig.search !== undefined;
 
@@ -110,6 +112,9 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
       try {
         metrics.startRealtextFlush();
         await service.loadPacks();
+        if (stopping) {
+          return;
+        }
         const lease = createSearchLease({
           methods,
           holder: randomUUID(),
@@ -131,6 +136,9 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
         /* First, or the lease write would create `search_state` implicitly. */
         await methods.ensureSearchCollections();
         await observe(() => recordObserved({ methods, config }));
+        if (stopping) {
+          return;
+        }
         jobs = createSearchJobRunner({ config, methods, metrics, logger, service, lease });
         jobs.start();
         writer = createSearchWriter({ config, methods, metrics, logger, service, lease });
@@ -140,6 +148,7 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
       }
     },
     async stopBackground() {
+      stopping = true;
       stopStatus?.();
       try {
         await writer?.stop();

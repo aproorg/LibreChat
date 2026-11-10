@@ -737,6 +737,42 @@ describe('search job runner', () => {
       expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
     });
 
+    it('a mismatch request whose reconcile already finished goes straight to verify', async () => {
+      await finishChain();
+      const reconciledAt = (await reconcileState())?.finishedAt;
+      await harness.methods.writeSearchState('jobRequest:mismatch-2', {
+        job: 'reconcile',
+        verifyRound: 2,
+        reconciledAt: new Date(),
+        requestedAt: new Date(),
+      });
+      await expireLease(harness);
+
+      await settle(createRunner(harness));
+
+      expect((await reconcileState())?.finishedAt).toEqual(reconciledAt);
+      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+
+    it('a reconcile request made while a chain runs waits for it to finish', async () => {
+      await seed();
+      await request('backfill');
+      await request('pause');
+      await request('reconcile');
+      const runner = createRunner(harness);
+
+      await settle(runner);
+      expect((await harness.methods.listSearchJobRequests()).map(({ job }) => job)).toEqual([
+        'reconcile',
+      ]);
+
+      await request('resume');
+      await settle(runner, 6);
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+
     it('runs on the reconcileDays timer once the chain has finished', async () => {
       await finishChain();
       expect(await reconcileState()).toMatchObject({ status: 'finished' });

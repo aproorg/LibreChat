@@ -189,16 +189,32 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
     if (whole.ok) {
       return whole.lost ? 'lost' : 'ok';
     }
+    let applied = false;
+    let skipped = false;
     for (const change of changes) {
       const single = changes.length === 1 ? whole : await attempt([change]);
       if (single.ok) {
         if (single.lost) {
           return 'lost';
         }
+        applied = true;
         continue;
+      }
+      const poison = single.error instanceof SyncApplyError && single.error.poison;
+      if (!poison && !applied) {
+        /*
+         * The database is failing, not the event: end the turn, so the batch is read again
+         * from the saved position after a backoff, and nothing is lost.
+         */
+        throw single.error;
       }
       const code = single.error instanceof SyncApplyError ? single.error.code : 'unknown';
       metrics.syncSkip({ id: change.id, attempts: MAX_ATTEMPTS, code });
+      skipped = true;
+    }
+    if (skipped && (await chainFinished())) {
+      /* Reconcile retries what was skipped, rather than leaving it to the monthly timer. */
+      await requestJob(methods, `skip-${now()}`, 'reconcile', now());
     }
     return 'ok';
   }

@@ -849,6 +849,32 @@ describe('search jobs', () => {
       );
     }, 120_000);
 
+    it('puts back a record whose source came back between its read and the orphan delete', async () => {
+      const row = sourceMessage({ text: 'kerfi back' });
+      await storeSources(harness, 'messages', [row]);
+      await runBackfill(backfillDeps());
+      const source = { _id: oid(row._id) };
+      const messagesCollection = harness.database.connection.db!.collection('messages');
+      await messagesCollection.updateOne(source, {
+        $set: { isTemporary: true, expiredAt: new Date(Date.now() + 1e6) },
+      });
+      const remove = harness.methods.deleteSearchRecords;
+      const methods = withMethods(harness, {
+        deleteSearchRecords: async (collection, ids, options) => {
+          /* Turned back before the delete lands; the writer rewrote its record meanwhile. */
+          await messagesCollection.updateOne(source, {
+            $set: { isTemporary: false },
+            $unset: { expiredAt: '' },
+          });
+          return remove(collection, ids, options);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(await msearch().findOne(source)).not.toBeNull();
+    });
+
     it('a rolling analyzer change matches by exact form until reconcile rewrites it', async () => {
       await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi word' })]);
       await runBackfill({ ...backfillDeps(), version: 'older' });
@@ -979,6 +1005,32 @@ describe('search jobs', () => {
       await verify(methods);
 
       expect(await verification()).toMatchObject({ status: 'passed', missing: 0, orphans: 0 });
+    });
+
+    it('stops waiting for sync as soon as its turn ends', async () => {
+      await load([sourceMessage({ text: 'kerfi' })]);
+      await harness.methods.writeSearchState('stream', {
+        savedAt: new Date(),
+        syncedTo: new Date(Date.now() - 600_000),
+      });
+      await storeSources(harness, 'messages', [
+        { ...sourceMessage({ text: 'later' }), _id: oid(120_000) },
+      ]);
+      let held = true;
+      const control = { ...freeControl(), holds: () => held };
+      setTimeout(() => (held = false), 200);
+      const startedAt = Date.now();
+
+      const outcome = await runVerify({
+        methods: harness.methods,
+        control,
+        metrics: harness.metrics,
+        version: computeAnalyzerVersion(harness.packs),
+        round: 1,
+      });
+
+      expect(outcome).toBe('lost');
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
     });
 
     it('fails as sync_behind when the writer never passes the recheck', async () => {

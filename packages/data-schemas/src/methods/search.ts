@@ -316,8 +316,11 @@ export interface SearchStreamBatch {
   events: SearchSourceEvent[];
   /** Resuming here replays nothing in this batch. */
   position: SearchStreamPosition | null;
-  /** When the server answered: every change committed before it is in this batch or earlier. */
-  fetchedAt: number;
+  /**
+   * Every change committed before this moment is in this batch or an earlier one. `null` when a
+   * stream stopped at the batch cap with changes still waiting, so nothing new is promised.
+   */
+  caughtUpTo: number | null;
 }
 
 export interface WatchSearchSourcesParams {
@@ -406,10 +409,11 @@ export interface SearchMethods {
   releaseSearchLease(claim: { holder: string; epoch: number }): Promise<void>;
   /** One page of source rows by `_id`, across tenants. Ends only on an empty page. */
   readSearchSources(params: SearchSourceBatchParams): Promise<SearchSourceRow[]>;
-  /** The current state of chosen source rows, without text. An absent row is a deleted one. */
+  /** The current state of chosen source rows, without text unless asked. Absent means deleted. */
   readSearchSourcesById(
     collection: SearchSourceCollection,
     ids: readonly string[],
+    options?: { withText?: boolean },
   ): Promise<SearchSourceRow[]>;
   /** Records in a range that an analyzer other than this one wrote. */
   countSearchRecordsAtOtherVersion(
@@ -828,14 +832,18 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   function readSearchSourcesById(
     kind: SearchSourceCollection,
     ids: readonly string[],
+    { withText = false }: { withText?: boolean } = {},
   ): Promise<SearchSourceRow[]> {
     if (ids.length === 0) {
       return Promise.resolve([]);
     }
+    const fields = withText
+      ? `${SOURCE_STATE_FIELDS[kind]} ${SOURCE_TEXT_FIELDS[kind]}`
+      : SOURCE_STATE_FIELDS[kind];
     return runAsSystem(async () =>
       sourceRows(
         await mongoose.models[SOURCE_MODELS[kind]]
-          .find({ _id: { $in: [...ids] } }, SOURCE_STATE_FIELDS[kind], jobRead(ids.length))
+          .find({ _id: { $in: [...ids] } }, fields, jobRead(ids.length))
           .lean<Array<Record<string, unknown>>>(),
       ),
     );
@@ -1025,21 +1033,30 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     try {
       while (!signal.aborted) {
         const events: SearchSourceEvent[] = [];
+        /* Before the first poll, so a later stream's wait cannot overstate an earlier one. */
+        const startedAt = Date.now();
+        let drained = true;
         for (const { stream } of streams) {
           /* Until the server has nothing more, so a bulk import arrives in full batches. */
+          let emptied = false;
           for (let count = 0; count < STREAM_BATCH_MAX && !signal.aborted; count += 1) {
             const change = await nextChange(stream, signal);
             if (change === null) {
+              emptied = true;
               break;
             }
             events.push(toSourceEvent(change, names));
           }
+          drained &&= emptied;
         }
         if (signal.aborted) {
           return;
         }
-        const fetchedAt = Date.now();
-        yield { events, position: writePosition(streams, scope), fetchedAt };
+        yield {
+          events,
+          position: writePosition(streams, scope),
+          caughtUpTo: drained ? startedAt : null,
+        };
       }
     } finally {
       signal.removeEventListener('abort', close);

@@ -192,6 +192,31 @@ describe('search startup', () => {
       expect(binding.jobs()?.isHolder()).toBe(false);
     });
 
+    it('a stop that arrives while packs load starts nothing afterwards', async () => {
+      let finishLoad: () => void = () => undefined;
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          resolvePacks: () => ({
+            ok: true,
+            packs: [
+              { ...harness.packs[0], load: () => new Promise<void>((done) => (finishLoad = done)) },
+            ],
+          }),
+        },
+      );
+      const starting = startSearchBackground(binding);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await binding.stopBackground();
+      finishLoad();
+      await starting;
+
+      expect(binding.jobs()).toBeNull();
+      expect(binding.writer()).toBeNull();
+      expect(await harness.methods.readSearchState('lease', { maxTimeMS: 5000 })).toBeNull();
+    });
+
     it('a failed observed read leaves the process up, and sync still starts', async () => {
       const { binding } = bind(
         { languages: ['fake'] },

@@ -222,6 +222,70 @@ describe('search sync fencing', () => {
     expect(JSON.stringify(harness.logged)).not.toContain('bad one');
   });
 
+  it('a database outage during a batch ends the turn and retries it, skipping nothing', async () => {
+    const replace = harness.methods.replaceSearchRecords;
+    let failures = 8;
+    await start({
+      methods: withMethods(harness, {
+        replaceSearchRecords: async (collection, records) => {
+          if (records.length > 0 && failures > 0) {
+            failures -= 1;
+            throw new Error('connection reset');
+          }
+          return replace(collection, records);
+        },
+      }),
+    });
+    await synced(harness);
+    const ids = await Promise.all(['one', 'two'].map((text) => insertMessage({ text })));
+    await waitFor(async () => (await recordCount(harness, 'msearch')) === 2, {
+      label: 'the retried batch',
+    });
+
+    expect(failures).toBe(0);
+    expect(eventsOf(harness, 'search.sync_skip')).toEqual([]);
+    for (const id of ids) {
+      expect(await recordOf(harness, 'msearch', id)).not.toBeNull();
+    }
+  });
+
+  it('a skipped event queues reconcile once a chain has finished', async () => {
+    await finishChain();
+    const replace = harness.methods.replaceSearchRecords;
+    let poison = '';
+    await start({
+      methods: withMethods(harness, {
+        replaceSearchRecords: async (collection, records) => {
+          if (records.some(({ _id }) => _id === poison)) {
+            throw Object.assign(new Error('invalid'), { name: 'ValidationError' });
+          }
+          return replace(collection, records);
+        },
+      }),
+    });
+    await synced(harness);
+    const row = sourceMessage({ text: 'bad one' });
+    poison = String(row._id);
+    await messages().insertOne({ ...row, _id: oid(poison) });
+    await synced(harness);
+
+    expect(eventsOf(harness, 'search.sync_skip')).toEqual([
+      { id: poison, attempts: 3, code: 'write_failed' },
+    ]);
+    expect((await reconcileRequests()).map(({ _id }) => _id)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^jobRequest:skip-/)]),
+    );
+  });
+
+  it("a gap during the chain's reconcile step queues reconcile, which waits for the chain", async () => {
+    await harness.methods.writeSearchState('chain', { step: 'reconcile' });
+    await start();
+    await synced(harness);
+
+    expect(eventsOf(harness, 'search.sync_gap')).toHaveLength(1);
+    expect(await reconcileRequests()).toHaveLength(1);
+  });
+
   it.each([
     ['an oversized event', 'oversized' as const, false],
     ['a resume failure', 'resume_failed' as const, true],

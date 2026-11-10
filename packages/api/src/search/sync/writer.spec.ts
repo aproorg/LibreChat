@@ -106,6 +106,29 @@ describe('search sync writer', () => {
     expect(eventsOf(harness, 'search.sync_lag').length).toBeGreaterThan(0);
   });
 
+  it('promises no catch-up from a batch that stopped at its cap', async () => {
+    const seen: SearchStreamBatch[] = [];
+    const watch = harness.methods.watchSearchSources;
+    await startWriter({
+      methods: withMethods(harness, {
+        watchSearchSources: async function* (params) {
+          for await (const batch of watch(params)) {
+            seen.push(batch);
+            yield batch;
+          }
+        },
+      }),
+    });
+    const rows = Array.from({ length: 600 }, (_, index) => sourceMessage({ text: `w${index}` }));
+    await messages().insertMany(rows.map((row) => ({ ...row, _id: oid(String(row._id)) })));
+    await synced(harness);
+
+    const full = seen.filter(({ events }) => events.length === 500);
+    expect(full.length).toBeGreaterThan(0);
+    expect(full.every(({ caughtUpTo }) => caughtUpTo === null)).toBe(true);
+    expect(await recordCount(harness, 'msearch')).toBe(600);
+  });
+
   it('removes records on an updateMany to temporary, and on a single temporary flip and back', async () => {
     await startWriter();
     const ids = await Promise.all(['one', 'two', 'three'].map((text) => insertMessage({ text })));
