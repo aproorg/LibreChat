@@ -202,19 +202,20 @@ describe('search sync fencing', () => {
       methods: withMethods(harness, {
         replaceSearchRecords: async (collection, records) => {
           if (records.some(({ _id }) => _id === poison)) {
-            throw new Error('poison');
+            throw Object.assign(new Error('bad one'), { name: 'ValidationError' });
           }
           return replace(collection, records);
         },
       }),
     });
     await synced(harness);
-    const rows = [sourceMessage({ text: 'good one' }), sourceMessage({ text: 'bad one' })];
-    poison = String(rows[1]._id);
+    /* The poison row first, so its place in the batch decides nothing. */
+    const rows = [sourceMessage({ text: 'bad one' }), sourceMessage({ text: 'good one' })];
+    poison = String(rows[0]._id);
     await messages().insertMany(rows.map((row) => ({ ...row, _id: oid(String(row._id)) })));
     await synced(harness);
 
-    expect(await recordOf(harness, 'msearch', String(rows[0]._id))).not.toBeNull();
+    expect(await recordOf(harness, 'msearch', String(rows[1]._id))).not.toBeNull();
     expect(await recordOf(harness, 'msearch', poison)).toBeNull();
     expect(eventsOf(harness, 'search.sync_skip')).toEqual([
       { id: poison, attempts: 3, code: 'write_failed' },
@@ -275,6 +276,30 @@ describe('search sync fencing', () => {
     expect((await reconcileRequests()).map(({ _id }) => _id)).toEqual(
       expect.arrayContaining([expect.stringMatching(/^jobRequest:skip-/)]),
     );
+  });
+
+  it("a skip during the chain's reconcile step queues reconcile too", async () => {
+    await harness.methods.writeSearchState('chain', { step: 'reconcile' });
+    const replace = harness.methods.replaceSearchRecords;
+    let poison = '';
+    await start({
+      methods: withMethods(harness, {
+        replaceSearchRecords: async (collection, records) => {
+          if (records.some(({ _id }) => _id === poison)) {
+            throw Object.assign(new Error('invalid'), { name: 'ValidationError' });
+          }
+          return replace(collection, records);
+        },
+      }),
+    });
+    await synced(harness);
+    const before = (await reconcileRequests()).length;
+    const row = sourceMessage({ text: 'bad one' });
+    poison = String(row._id);
+    await messages().insertOne({ ...row, _id: oid(poison) });
+    await synced(harness);
+
+    expect((await reconcileRequests()).length).toBe(before + 1);
   });
 
   it("a gap during the chain's reconcile step queues reconcile, which waits for the chain", async () => {

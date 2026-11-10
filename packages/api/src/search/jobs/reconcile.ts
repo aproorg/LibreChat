@@ -247,6 +247,7 @@ async function walkSources(
     }> = [];
     let missing = 0;
     let stale = 0;
+    const candidates: string[] = [];
     for (const row of rows) {
       if (!belongsInSearch(collection, row)) {
         continue;
@@ -260,12 +261,22 @@ async function walkSources(
       } else {
         missing += 1;
       }
-      if (pass === 'repair') {
-        const record = buildRecord(collection, row, {
-          analyzer,
-          version,
-          epoch: stamp?.e ?? 0,
-        });
+      candidates.push(row._id);
+    }
+
+    if (pass === 'repair' && candidates.length > 0) {
+      /*
+       * Built from a read taken after the stamps, so the compare-and-set on the stamp covers
+       * every edit the writer applied since: a newer record is never rewritten with older text.
+       */
+      for (const row of await methods.readSearchSourcesById(collection, candidates, {
+        withText: true,
+      })) {
+        if (!belongsInSearch(collection, row)) {
+          continue;
+        }
+        const stamp = stamps.get(row._id);
+        const record = buildRecord(collection, row, { analyzer, version, epoch: stamp?.e ?? 0 });
         if (record && stamp) {
           rewrites.push({ record, expect: { h: stamp.h, v: stamp.v } });
         } else if (record) {

@@ -1,5 +1,6 @@
 import { isSearchStreamError } from '@librechat/data-schemas';
 import type {
+  SearchStateEntry,
   SearchMethods,
   SearchStreamBatch,
   SearchStreamPosition,
@@ -126,6 +127,13 @@ export async function runSyncStream(deps: SyncStreamDeps): Promise<void> {
 const LATE_CHAIN_STEPS = new Set(['reconcile', 'verify']);
 
 /**
+ * Whether lost or skipped events need a reconcile of their own: once a chain has finished, or
+ * while it is at its reconcile or verify step, whose walks may already have passed them.
+ */
+export const isGapUncovered = (chain: SearchStateEntry | null): boolean =>
+  chain?.finishedAt != null || LATE_CHAIN_STEPS.has(String(chain?.step));
+
+/**
  * Alarms, clears the saved position so the stream restarts where it is now, and queues
  * reconcile when the chain's own reconcile cannot cover the gap: once a chain has finished,
  * or while it is at its reconcile or verify step. The runner holds a request made mid-chain
@@ -135,8 +143,7 @@ const LATE_CHAIN_STEPS = new Set(['reconcile', 'verify']);
 async function gap(deps: SyncStreamDeps, resumeFailed: boolean, now: () => number) {
   const { methods, metrics, epoch, holds } = deps;
   const chain = await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ);
-  const finished = chain?.finishedAt != null;
-  const uncovered = finished || LATE_CHAIN_STEPS.has(String(chain?.step));
+  const uncovered = isGapUncovered(chain);
   if (!holds()) {
     return false;
   }

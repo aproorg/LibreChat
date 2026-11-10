@@ -737,6 +737,28 @@ describe('search job runner', () => {
       expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
     });
 
+    it('a request newer than a resumed reconcile is answered only by a fresh run', async () => {
+      await finishChain();
+      const older = new Date(Date.now() - 60_000);
+      await harness.methods.writeSearchState('reconcile', {
+        status: 'running',
+        pass: 'repair',
+        phase: 'records→conversations',
+        lastIds: {},
+        startedAt: older,
+      });
+      await harness.database.connection.db!.collection('msearch').deleteOne({});
+      await request('reconcile');
+      await expireLease(harness);
+
+      await settle(createRunner(harness), 4);
+
+      const state = await reconcileState();
+      expect((state?.startedAt as Date).getTime()).toBeGreaterThan(older.getTime());
+      expect(await recordCount(harness, 'msearch')).toBe(3);
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+
     it('a mismatch request whose reconcile already finished goes straight to verify', async () => {
       await finishChain();
       const reconciledAt = (await reconcileState())?.finishedAt;

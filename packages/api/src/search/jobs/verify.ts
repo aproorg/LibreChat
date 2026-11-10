@@ -185,6 +185,13 @@ export async function runVerify({
   if (failures === 0) {
     return finish('passed', null);
   }
+  /*
+   * Rows a pack threw on stay counted until a new backfill re-reads them, so reconcile cannot
+   * clear them and the mismatch loop must not run on them alone.
+   */
+  if (failures === tally.analysisFailures) {
+    return finish('failed', 'analysis_failed');
+  }
   return finish('failed', tally.syncBehind ? 'sync_behind' : 'mismatch');
 }
 

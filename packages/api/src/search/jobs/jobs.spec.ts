@@ -598,7 +598,8 @@ describe('search jobs', () => {
       });
       expect(await verification()).toMatchObject({
         status: 'failed',
-        reason: 'mismatch',
+        /* Its own reason, so the mismatch loop does not reconcile in vain. */
+        reason: 'analysis_failed',
         analysisFailures: 1,
       });
     });
@@ -848,6 +849,35 @@ describe('search jobs', () => {
         ]),
       );
     }, 120_000);
+
+    it('a live edit between its source read and its stamp read still wins', async () => {
+      const row = sourceMessage({ text: 'kerfi old' });
+      await storeSources(harness, 'messages', [row]);
+      await runBackfill(backfillDeps());
+      const source = { _id: oid(row._id) };
+      const messagesCollection = harness.database.connection.db!.collection('messages');
+      await messagesCollection.updateOne(source, { $set: { text: 'kerfi middle' } });
+      const stamps = harness.methods.readSearchRecordStamps;
+      let edited = false;
+      const methods = withMethods(harness, {
+        readSearchRecordStamps: async (collection, ids) => {
+          if (!edited && (await reconcileState())?.pass === 'repair') {
+            /* The writer applies a newer edit after the walk's source read. */
+            edited = true;
+            await messagesCollection.updateOne(source, { $set: { text: 'kerfi newest' } });
+            await msearch().updateOne(source, { $set: { h: 'by-writer', tokens: ['newest'] } });
+          }
+          return stamps(collection, ids);
+        },
+      });
+
+      await reconcile({ methods });
+
+      expect(edited).toBe(true);
+      const tokens = (await msearch().findOne(source))?.tokens;
+      expect(tokens).toContain('newest');
+      expect(tokens).not.toContain('middle');
+    });
 
     it('puts back a record whose source came back between its read and the orphan delete', async () => {
       const row = sourceMessage({ text: 'kerfi back' });

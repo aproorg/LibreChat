@@ -335,6 +335,17 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
         if (reconciled !== 'done') {
           return;
         }
+        /*
+         * It may have resumed a run that began before this request, which cannot answer it:
+         * the request stays, and the next heartbeat starts a fresh run.
+         */
+        const startedAt = (await readState(RECONCILE_KEY))?.startedAt;
+        if (
+          request.requestedAt instanceof Date &&
+          (!(startedAt instanceof Date) || startedAt < request.requestedAt)
+        ) {
+          return;
+        }
       }
       if (verifyRound !== null) {
         if (!reconciledBefore) {

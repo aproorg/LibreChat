@@ -221,11 +221,14 @@ function nextAction(status: SearchJobStatus): string {
   if (pendingRequests.length > 0) {
     return 'nothing. The lease holder picks up the request on its next heartbeat.';
   }
+  if (verification?.status === 'failed' && verification.reason === 'analysis_failed') {
+    return 'a language pack threw on some rows: fix the pack, then run backfill, which re-reads every row.';
+  }
   if (verification?.status === 'failed' && verification.gaveUp !== true && status.syncSavedAt) {
     return 'nothing yet. The mismatch loop reconciles and verifies again, up to three rounds.';
   }
   if (verification?.status === 'failed' && status.syncSavedAt) {
-    return 'three rounds failed: read the sample IDs, fix the cause, then run reconcile and verify. Rows a language pack threw on need a fixed pack first.';
+    return 'three rounds failed: read the sample IDs, fix the cause, then run reconcile and verify.';
   }
   if (verification?.status === 'failed') {
     return 'run backfill to fill the gaps, then check again. Rows a language pack threw on need a fixed pack first.';

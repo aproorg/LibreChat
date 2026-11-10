@@ -17,9 +17,9 @@ import {
   STREAM_KEY,
 } from '../jobs/control';
 import { applyChanges, checkTenant, lastChanges, SyncApplyError } from './apply';
+import { isGapUncovered, runSyncStream } from './stream';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createVocabCounter } from './vocab';
-import { runSyncStream } from './stream';
 
 export type SearchWriterMethods = ApplyMethods &
   SyncStreamMethods &
@@ -189,7 +189,6 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
     if (whole.ok) {
       return whole.lost ? 'lost' : 'ok';
     }
-    let applied = false;
     let skipped = false;
     for (const change of changes) {
       const single = changes.length === 1 ? whole : await attempt([change]);
@@ -197,11 +196,10 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
         if (single.lost) {
           return 'lost';
         }
-        applied = true;
         continue;
       }
       const poison = single.error instanceof SyncApplyError && single.error.poison;
-      if (!poison && !applied) {
+      if (!poison) {
         /*
          * The database is failing, not the event: end the turn, so the batch is read again
          * from the saved position after a backoff, and nothing is lost.
@@ -212,7 +210,7 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
       metrics.syncSkip({ id: change.id, attempts: MAX_ATTEMPTS, code });
       skipped = true;
     }
-    if (skipped && (await chainFinished())) {
+    if (skipped && isGapUncovered(await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ))) {
       /* Reconcile retries what was skipped, rather than leaving it to the monthly timer. */
       await requestJob(methods, `skip-${now()}`, 'reconcile', now());
     }
