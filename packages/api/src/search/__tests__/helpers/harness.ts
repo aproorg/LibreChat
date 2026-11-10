@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet, MongoMemoryServer } from 'mongodb-memory-server';
 import {
   createMethods,
   createModels,
@@ -55,9 +55,19 @@ export const searchConfig = (search: DeepPartial<ConversationSearchConfig> = {})
     search: { data: true, backend: 'search', ...search },
   } as DeepPartial<TCustomConfig>);
 
-/** A real database, real models and methods, the fake dictionary and `en`. */
-export async function createSearchHarness(): Promise<SearchHarness> {
-  const server = await MongoMemoryServer.create();
+/**
+ * A real database, real models and methods, the fake dictionary and `en`. With `replSet`, a
+ * one-node replica set, which change streams need.
+ */
+export async function createSearchHarness({
+  replSet = false,
+}: { replSet?: boolean } = {}): Promise<SearchHarness> {
+  const server = replSet
+    ? await MongoMemoryReplSet.create({
+        replSet: { count: 1, storageEngine: 'wiredTiger' },
+        instanceOpts: [{ args: ['--nounixsocket'] }],
+      })
+    : await MongoMemoryServer.create();
   const database = new mongoose.Mongoose();
   database.set('autoIndex', false);
   /* So a test can see exactly which collections its code created. */

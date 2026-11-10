@@ -5,6 +5,7 @@ import {
   sourceConversation,
   sourceMessage,
 } from '../__tests__/helpers/harness';
+import { createSyncProcess, oid, sources, synced } from '../sync/__tests__/helpers/sync';
 import { createRunner, settle, stateOf, storeSources } from './__tests__/helpers/jobs';
 import { runSearchJobCommand } from './script';
 
@@ -63,4 +64,40 @@ describe('search jobs under TENANT_ISOLATION_STRICT', () => {
     );
     expect(elsewhere).toHaveLength(0);
   }, 60_000);
+
+  it('the sync writer and reconcile run with no request context, and keep the source tenant', async () => {
+    const replica = await createSearchHarness({ replSet: true });
+    const proc = createSyncProcess(replica);
+    try {
+      await replica.reset();
+      await proc.start();
+      await synced(replica);
+      const row = sourceMessage({ text: 'kerfi live', tenantId: 'tenant-one' });
+      await sources(replica, 'messages').insertOne({ ...row, _id: oid(String(row._id)) });
+      await synced(replica);
+
+      const found = await tenantStorage.run({ tenantId: 'tenant-one' }, async () =>
+        replica.models.MessageSearch.find({ user: 'user-a' }).lean(),
+      );
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ tenantId: 'tenant-one', e: 1 });
+
+      await replica.database.connection.db!.collection('msearch').deleteMany({});
+      await replica.methods.writeSearchState('chain', { step: 'verify', finishedAt: new Date() });
+      await runSearchJobCommand({
+        argv: ['reconcile'],
+        methods: replica.methods,
+        print: () => undefined,
+      });
+      await settle(proc.runner);
+      const repaired = await tenantStorage.run({ tenantId: 'tenant-one' }, async () =>
+        replica.models.MessageSearch.find({ user: 'user-a' }).lean(),
+      );
+      expect(repaired).toHaveLength(1);
+      expect(repaired[0]).toMatchObject({ tenantId: 'tenant-one' });
+    } finally {
+      await proc.stop();
+      await replica.close();
+    }
+  }, 120_000);
 });

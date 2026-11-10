@@ -242,6 +242,8 @@ const startServer = async () => {
     jwtSecret: process.env.JWT_SECRET,
     logger,
   });
+  /* Hands the sync lease over at once, so the next process need not wait out the takeover time. */
+  registerShutdownTask('search background', () => app.locals.search.stopBackground());
   registerBackgroundTaskShutdown({
     interruptGraceMs: appConfig?.endpoints?.agents?.backgroundTasks?.shutdownInterruptGraceMs,
   });

@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type { SearchMethods, SearchPort } from '@librechat/data-schemas';
 import type { SearchContextRequest, SearchContextResponse } from './http/context';
 import type { SearchJobMethods, SearchJobRunner } from './jobs/runner';
+import type { SearchWriter, SearchWriterMethods } from './sync/writer';
 import type { SearchService, SearchServiceDeps } from './service';
 import type { ConversationSearch } from './http/conversations';
 import type { SearchMessagesRoute } from './http/messages';
@@ -9,12 +11,15 @@ import type { SearchConfigSnapshot } from './config';
 import type { SearchMetricsLogger } from './metrics';
 import type { SearchStatus } from './http/status';
 import { createSearchConfigSnapshot, isSearchDataOn } from './config';
+import { createSearchWriter, startSyncStatus } from './sync/writer';
+import { checkObserved, recordObserved } from './sync/observed';
 import { createConversationSearch } from './http/conversations';
 import { createSearchMessagesRoute } from './http/messages';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchJobRunner } from './jobs/runner';
 import { createSearchContext } from './http/context';
 import { createSearchStatus } from './http/status';
+import { createSearchLease } from './sync/lease';
 import { createSearchService } from './service';
 import { createSearchMetrics } from './metrics';
 
@@ -24,6 +29,7 @@ export interface BindSearchDeps {
   appConfig: { search?: Parameters<typeof createSearchConfigSnapshot>[0]['search'] };
   methods: SearchServiceDeps['methods'] &
     SearchJobMethods &
+    SearchWriterMethods &
     Pick<SearchMethods, 'ensureSearchCollections'>;
   setSearchPort(port: SearchPort): void;
   jwtSecret?: string;
@@ -37,6 +43,11 @@ export interface SearchBinding {
   config: SearchConfigSnapshot;
   /** Never rejects. */
   startBackground(): Promise<void>;
+  /**
+   * Stops the writer, then the runner, which gives the lease up, so the next process takes
+   * over at once rather than after `syncTakeoverSeconds`. Never rejects.
+   */
+  stopBackground(): Promise<void>;
   messages(
     req: SearchContextRequest,
     res: SearchContextResponse,
@@ -47,6 +58,8 @@ export interface SearchBinding {
   enabled: SearchStatus['enabled'];
   /** The running job runner, or `null` before packs load, or with search data off. */
   jobs(): SearchJobRunner | null;
+  /** The running sync writer, or `null` before packs load, or with search data off. */
+  writer(): SearchWriter | null;
 }
 
 /**
@@ -68,27 +81,71 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
   const route: SearchMessagesRoute = createSearchMessagesRoute({ service, methods, metrics });
   const status = createSearchStatus({ service, methods, logger });
   let jobs: SearchJobRunner | null = null;
+  let writer: SearchWriter | null = null;
+  let stopStatus: (() => void) | null = null;
+  /* With no `search` block nothing is read at all, so a tenant without search stays as today. */
+  const hasBlock = appConfig.search !== undefined;
+
+  /* Readiness must notice an abort or stopped sync, so a failed check is only logged (R-11). */
+  const observe = async (step: () => Promise<void>) => {
+    try {
+      await step();
+    } catch (error) {
+      logger.warn('[search] Observed config check failed', getSafeErrorMetadata(error));
+    }
+  };
 
   const binding: SearchBinding = {
     service,
     config,
     async startBackground() {
+      if (!hasBlock) {
+        return;
+      }
+      /* In every process, before anything else, so a restart's change is seen first (T124). */
+      await observe(() => checkObserved({ methods, config }));
       if (!isSearchDataOn(config)) {
         return;
       }
       try {
         metrics.startRealtextFlush();
         await service.loadPacks();
+        const lease = createSearchLease({
+          methods,
+          holder: randomUUID(),
+          takeoverSeconds: config.syncTakeoverSeconds,
+          packsLoaded: () => service.jobAnalyzer() !== null,
+          metrics,
+        });
+        /* From every process with data on, pack or not, so a stalled writer still alarms. */
+        stopStatus = startSyncStatus({
+          methods,
+          metrics,
+          logger,
+          isHolder: () => lease.isHeld(),
+        }).stop;
         /* A failed pack takes no lease, so one bad task cannot stall the tenant (R-09). */
         if (service.packState() !== 'loaded') {
           return;
         }
         /* First, or the lease write would create `search_state` implicitly. */
         await methods.ensureSearchCollections();
-        jobs = createSearchJobRunner({ config, methods, metrics, logger, service });
+        await observe(() => recordObserved({ methods, config }));
+        jobs = createSearchJobRunner({ config, methods, metrics, logger, service, lease });
         jobs.start();
+        writer = createSearchWriter({ config, methods, metrics, logger, service, lease });
+        writer.start();
       } catch (error) {
         logger.warn('[search] Background start failed', getSafeErrorMetadata(error));
+      }
+    },
+    async stopBackground() {
+      stopStatus?.();
+      try {
+        await writer?.stop();
+        await jobs?.stop();
+      } catch (error) {
+        logger.warn('[search] Background stop failed', getSafeErrorMetadata(error));
       }
     },
     messages: (req, res, query, cursor) =>
@@ -98,6 +155,7 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
     conversations: createConversationSearch({ service, metrics, logger }),
     enabled: status.enabled,
     jobs: () => jobs,
+    writer: () => writer,
   };
 
   setSearchPort(service);

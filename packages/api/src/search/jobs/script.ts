@@ -5,7 +5,9 @@ import {
   CHAIN_KEY,
   JOB_STATE_READ,
   LEASE_KEY,
+  RECONCILE_KEY,
   SOURCE_COLLECTIONS,
+  STREAM_KEY,
   VERIFICATION_KEY,
   VOCAB_KEY,
 } from './control';
@@ -19,8 +21,8 @@ export type SearchScriptMethods = Pick<
   | 'readSearchSourceTenants'
 >;
 
-const REQUEST_COMMANDS = ['backfill', 'pause', 'resume', 'verify'] as const;
-const USAGE = 'Usage: search-job <status|backfill|pause|resume|verify>';
+const REQUEST_COMMANDS = ['backfill', 'pause', 'resume', 'reconcile', 'verify'] as const;
+const USAGE = 'Usage: search-job <status|backfill|pause|resume|reconcile|verify>';
 /** A rate older than this came from a process that stopped, so it predicts nothing. */
 const RATE_STALE_MS = 5 * 60_000;
 
@@ -52,6 +54,10 @@ export interface SearchJobStatus {
   collections: Record<SearchSourceCollection, SearchCollectionStatus>;
   verification: Record<string, unknown> | null;
   wordList: Record<string, unknown> | null;
+  reconcile: Record<string, unknown> | null;
+  /** When the sync writer last saved its position, or `null` if no writer has run. */
+  syncSavedAt: Date | null;
+  gapAt: Date | null;
   leaseHeld: boolean;
   pendingRequests: string[];
   /**
@@ -97,16 +103,27 @@ export async function readSearchJobStatus(
   const read = (key: string) => methods.readSearchState(key, JOB_STATE_READ);
   const chain = await read(CHAIN_KEY);
   const running = chain != null && chain.finishedAt == null;
-  const [messages, conversations, verification, wordList, lease, requests, tenants] =
-    await Promise.all([
-      read(BACKFILL_KEYS.messages),
-      read(BACKFILL_KEYS.conversations),
-      read(VERIFICATION_KEY),
-      read(VOCAB_KEY),
-      read(LEASE_KEY),
-      methods.listSearchJobRequests(),
-      running ? null : methods.readSearchSourceTenants().catch(() => null),
-    ]);
+  const [
+    messages,
+    conversations,
+    verification,
+    wordList,
+    reconcile,
+    stream,
+    lease,
+    requests,
+    tenants,
+  ] = await Promise.all([
+    read(BACKFILL_KEYS.messages),
+    read(BACKFILL_KEYS.conversations),
+    read(VERIFICATION_KEY),
+    read(VOCAB_KEY),
+    read(RECONCILE_KEY),
+    read(STREAM_KEY),
+    read(LEASE_KEY),
+    methods.listSearchJobRequests(),
+    running ? null : methods.readSearchSourceTenants().catch(() => null),
+  ]);
   return {
     chain: {
       step: typeof chain?.step === 'string' ? chain.step : null,
@@ -123,6 +140,9 @@ export async function readSearchJobStatus(
     },
     verification,
     wordList,
+    reconcile,
+    syncSavedAt: dateOf(stream?.savedAt),
+    gapAt: dateOf(stream?.gapAt),
     leaseHeld: (dateOf(lease?.leaseUntil)?.getTime() ?? 0) > now,
     pendingRequests: requests.map(({ job }) => String(job)),
     tenants,
@@ -137,7 +157,7 @@ const show = (value: unknown): string => {
 };
 
 export function formatSearchJobStatus(status: SearchJobStatus): string[] {
-  const { chain, collections, verification, wordList } = status;
+  const { chain, collections, verification, wordList, reconcile } = status;
   const lines = [
     `chain step: ${chain.finishedAt ? 'finished' : show(chain.step)}`,
     `chain started: ${show(chain.startedAt)}  finished: ${show(chain.finishedAt)}`,
@@ -156,6 +176,10 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
   const missingIds = Array.isArray(verification?.missingIds) ? verification.missingIds : [];
   lines.push(
     `word list: ${show(wordList?.status)}  phase ${show(wordList?.phase)}  walked ${show(wordList?.walked)}  last update ${show(wordList?.walkedAt)}`,
+    `sync: last saved ${show(status.syncSavedAt)}  last gap ${show(status.gapAt)}`,
+    `reconcile: ${show(reconcile?.status)}  pass ${show(reconcile?.pass)}  phase ${show(reconcile?.phase)}` +
+      `  missing ${show(reconcile?.missing)}  orphans ${show(reconcile?.orphans)}  stale ${show(reconcile?.stale)}` +
+      `  of ${show(reconcile?.of)}  repaired ${show(reconcile?.repaired)}  finished ${show(reconcile?.finishedAt)}`,
     `verify: ${show(verification?.status)}${verification?.running === true ? ' (walk running)' : ''}  checked ${show(verification?.checked)}  reason ${show(verification?.reason)}` +
       `  mismatched users ${show(verification?.mismatchedUsers)}` +
       `  missing ${show(verification?.missing)}  orphans ${show(verification?.orphans)}` +
@@ -163,6 +187,7 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
       `  analysis failures ${show(verification?.analysisFailures)}` +
       `  other analyzer version ${show(verification?.otherVersion)}` +
       `  failed attempts ${show(verification?.failures)}` +
+      `  round ${show(verification?.rounds)}  mode ${show(verification?.mode)}` +
       `  last passed ${show(verification?.passedAt)}`,
     ...(missingIds.length > 0
       ? [`sample of source IDs with no record: ${missingIds.join(', ')}`]
@@ -195,6 +220,12 @@ function nextAction(status: SearchJobStatus): string {
   }
   if (pendingRequests.length > 0) {
     return 'nothing. The lease holder picks up the request on its next heartbeat.';
+  }
+  if (verification?.status === 'failed' && verification.gaveUp !== true && status.syncSavedAt) {
+    return 'nothing yet. The mismatch loop reconciles and verifies again, up to three rounds.';
+  }
+  if (verification?.status === 'failed' && status.syncSavedAt) {
+    return 'three rounds failed: read the sample IDs, fix the cause, then run reconcile and verify. Rows a language pack threw on need a fixed pack first.';
   }
   if (verification?.status === 'failed') {
     return 'run backfill to fill the gaps, then check again. Rows a language pack threw on need a fixed pack first.';

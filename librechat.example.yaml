@@ -1272,6 +1272,9 @@ endpoints:
 #     batchSize: 200           # Documents read per batch in backfill and repair jobs
 #     batchDelayMs: 1000       # Pause between batches
 #     backfillOnStart: false   # Request a backfill after startup if no chain has finished, so a deploy can start it
+#   sync:
+#     watch: database          # database | collections: one change stream, or one per source collection
+#     dropUpdatedText: true    # Drop content and text from update events, so a large message edit fits
 #   rank:
 #     lengthBucket: true       # Prefer shorter messages among equal matches
 #   prefix:

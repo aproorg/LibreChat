@@ -12,6 +12,7 @@ import type { SearchPackResolution } from './languages/registry';
 import type { ReadGate, SearchReadRunner } from './read/retry';
 import type { AnalyzedQuery } from './analyzer/query';
 import type { SearchConfigSnapshot } from './config';
+import type { LanguagePack } from './languages/pack';
 import type { Analyzer } from './analyzer/analyze';
 import type { PlanRead } from './read/plan';
 import {
@@ -88,7 +89,12 @@ export interface SearchService extends SearchPort {
   /** Called once, in the background, after the server listens. Never rejects. */
   loadPacks(): Promise<void>;
   /** What jobs build records with, or `null` until packs have loaded. */
-  jobAnalyzer(): { analyzer: Analyzer; version: string } | null;
+  jobAnalyzer(): {
+    analyzer: Analyzer;
+    version: string;
+    /** Enabled packs, for the attribution the writer records (FR-043). */
+    packs?: ReadonlyArray<Pick<LanguagePack, 'id' | 'attribution'>>;
+  } | null;
   /** A shadow run needs an analyzer with packs, so it is skipped in any other state. */
   canRunShadow(): boolean;
   searchMessages(ctx: SearchContext, query: string): Promise<MessageSearchHits | null>;
@@ -119,6 +125,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
   let state: SearchPackState = 'loading';
   let analyzer: Analyzer | null = null;
   let analyzerVersion = '';
+  let loadedPacks: ReadonlyArray<Pick<LanguagePack, 'id' | 'attribution'>> = [];
   let lastRequestAt: number | null = null;
   const gates = new WeakMap<SearchContext, ReadGate>();
   const sidebarStats = new WeakMap<SearchContext, SearchReadStats>();
@@ -168,6 +175,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
         realtext: metrics.realtext,
       });
       analyzerVersion = computeAnalyzerVersion(resolved.packs);
+      loadedPacks = resolved.packs.map(({ id, attribution }) => ({ id, attribution }));
       state = 'loaded';
     } catch (error) {
       state = 'failed';
@@ -364,7 +372,9 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     packState: () => state,
     loadPacks,
     jobAnalyzer: () =>
-      state === 'loaded' && analyzer ? { analyzer, version: analyzerVersion } : null,
+      state === 'loaded' && analyzer
+        ? { analyzer, version: analyzerVersion, packs: loadedPacks }
+        : null,
     canRunShadow: () => isShadowRunEnabled(config) && state === 'loaded',
     searchMessages,
     conversationMatches,

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import type { DeepPartial, ConversationSearchConfig } from 'librechat-data-provider';
-import type { SearchJobRunnerDeps, SearchJobMethods } from '../../runner';
 import type { SearchHarness } from '../../../__tests__/helpers/harness';
+import type { SearchJobRunnerDeps } from '../../runner';
 import type { JobControl } from '../../control';
 import { computeAnalyzerVersion } from '../../../analyzer/version';
 import { searchConfig } from '../../../__tests__/helpers/harness';
@@ -99,5 +99,5 @@ export function freeControl(
 /** Methods with one replaced, leaving the rest real. */
 export const withMethods = (
   harness: SearchHarness,
-  overrides: Partial<SearchJobMethods>,
+  overrides: Partial<SearchHarness['methods']>,
 ): SearchHarness['methods'] => ({ ...harness.methods, ...overrides });

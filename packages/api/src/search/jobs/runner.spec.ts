@@ -141,7 +141,7 @@ describe('search job runner', () => {
   });
 
   describe('the chain', () => {
-    it('runs backfill, indexes, word list, then verify, in that order', async () => {
+    it('runs backfill, indexes, word list, reconcile, then verify, in that order', async () => {
       await seed();
       await harness.database.connection.db!.collection('msearch').dropIndexes();
       const order: string[] = [];
@@ -157,19 +157,20 @@ describe('search job runner', () => {
           insertSearchRecords: note('insertSearchRecords', 'backfill'),
           ensureSearchIndexes: note('ensureSearchIndexes', 'indexes'),
           incrementSearchVocabNext: note('incrementSearchVocabNext', 'vocab'),
-          readSearchRecordIds: note('readSearchRecordIds', 'verify'),
+          readSearchRecordStamps: note('readSearchRecordStamps', 'reconcile'),
+          countSearchRecordsAtOtherVersion: note('countSearchRecordsAtOtherVersion', 'verify'),
         }),
       });
       await request('backfill');
 
       await settle(runner);
 
-      expect([...new Set(order)]).toEqual(['backfill', 'indexes', 'vocab', 'verify']);
+      expect([...new Set(order)]).toEqual(['backfill', 'indexes', 'vocab', 'reconcile', 'verify']);
       expect(await chain()).toMatchObject({ step: 'verify', requestId: expect.any(String) });
       expect((await chain())?.finishedAt).toBeInstanceOf(Date);
     });
 
-    it.each(['backfill', 'indexes', 'vocab', 'verify'])(
+    it.each(['backfill', 'indexes', 'vocab', 'reconcile', 'verify'])(
       'a holder killed in step %s has the next holder resume there',
       async (step) => {
         await seed();
@@ -177,7 +178,10 @@ describe('search job runner', () => {
           backfill: { insertSearchRecords: () => Promise.reject(new Error('killed')) },
           indexes: { ensureSearchIndexes: () => Promise.reject(new Error('killed')) },
           vocab: { incrementSearchVocabNext: () => Promise.reject(new Error('killed')) },
-          verify: { readSearchRecordIds: () => Promise.reject(new Error('killed')) },
+          reconcile: { readSearchRecordStamps: () => Promise.reject(new Error('killed')) },
+          verify: {
+            countSearchRecordsAtOtherVersion: () => Promise.reject(new Error('killed')),
+          },
         };
         const killed = createRunner(harness, {
           methods: withMethods(harness, failing[step]),
@@ -280,27 +284,29 @@ describe('search job runner', () => {
       });
     });
 
-    it('a backfill after a failed verify fills the gap, and verify then passes', async () => {
+    it('a failed verify starts the mismatch loop, whose reconcile fills the gap', async () => {
       await seed();
       const runner = createRunner(harness);
       await request('backfill');
       await settle(runner);
       await harness.database.connection.db!.collection('msearch').deleteOne({});
       await request('verify');
-      await settle(runner);
+      await settle(runner, 1);
       expect(await stateOf(harness, 'verification')).toMatchObject({
         status: 'failed',
         missing: 1,
+        rounds: 1,
       });
 
-      await request('backfill');
-      await settle(runner, 5);
+      await settle(runner, 4);
 
       expect(await recordCount(harness, 'msearch')).toBe(3);
       expect(await stateOf(harness, 'verification')).toMatchObject({
         status: 'passed',
         missing: 0,
+        rounds: 2,
       });
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
     });
 
     it('a new holder moving a step on clears a count it did not make', async () => {
@@ -369,7 +375,7 @@ describe('search job runner', () => {
       expect(await recordCount(harness, 'msearch')).toBe(0);
     });
 
-    it('verify reports a mismatch and fails, and the chain still ends', async () => {
+    it("the chain's reconcile repairs what backfill missed, so verify passes", async () => {
       await seed();
       const insert = harness.methods.insertSearchRecords;
       let dropped = false;
@@ -388,10 +394,16 @@ describe('search job runner', () => {
 
       await settle(runner);
 
-      expect(await stateOf(harness, 'verification')).toMatchObject({
-        status: 'failed',
+      expect(dropped).toBe(true);
+      expect(await stateOf(harness, 'reconcile')).toMatchObject({
+        status: 'finished',
         missing: 1,
-        mismatchedUsers: 1,
+        repaired: 1,
+      });
+      expect(await stateOf(harness, 'verification')).toMatchObject({
+        status: 'passed',
+        missing: 0,
+        rounds: 1,
       });
       expect((await chain())?.finishedAt).toBeInstanceOf(Date);
     });
@@ -523,7 +535,7 @@ describe('search job runner', () => {
   });
 
   describe('the verify request', () => {
-    it('runs on its own after the chain, and counts as a later round', async () => {
+    it('runs on its own after the chain, starting the round count afresh', async () => {
       await seed();
       const runner = createRunner(harness);
       await request('backfill');
@@ -533,7 +545,7 @@ describe('search job runner', () => {
       await settle(runner);
 
       expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
-      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
+      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 1 });
     });
 
     it('waits while a chain is unfinished', async () => {
@@ -554,7 +566,7 @@ describe('search job runner', () => {
       await settle(runner, 4);
 
       expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
-      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
+      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 1 });
     });
   });
 
@@ -658,6 +670,129 @@ describe('search job runner', () => {
 
       expect(await chain()).toEqual(finished);
       expect(await recordCount(harness, 'msearch')).toBe(3);
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+  });
+
+  describe('reconcile', () => {
+    const DAY = 86_400_000;
+    const reconcileState = () => stateOf(harness, 'reconcile');
+    const finishChain = async () => {
+      await seed();
+      const runner = createRunner(harness);
+      await request('backfill');
+      await settle(runner);
+      await runner.stop();
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+    };
+
+    it('the mismatch loop reconciles and verifies again, and after three rounds calls the owner', async () => {
+      await seed();
+      const insert = harness.methods.insertSearchRecords;
+      let lost = '';
+      const methods = withMethods(harness, {
+        insertSearchRecords: async (collection, records) => {
+          lost ||= collection === 'messages' ? records[0]._id : '';
+          return insert(
+            collection,
+            records.filter(({ _id }) => _id !== lost),
+          );
+        },
+      });
+      const runner = createRunner(harness, { methods });
+      await request('backfill');
+
+      await settle(runner, 10);
+
+      const verification = await stateOf(harness, 'verification');
+      expect(verification).toMatchObject({ status: 'failed', rounds: 3, gaveUp: true });
+      expect(
+        harness.logged.filter(({ event }) => event === 'search.verify').map(({ meta }) => meta),
+      ).toEqual([
+        { status: 'failed', mismatchedUsers: 1, round: 1 },
+        { status: 'failed', mismatchedUsers: 1, round: 2 },
+        { status: 'failed', mismatchedUsers: 1, round: 3 },
+      ]);
+      expect(harness.logged.map(({ event }) => event)).toContain(
+        '[search] Verification failed after every round; the owner is called',
+      );
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+
+    it('a new holder carries the mismatch loop on from its request', async () => {
+      await finishChain();
+      await harness.database.connection.db!.collection('msearch').deleteOne({});
+      await request('verify');
+      const first = createRunner(harness);
+      await settle(first, 1);
+      await first.tick();
+      expect((await harness.methods.listSearchJobRequests()).map(({ _id }) => _id)).toEqual([
+        'jobRequest:mismatch-2',
+      ]);
+      await expireLease(harness);
+      await first.stop();
+
+      await settle(createRunner(harness), 3);
+
+      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
+    });
+
+    it('runs on the reconcileDays timer once the chain has finished', async () => {
+      await finishChain();
+      expect(await reconcileState()).toMatchObject({ status: 'finished' });
+      const firstRun = (await reconcileState())?.startedAt as Date;
+      await expireLease(harness);
+
+      await settle(createRunner(harness, { now: () => Date.now() + 29 * DAY }));
+      expect((await reconcileState())?.startedAt).toEqual(firstRun);
+
+      await expireLease(harness);
+      await settle(createRunner(harness, { now: () => Date.now() + 31 * DAY }));
+      expect(((await reconcileState())?.startedAt as Date).getTime()).toBeGreaterThan(
+        firstRun.getTime(),
+      );
+    });
+
+    it('nothing reconciles before a chain has finished: not the timer, not a request', async () => {
+      await seed();
+      await request('reconcile');
+      const runner = createRunner(harness, { now: () => Date.now() + 365 * DAY });
+
+      await settle(runner);
+
+      expect(await reconcileState()).toBeNull();
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+      expect(harness.logged.map(({ event }) => event)).toContain(
+        '[search] Reconcile needs a finished backfill; request removed',
+      );
+    });
+
+    it('a request runs after the chain, and answers every request made before it began', async () => {
+      await finishChain();
+      await harness.database.connection.db!.collection('msearch').deleteOne({});
+      await request('reconcile');
+      await request('reconcile');
+
+      await settle(createRunner(harness));
+
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+      expect(await recordCount(harness, 'msearch')).toBe(3);
+      expect(await reconcileState()).toMatchObject({ status: 'finished', missing: 1 });
+    });
+
+    it('waits while backfill is paused', async () => {
+      await finishChain();
+      await request('pause');
+      await request('reconcile');
+      const runner = createRunner(harness);
+
+      await settle(runner);
+      expect((await harness.methods.listSearchJobRequests()).map(({ job }) => job)).toEqual([
+        'reconcile',
+      ]);
+
+      await request('resume');
+      await settle(runner);
       expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
     });
   });

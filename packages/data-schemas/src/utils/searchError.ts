@@ -28,3 +28,31 @@ export function isSearchError(error: unknown): error is SearchError {
   const { code } = error as { code?: unknown };
   return (SEARCH_ERROR_CODES as readonly unknown[]).includes(code);
 }
+
+export type SearchStreamErrorCode = 'resume_failed' | 'oversized';
+
+const SEARCH_STREAM_ERROR_NAME = 'SearchStreamError';
+
+/**
+ * A change stream failure the sync writer handles as a gap: the saved position can no longer
+ * be resumed, or an event is too large to read. It holds only the code, never driver text.
+ */
+export class SearchStreamError extends Error {
+  readonly code: SearchStreamErrorCode;
+
+  constructor(code: SearchStreamErrorCode) {
+    super(code);
+    this.name = SEARCH_STREAM_ERROR_NAME;
+    this.code = code;
+  }
+}
+
+/** Checks the name too, because bundles can each hold their own copy of the class. */
+export function isSearchStreamError(error: unknown): error is SearchStreamError {
+  return (
+    error instanceof SearchStreamError ||
+    (error instanceof Error &&
+      error.name === SEARCH_STREAM_ERROR_NAME &&
+      ['resume_failed', 'oversized'].includes((error as { code?: unknown }).code as string))
+  );
+}

@@ -80,7 +80,7 @@ describe('search startup', () => {
 
   describe('with search data on', () => {
     afterEach(async () => {
-      await started?.jobs()?.stop();
+      await started?.stopBackground();
       started = null;
     });
 
@@ -114,6 +114,105 @@ describe('search startup', () => {
 
       expect(order.slice(0, 3)).toEqual(['packs', 'collections', 'lease']);
       expect(binding.jobs()).not.toBeNull();
+    });
+
+    it('reads observed, loads packs, ensures the collections, records observed, then starts the runner and the writer', async () => {
+      const order: string[] = [];
+      const note = (step: string) => void order.push(step);
+      const methods = {
+        ...harness.methods,
+        readSearchState: (key: string, options: { maxTimeMS: number }) => {
+          if (key === 'observed') {
+            note('observed read');
+          }
+          return harness.methods.readSearchState(key, options);
+        },
+        writeSearchState: (key: string, fields: Record<string, unknown>) => {
+          if (key === 'observed') {
+            note('observed write');
+          }
+          return harness.methods.writeSearchState(key, fields);
+        },
+        ensureSearchCollections: async () => {
+          note('collections');
+          await harness.methods.ensureSearchCollections();
+        },
+        acquireSearchLease: (claim: Parameters<typeof harness.methods.acquireSearchLease>[0]) => {
+          note('lease');
+          return harness.methods.acquireSearchLease(claim);
+        },
+        /* No replica set here: the stream opens and ends at once. */
+        watchSearchSources: async function* () {
+          note('watch');
+          yield* [];
+        },
+      };
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods,
+          resolvePacks: () => ({
+            ok: true,
+            packs: [{ ...harness.packs[0], load: async () => note('packs') }],
+          }),
+        },
+      );
+      started = binding;
+
+      await startSearchBackground(binding);
+      await binding.jobs()?.tick();
+      while (!order.includes('watch')) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect([...new Set(order)]).toEqual([
+        'observed read',
+        'packs',
+        'collections',
+        'observed write',
+        'lease',
+        'watch',
+      ]);
+      expect(binding.writer()).not.toBeNull();
+    });
+
+    it('stopBackground stops the writer and gives the lease up at once', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        { resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }) },
+      );
+      await startSearchBackground(binding);
+      await binding.jobs()?.tick();
+      expect(binding.jobs()?.isHolder()).toBe(true);
+
+      await binding.stopBackground();
+
+      const lease = await harness.methods.readSearchState('lease', { maxTimeMS: 5000 });
+      expect((lease?.leaseUntil as Date).getTime()).toBe(0);
+      expect(binding.jobs()?.isHolder()).toBe(false);
+    });
+
+    it('a failed observed read leaves the process up, and sync still starts', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            readSearchState: (key: string, options: { maxTimeMS: number }) =>
+              key === 'observed'
+                ? Promise.reject(new Error('SENTINEL_OBSERVED'))
+                : harness.methods.readSearchState(key, options),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+      started = binding;
+
+      await expect(startSearchBackground(binding)).resolves.toBeUndefined();
+
+      expect(binding.jobs()).not.toBeNull();
+      expect(binding.writer()).not.toBeNull();
+      expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_OBSERVED');
     });
 
     it('a failed pack starts no runner and takes no lease', async () => {
@@ -180,6 +279,19 @@ describe('search startup', () => {
 
       expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_LEASE');
     });
+  });
+
+  it('with a search block and data off, a restart from search invalidates the pass and starts nothing', async () => {
+    await harness.methods.writeSearchState('observed', { backend: 'search', data: true });
+    const { binding } = bind({ data: false, backend: 'meilisearch' });
+
+    await startSearchBackground(binding);
+
+    expect(binding.jobs()).toBeNull();
+    expect(binding.writer()).toBeNull();
+    expect(
+      (await harness.methods.readSearchState('verification', { maxTimeMS: 5000 }))?.invalidatedAt,
+    ).toBeInstanceOf(Date);
   });
 
   it('an unregistered ID leaves the process up and the service failed', async () => {

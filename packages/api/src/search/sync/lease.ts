@@ -16,6 +16,11 @@ export interface SearchLease {
   isHeld(): boolean;
   /** The current turn, or `null` between turns. A job holds only the turn it started under. */
   epoch(): number | null;
+  /**
+   * When this process took the current turn, or `null` between turns. Until the stream passes
+   * it, the writer replays events another holder may have applied (R-09).
+   */
+  acquiredAt(): number | null;
   release(): Promise<void>;
 }
 
@@ -38,6 +43,7 @@ export function createSearchLease({
   const ttlMs = takeoverSeconds * 1000;
   let epoch: number | null = null;
   let until = 0;
+  let takenAt: number | null = null;
 
   const emit = (event: 'acquired' | 'lost' | 'released', at: number) =>
     metrics.lease({ holder, epoch: at, event });
@@ -49,6 +55,7 @@ export function createSearchLease({
     const released = epoch;
     epoch = null;
     until = 0;
+    takenAt = null;
     await methods.releaseSearchLease({ holder, epoch: released });
     emit('released', released);
   }
@@ -67,6 +74,7 @@ export function createSearchLease({
       emit('lost', epoch);
       epoch = null;
       until = 0;
+      takenAt = null;
     }
     const taken = await methods.acquireSearchLease({
       holder,
@@ -78,6 +86,7 @@ export function createSearchLease({
     }
     epoch = taken.epoch;
     until = next;
+    takenAt = now();
     emit('acquired', epoch);
     return true;
   }
@@ -88,6 +97,7 @@ export function createSearchLease({
     tick,
     isHeld: () => epoch !== null && now() < until,
     epoch: () => epoch,
+    acquiredAt: () => takenAt,
     release,
   };
 }
