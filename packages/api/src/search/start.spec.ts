@@ -192,6 +192,25 @@ describe('search startup', () => {
       expect(binding.jobs()?.isHolder()).toBe(false);
     });
 
+    it('stopBackground returns within its bound even when the database never answers', async () => {
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            acquireSearchLease: () => new Promise(() => undefined),
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+      await startSearchBackground(binding);
+      const startedAt = Date.now();
+
+      await binding.stopBackground();
+
+      expect(Date.now() - startedAt).toBeLessThan(6_000);
+    }, 15_000);
+
     it('a stop that arrives while packs load starts nothing afterwards', async () => {
       let finishLoad: () => void = () => undefined;
       const { binding } = bind(

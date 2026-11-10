@@ -23,6 +23,9 @@ import { createSearchLease } from './sync/lease';
 import { createSearchService } from './service';
 import { createSearchMetrics } from './metrics';
 
+/** The longest a shutdown waits for the writer and runner before leaving the lease to expire. */
+const STOP_BOUND_MS = 5_000;
+
 export interface BindSearchDeps {
   app: { locals: Record<string, unknown> };
   /** From `getAppConfig({ baseOnly: true })`, so no config document can change search. */
@@ -150,12 +153,27 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
     async stopBackground() {
       stopping = true;
       stopStatus?.();
-      try {
-        await writer?.stop();
-        await jobs?.stop();
-      } catch (error) {
-        logger.warn('[search] Background stop failed', getSafeErrorMetadata(error));
-      }
+      const stop = async () => {
+        try {
+          await writer?.stop();
+          await jobs?.stop();
+        } catch (error) {
+          logger.warn('[search] Background stop failed', getSafeErrorMetadata(error));
+        }
+      };
+      /*
+       * Bounded, so a slow database cannot eat the budget of the shutdown tasks after this one.
+       * Handing the lease over is only a speed-up: it expires on its own if this runs out.
+       */
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        stop(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, STOP_BOUND_MS);
+          timer.unref();
+        }),
+      ]);
+      clearTimeout(timer);
     },
     messages: (req, res, query, cursor) =>
       service.isServing()

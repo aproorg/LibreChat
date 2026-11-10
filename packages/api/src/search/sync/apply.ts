@@ -38,10 +38,22 @@ export class SyncApplyError extends Error {
   }
 }
 
-/** A document or schema validation failure belongs to the record, not to the database. */
+/**
+ * A document or schema validation failure belongs to the record, not to the database. Mongoose
+ * reports a bulk write's failed validation as `MongooseBulkWriteError` with `validationErrors`.
+ */
 const isValidationFailure = (error: unknown): boolean => {
-  const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown };
-  return name === 'ValidationError' || code === 121;
+  const { name, code, validationErrors } = (error ?? {}) as {
+    name?: unknown;
+    code?: unknown;
+    validationErrors?: unknown;
+  };
+  return (
+    name === 'ValidationError' ||
+    name === 'MongooseBulkWriteError' ||
+    (Array.isArray(validationErrors) && validationErrors.length > 0) ||
+    code === 121
+  );
 };
 
 /** The writer's turn, as one batch sees it. */

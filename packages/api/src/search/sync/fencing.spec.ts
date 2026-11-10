@@ -223,6 +223,35 @@ describe('search sync fencing', () => {
     expect(JSON.stringify(harness.logged)).not.toContain('bad one');
   });
 
+  it('a record the real write path rejects in validation is skipped, not retried forever', async () => {
+    const replace = harness.methods.replaceSearchRecords;
+    let poison = '';
+    await start({
+      methods: withMethods(harness, {
+        /* Past the schema's token cap, so Mongoose itself refuses the write. */
+        replaceSearchRecords: (collection, records) =>
+          replace(
+            collection,
+            records.map((record) =>
+              record._id === poison
+                ? { ...record, tokens: Array.from({ length: 3001 }, (_, i) => `t${i}`) }
+                : record,
+            ),
+          ),
+      }),
+    });
+    await synced(harness);
+    const rows = [sourceMessage({ text: 'too many' }), sourceMessage({ text: 'fine one' })];
+    poison = String(rows[0]._id);
+    await messages().insertMany(rows.map((row) => ({ ...row, _id: oid(String(row._id)) })));
+    await synced(harness);
+
+    expect(eventsOf(harness, 'search.sync_skip')).toEqual([
+      { id: poison, attempts: 3, code: 'write_failed' },
+    ]);
+    expect(await recordOf(harness, 'msearch', String(rows[1]._id))).not.toBeNull();
+  });
+
   it('a database outage during a batch ends the turn and retries it, skipping nothing', async () => {
     const replace = harness.methods.replaceSearchRecords;
     let failures = 8;
