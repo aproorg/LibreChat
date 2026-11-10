@@ -6,6 +6,7 @@ import {
   ErrorTypes,
   EModelEndpoint,
   EToolResources,
+  canToolResourceConsume,
   paramEndpoints,
   isAgentsEndpoint,
   AgentCapabilities,
@@ -14,8 +15,8 @@ import {
   hasActivePiiPatterns,
   replaceSpecialVars,
   providerEndpointMap,
+  normalizeEndpointName,
   isAutomaticLLMDelivery,
-  resolveSandboxFilename,
   resolveTurnLLMDeliveryPath,
   hasInferredLLMDeliveryPath,
   isRunCodeSpreadsheet,
@@ -34,7 +35,7 @@ import type {
   TurnFileConsumers,
 } from 'librechat-data-provider';
 import type { GenericTool, LCToolRegistry, ToolMap, LCTool } from '@librechat/agents';
-import type { IMongoFile, FileOwnerScope } from '@librechat/data-schemas';
+import type { AppConfig, IMongoFile, FileOwnerScope } from '@librechat/data-schemas';
 import type { Request, Response as ServerResponse } from 'express';
 import type {
   TFileUpdate,
@@ -42,6 +43,8 @@ import type {
   TFilterFilesByAgentAccess,
   TProvisionToCodeEnv,
   TProvisionToVectorDB,
+  TAdoptLegacySearchEmbeddings,
+  THasEntityEmbeddings,
   TCheckSessionsAlive,
   TLoadCodeApiKey,
 } from './resources';
@@ -59,13 +62,18 @@ import type {
   EndpointTokenConfig,
   InitializeResultBase,
 } from '~/types';
+import type { ResolveLinkedInstructions, LinkedInstructionsFacts } from './instructions/linked';
 import type { LCAvailableTools, RequestScopedMCPConnectionStore } from '../mcp/types';
 import type { ContentTraversalLimitError } from '../protection/adapters/nested';
 import type { SkillContentInput } from '../protection/adapters/submissions';
 import type { RepositoryInstructionSource } from '../code/instructions';
+import type { ResolvedChatProjectContext } from '../projects/context';
 import type { TextContentFragment } from '../protection/types';
 import type { CheckAccessParams } from '../middleware/access';
+import type { GetProjectFiles } from '../projects/resources';
+import type { CodeContextEntry } from '~/files/code/priming';
 import type { MCPToolAlias } from '~/tools/classification';
+import type { CodeExecutionContext } from './execution';
 import type { AgentExecutionContext } from './runtime';
 import {
   injectSkillCatalog,
@@ -83,11 +91,11 @@ import {
   INLINE_ATTACHMENT_CONTEXT_SHARE,
 } from './attachments';
 import {
-  normalizeStatefulCodeEnvironment,
-  resolveCodeExecutionContext,
-  type CodeEnvironmentConfig,
-  type CodeExecutionContext,
-} from './execution';
+  resolveChatProjectFiles,
+  resolveChatProjectPolicyFiles,
+  toCanonicalProjectResource,
+  toRuntimeFile,
+} from '../projects/resources';
 import {
   getContentTraversalFragments,
   isContentTraversalProtected,
@@ -113,34 +121,47 @@ import {
   normalizeAgentToolKeys,
 } from '~/mcp/utils';
 import {
-  getCodeFileContextLine,
-  appendCodeFileContextLine,
-  getCodeFileLocation,
-} from '~/files/code/priming';
+  resolveAttachedWorkspaceCommandTimeoutMax,
+  resolveAttachedWorkspaceCommandTimeoutDefault,
+} from '~/code/command';
 import {
-  createStatefulCodeEnvironmentPolicyError,
-  isFatalAgentInitializationError,
-} from './errors';
-import { isImplicitStatefulCodeRouteAvailable, isStatefulDefaultEligible } from '../code/config';
+  resolveAgentInferenceParameters,
+  restoreAgentInferenceInput,
+  retainAgentInferenceInput,
+} from './inference';
+import {
+  formatChatProjectInstructions,
+  hydrateChatProjectContextResources,
+} from '../projects/context';
+import { assertChatProjectInstructions, ChatProjectResourcesChangedError } from '../projects/turn';
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
 import { createConfiguredContentInspector, inspectContent } from '../protection/runtime';
-import { resolveAttachedWorkspaceCommandTimeoutMax } from '~/code/command';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
+import { resolveAttachedWorkspaceReadFileLines } from '~/code/workspace';
+import { isValidInstructionsPromptLink } from './instructions/linked';
+import { PARTIAL_RESOLVED_CONVERSATION } from './conversationSymbols';
 import { registerMemoryTools, memoryToolUsageGuard } from './memory';
+import { isImplicitStatefulCodeRouteAvailable } from '~/code/config';
 import { applyIntentLabels, sanitizeIntentLabels } from './intent';
+import { prepareQueuedCodeFileContext } from '~/files/code/queued';
 import { ContentFilterError } from '../middleware/contentFilter';
 import { resolveToolRoleGrants } from '~/tools/rolePermissions';
 import { createRequestAgentExecutionContext } from './runtime';
 import { resolveTurnDeliveryRouting } from './files/delivery';
 import { filterFilesByEndpointRuntimeConfig } from '~/files';
-import { getCodeEnvUploadFilename } from '~/files/code/form';
+import { isFatalAgentInitializationError } from './errors';
+import { assertToolOptionsWithinLimits } from './options';
+import { hasActiveFilePolicy } from '../protection/files';
+import { resolveAgentCodeExecution } from '~/code/agent';
 import { hasActiveFileFieldPolicy } from '~/protection';
-import { PARTIAL_RESOLVED_CONVERSATION } from './guard';
 import { applyBackgroundToolCalls } from './background';
+import { admitCurrentFileBudget } from './files/budget';
 import { applyTurnDelivery } from './files/delivery';
 import { generateArtifactsPrompt } from '~/prompts';
+import { getAgentInferencePolicy } from './input';
 import { getProviderConfig } from '~/endpoints';
 import { primeResources } from './resources';
+import { pinAgentModel } from './pin';
 
 /**
  * Fraction of context budget reserved as headroom when no explicit maxContextTokens is set.
@@ -171,7 +192,12 @@ export function partitionCommittedFiles<T extends { file_id?: string }>(
   );
   const alreadyCommitted: T[] = [];
   const pending: T[] = [];
+  const seen = new Set<string>();
   for (const file of files) {
+    if (file.file_id != null) {
+      if (seen.has(file.file_id)) continue;
+      seen.add(file.file_id);
+    }
     if (file.file_id != null && ids.has(file.file_id)) {
       alreadyCommitted.push(file);
       continue;
@@ -283,6 +309,126 @@ function appendAdditionalInstructions(agent: Agent, text?: string | null): void 
   agent.additional_instructions = [agent.additional_instructions ?? '', text]
     .filter(Boolean)
     .join('\n\n');
+}
+
+function appendProjectContextInstructions(
+  agent: Agent,
+  context: ResolvedChatProjectContext | null | undefined,
+): void {
+  const instruction = formatChatProjectInstructions(context);
+  if (instruction === '' || agent.additional_instructions?.includes(instruction)) {
+    return;
+  }
+  appendAdditionalInstructions(agent, instruction);
+}
+function addProjectFilesToFileSearch(
+  resources: AgentToolResources | undefined,
+  files: readonly TFile[] | undefined,
+  effectiveToolNames: readonly string[],
+  appConfig: AppConfig | undefined,
+  fileSearchAvailable?: boolean,
+  provisionState?: ProvisionState,
+): { resources: AgentToolResources | undefined; provisionState?: ProvisionState } {
+  if (files == null || files.length === 0) {
+    return { resources, provisionState };
+  }
+  const capabilities = appConfig?.endpoints?.[EModelEndpoint.agents]?.capabilities ?? [];
+  if (!capabilities.includes(AgentCapabilities.file_search)) {
+    return { resources, provisionState };
+  }
+  if (fileSearchAvailable === false) {
+    return { resources, provisionState };
+  }
+  if (!effectiveToolNames.includes(Tools.file_search)) {
+    return { resources, provisionState };
+  }
+  const current = resources?.[EToolResources.file_search] ?? {};
+  const currentFiles = current.files ?? [];
+  const seen = new Set(currentFiles.map((file) => file.file_id));
+  const projectFiles: TFile[] = [];
+  const queuedIds = new Set(provisionState?.vectorDBFiles.map((file) => file.file_id));
+  for (const file of files) {
+    if (!seen.has(file.file_id)) {
+      projectFiles.push(file);
+      seen.add(file.file_id);
+    }
+    if (
+      file.embedded === true ||
+      file.metadata?.searchDestination !== true ||
+      !canToolResourceConsume(EToolResources.file_search, file.type) ||
+      queuedIds.has(file.file_id)
+    ) {
+      continue;
+    }
+    provisionState ??= {
+      codeEnvFiles: [],
+      vectorDBFiles: [],
+      aliveFileIds: new Set(),
+      agentScopedFileIds: new Set(),
+    };
+    provisionState.vectorDBFiles.push(file);
+    queuedIds.add(file.file_id);
+  }
+  if (projectFiles.length === 0) {
+    return { resources, provisionState };
+  }
+  return {
+    provisionState,
+    resources: {
+      ...(resources ?? {}),
+      [EToolResources.file_search]: {
+        ...current,
+        files: currentFiles.concat(projectFiles),
+      },
+    },
+  };
+}
+
+async function resolveRuntimeProjectFiles({
+  context,
+  scope,
+  getProjectFiles,
+  filters,
+}: {
+  context: ResolvedChatProjectContext;
+  scope: FileOwnerScope;
+  getProjectFiles: GetProjectFiles;
+  filters?: AppConfig['filters'];
+}): Promise<TFile[]> {
+  const files = await resolveChatProjectFiles({
+    project: context,
+    resources: context.resources,
+    userId: scope.userId,
+    tenantId: scope.tenantId ?? undefined,
+    getProjectFiles,
+  });
+  if (!hasActiveFilePolicy(filters) || files.length === 0) {
+    return files;
+  }
+  const policyFiles = await resolveChatProjectPolicyFiles({
+    project: { file_ids: files.map((file) => file.file_id) },
+    userId: scope.userId,
+    tenantId: scope.tenantId ?? undefined,
+    getProjectFiles,
+  });
+  const admittedById = new Map(context.resources.map((resource) => [resource.file_id, resource]));
+  if (policyFiles.length !== files.length) {
+    throw new ChatProjectResourcesChangedError();
+  }
+  for (const file of policyFiles) {
+    const admitted = admittedById.get(file.file_id);
+    const current = toCanonicalProjectResource(file);
+    if (
+      admitted?.availability !== 'ready' ||
+      current.availability !== 'ready' ||
+      current.identity !== admitted.identity ||
+      current.version !== admitted.version
+    ) {
+      throw new ChatProjectResourcesChangedError();
+    }
+  }
+  assertModelBoundContent({ filters, files: policyFiles });
+  return policyFiles.map(toRuntimeFile);
 }
 
 /**
@@ -815,6 +961,9 @@ export type InitializedAgent = Agent & {
    * call #1 the sandbox can't see the files at all.
    */
   primedCodeFiles?: import('@librechat/agents').CodeEnvFile[];
+  /** Files the primed code-file note described on an attached workspace, so the note can be
+   *  rebuilt once attachments are copied in (`primeWorkspaceAttachments`). */
+  codeContextEntries?: CodeContextEntry[];
   /**
    * Resolved token/pricing config for this agent's endpoint (admin static
    * `tokenConfig` and/or fetched custom-endpoint config). Surfaced from the
@@ -826,29 +975,15 @@ export type InitializedAgent = Agent & {
   provisionWarnings?: string[];
   /** State for deferred file provisioning — actual uploads happen at tool invocation time */
   provisionState?: ProvisionState;
+  /**
+   * Facts about a resolved `instructionsPrompt` link (source, groupId,
+   * resolved promptId), surfaced for AI-2158. Never persisted — omitted for
+   * an agent with no link, an unresolved link, or a missing resolver.
+   */
+  instructionsPromptFacts?: LinkedInstructionsFacts;
 };
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 32000;
-
-/** Returns true when a conversation-level choice disables an attached environment. */
-export function optsOutOfAttachedCodeEnvironment(
-  agent: Agent,
-  requestBody: RequestBody | undefined,
-  environments: readonly CodeEnvironmentConfig[] | undefined,
-  implicitStatefulRouteAvailable = false,
-): boolean {
-  if (requestBody?.codeEnvironmentMode !== 'without_attached') return false;
-  const configured = agent.code_environment_id
-    ? environments?.find(({ id }) => id === agent.code_environment_id)
-    : environments?.find(({ default: isDefault }) => isDefault === true);
-  return (
-    agent.stateful_code_sessions === true &&
-    (configured?.type === 'attached' ||
-      (configured == null &&
-        (Boolean(agent.code_environment_id) || !implicitStatefulRouteAvailable)))
-  );
-}
-
 /**
  * Parameters for initializing an agent
  * Matches the CJS signature from api/server/services/Endpoints/agents/agent.js
@@ -885,6 +1020,8 @@ export interface InitializeAgentParams {
     requestBody?: RequestBody;
     /** Trusted endpoint/profile resolved for this agent before any code-file priming. */
     codeExecutionContext: CodeExecutionContext;
+    /** The conversation's "No workspace" decision removed this agent's code tools. */
+    attachedEnvironmentOptOut?: boolean;
     /** Full accessible MCP server names (operator + user DB) when the heal
      *  already fetched them — lets execution-side collision guards see
      *  cross-tier shadowing without another registry round-trip. */
@@ -913,6 +1050,8 @@ export interface InitializeAgentParams {
      * artifacts don't reach the sandbox.
      */
     primedCodeFiles?: import('@librechat/agents').CodeEnvFile[];
+    /** Structured form of the primed code-file note on an attached workspace. */
+    codeContextEntries?: CodeContextEntry[];
     /** Live workspace binding resolved by the execution-side loader. */
     codeExecutionContext?: CodeExecutionContext;
     repositoryInstructionSource?: RepositoryInstructionSource;
@@ -923,6 +1062,8 @@ export interface InitializeAgentParams {
   allowedProviders: Set<string>;
   /** Whether this is the initial agent */
   isInitialAgent?: boolean;
+  /** Enables authoritative ChatProject guidance/resources for conversation graph agents. */
+  useChatProjectContext?: boolean;
   /** Accessible skill IDs for this user (pre-computed by the caller via ACL query) */
   accessibleSkillIds?: import('mongoose').Types.ObjectId[];
   /** Whether skill file authoring should be exposed even before a user has viewable skills. */
@@ -947,6 +1088,22 @@ export interface InitializeAgentParams {
    * from `db.getRoleByName`.
    */
   resolveWebSearchGrant?: () => Promise<boolean>;
+  /**
+   * Resolves an agent's `instructionsPrompt` link (a linked native prompt
+   * group) into instruction text. Called only when `agent.instructionsPrompt`
+   * carries a resolvable `native` link. Absent, a linked agent falls back to
+   * empty instructions with a warning — there is no default DB-backed
+   * resolution path, unlike `resolveWebSearchGrant`, so every caller that
+   * wants linked instructions honored must supply one.
+   */
+  resolveLinkedInstructions?: ResolveLinkedInstructions;
+  /**
+   * Whether resolving `agent.instructionsPrompt` should record a usage
+   * generation on the linked prompt group. Defaults to `true`. Callers on the
+   * resume path set this to `false` because the turn that already counted the
+   * generation is being replayed, not repeated.
+   */
+  recordLinkedPromptUsage?: boolean;
   /**
    * Whether the `run_in_background` capability is enabled for this run. When
    * true, tools the agent opted in via `tool_options[name].run_in_background`
@@ -1004,6 +1161,8 @@ export interface InitializeAgentDbMethods extends EndpointDbMethods {
     fileIds?: string[],
     options?: { user?: string; tenantId?: string | null },
   ) => Promise<unknown[]>;
+  /** Get owner-scoped project files with optional content. */
+  getProjectFiles: GetProjectFiles;
   /** Get files from database */
   getFiles: (filter: unknown, sort: unknown, select: unknown) => Promise<unknown[]>;
   /** Filter files by agent access permissions (ownership or agent attachment) */
@@ -1080,6 +1239,10 @@ export interface InitializeAgentDbMethods extends EndpointDbMethods {
   provisionToVectorDB?: TProvisionToVectorDB;
   /** Optional: batch-check code env file liveness */
   checkSessionsAlive?: TCheckSessionsAlive;
+  /** Optional: record the agent's namespace on legacy File Search embeddings confirmed there */
+  adoptLegacySearchEmbeddings?: TAdoptLegacySearchEmbeddings;
+  /** Optional: ask the vector store whether a file's chunks are in an entity's namespace */
+  hasEntityEmbeddings?: THasEntityEmbeddings;
   /** Optional: load CODE_API_KEY once per request */
   loadCodeApiKey?: TLoadCodeApiKey;
   /** Optional: persist file metadata updates after provisioning */
@@ -1106,7 +1269,7 @@ export async function initializeAgent(
   db?: InitializeAgentDbMethods,
 ): Promise<InitializedAgent> {
   const {
-    agent,
+    agent: suppliedAgent,
     loadTools,
     requestFiles = [],
     authorizedRunFiles,
@@ -1116,21 +1279,46 @@ export async function initializeAgent(
     requestBody,
     allowedProviders,
     isInitialAgent = false,
+    useChatProjectContext,
   } = params;
   const runtime =
     params.runtime ?? (params.req ? createRequestAgentExecutionContext(params.req) : null);
   if (runtime == null) {
     throw new Error('initializeAgent requires an explicit execution context');
   }
+  const shouldUseChatProjectContext =
+    useChatProjectContext ?? params.req?.chatProjectContextEnabled === true;
+  assertToolOptionsWithinLimits(suppliedAgent.tool_options);
+  const inputAgent = restoreAgentInferenceInput(suppliedAgent);
+  const agent = shouldUseChatProjectContext ? { ...inputAgent } : inputAgent;
   const { user, appConfig } = runtime;
   const requestFileOwnerId = user?.id;
   const requestFileOwnerScope: FileOwnerScope | undefined = requestFileOwnerId
     ? { userId: requestFileOwnerId, tenantId: user?.tenantId }
     : undefined;
 
+  if (shouldUseChatProjectContext && runtime.chatProjectContext?.instructions.trim()) {
+    assertChatProjectInstructions({
+      context: runtime.chatProjectContext,
+      filters: appConfig?.filters,
+    });
+    appendProjectContextInstructions(agent, runtime.chatProjectContext);
+  }
+
   if (!db) {
     throw new Error('initializeAgent requires db methods to be passed');
   }
+
+  /**
+   * Computed up front, before the definition-content check below, because
+   * that check needs it: a valid link means the stored inline `instructions`
+   * is dead text — it is overwritten below with the resolved prompt, or with
+   * `''` when the link can't resolve — so it is excluded from the scan
+   * rather than inspected and then discarded.
+   */
+  const instructionsPromptLink = isValidInstructionsPromptLink(agent.instructionsPrompt)
+    ? agent.instructionsPrompt
+    : undefined;
 
   /**
    * Reject the stored agent definition before initialization performs usage
@@ -1140,10 +1328,11 @@ export async function initializeAgent(
    */
   let agentFragments: readonly TextContentFragment[] = [];
   let agentTraversalError: ContentTraversalLimitError | null = null;
+  const agentDefinitionInput = (instructionsPromptLink
+    ? { ...agent, instructions: undefined }
+    : agent) as unknown as Parameters<typeof extractAgentContent>[0];
   try {
-    agentFragments = extractAgentContent(
-      agent as unknown as Parameters<typeof extractAgentContent>[0],
-    );
+    agentFragments = extractAgentContent(agentDefinitionInput);
   } catch (error) {
     if (!isContentTraversalLimitError(error)) {
       throw error;
@@ -1166,6 +1355,33 @@ export async function initializeAgent(
   ) {
     throw agentTraversalError;
   }
+
+  /**
+   * Independent of every other step below (tool loading, resource priming,
+   * provider setup), so it starts as soon as the definition-content check
+   * above has passed — rather than waiting until the instructions block,
+   * well below, is reached — but never before that check: a rejected agent
+   * definition must never trigger an external prompt-service call. A valid
+   * link with no resolver never calls out, matching the "no resolver"
+   * fallback this same shape has always had.
+   */
+  const linkedInstructionsPromise =
+    instructionsPromptLink && params.resolveLinkedInstructions
+      ? params.resolveLinkedInstructions({
+          link: instructionsPromptLink,
+          signal: params.signal,
+          filters: appConfig?.filters,
+          config: appConfig?.endpoints?.agents?.linkedInstructions,
+        })
+      : undefined;
+  /**
+   * Started well before its result is needed at the instructions block below.
+   * An abort (or any other rejection) that lands before that await must not
+   * surface as an unhandled rejection; this no-op handler only silences that
+   * warning — the promise itself, awaited later, still carries the real
+   * outcome, rejection included.
+   */
+  linkedInstructionsPromise?.catch(() => {});
 
   /**
    * Heal legacy MCP tool keys ONCE, before anything reads them: model-facing
@@ -1239,6 +1455,16 @@ export async function initializeAgent(
     }
   }
 
+  /**
+   * An agent saved under another spelling of a folded endpoint name (`Ollama`) runs on the
+   * endpoint the runtime serves (`ollama`). Folded once, before anything keys on it: the
+   * `allowedProviders` check (served names, `normalizeEndpointReferences`), provider setup,
+   * user key lookups and token configs all read the served name.
+   */
+  const servedProvider = normalizeEndpointName(agent.provider);
+  if (servedProvider !== agent.provider) {
+    agent.provider = servedProvider;
+  }
   if (
     isAgentsEndpoint(endpointOption?.endpoint) &&
     allowedProviders.size > 0 &&
@@ -1329,19 +1555,56 @@ export async function initializeAgent(
   }
 
   let currentFiles: Array<IMongoFile | TFile> | undefined;
+  const baseToolNames = agent.tools ?? [];
+  /**
+   * Pre-resolve manually-invoked + always-apply skill primes so their
+   * `allowed-tools` can be unioned into the agent's effective tool set
+   * BEFORE project resource hydration and `loadTools` run. Project files
+   * must follow this same effective set, otherwise a skill-added
+   * `file_search` tool cannot see its eligible Project files.
+   */
+  if (hasSkillAccess) {
+    /** Skill `allowed-tools` are legacy-heal candidates too: a raw MCP key
+     * declared before the normalized-key convention would neither dedupe
+     * against the healed agent tools nor match the normalized-keyed tool
+     * map, silently dropping the skill-contributed tool. Same lazy audit
+     * and skip-on-unavailable semantics as the agent-key heal. */
+    const combinedPrimes = [...(manualSkillPrimes ?? []), ...(alwaysApplySkillPrimes ?? [])];
+    const primesNeedHeal = combinedPrimes.some((prime) =>
+      prime.allowedTools?.some((name) => name.includes(Constants.mcp_delimiter)),
+    );
+    const primeHealNames = primesNeedHeal ? await resolveHealNames() : null;
+    if (primeHealNames != null) {
+      resolvedAuditNames = primeHealNames;
+    }
+    const primesForUnion =
+      primeHealNames != null
+        ? combinedPrimes.map((prime) =>
+            prime.allowedTools?.length
+              ? {
+                  ...prime,
+                  allowedTools: normalizeAgentToolKeys({
+                    tools: prime.allowedTools,
+                    toolOptions: undefined,
+                    rawServerNames: primeHealNames,
+                  }).tools,
+                }
+              : prime,
+          )
+        : combinedPrimes;
+    if (primesForUnion.length > 0) {
+      const union = unionPrimeAllowedTools({
+        primes: primesForUnion,
+        agentToolNames: baseToolNames,
+      });
+      extraAllowedToolNames = union.extraToolNames;
+      perSkillExtras = union.perSkillExtras;
+    }
+  }
 
-  const _modelOptions = structuredClone(
-    Object.assign(
-      { model: agent.model },
-      agent.model_parameters ?? { model: agent.model },
-      isInitialAgent === true ? endpointOption?.model_parameters : {},
-    ),
-  );
-
-  const { resendFiles, maxContextTokens, imageDetail, modelOptions } = extractLibreChatParams(
-    _modelOptions as Record<string, unknown>,
-  );
-
+  const effectiveToolNames =
+    extraAllowedToolNames.length > 0 ? [...baseToolNames, ...extraAllowedToolNames] : baseToolNames;
+  const requestedToolNames = effectiveToolNames;
   const provider = agent.provider;
   agent.endpoint = provider;
 
@@ -1357,10 +1620,18 @@ export async function initializeAgent(
     agent.provider = overrideProvider;
   }
 
-  const finalModelOptions = {
-    ...modelOptions,
-    model: agent.model,
-  };
+  const inference = resolveAgentInferenceParameters({
+    parameters: {
+      ...agent.model_parameters,
+      ...(isInitialAgent === true ? endpointOption?.model_parameters : undefined),
+    },
+    ...getAgentInferencePolicy(provider, appConfig, customEndpointConfig),
+    model: agent.model ?? '',
+  });
+  const { resendFiles, maxContextTokens, imageDetail, modelOptions } = extractLibreChatParams(
+    inference.parameters,
+  );
+  const finalModelOptions = pinAgentModel(modelOptions, agent.model);
 
   const options: InitializeResultBase = await getOptions({
     runtime: {
@@ -1370,6 +1641,7 @@ export async function initializeAgent(
     },
     endpoint: provider,
     model_parameters: finalModelOptions,
+    inferenceParameters: inference.customParameters,
     db,
   });
 
@@ -1382,9 +1654,10 @@ export async function initializeAgent(
       resolve: params.resolveWebSearchGrant,
       getRoleByName: db.getRoleByName,
     }));
-  if (webSearchDenied && stripWebSearchPlugin(llmConfig) > 0) {
-    logger.debug(
-      `[initializeAgent] Removed the OpenRouter web search plugin; role denies WEB_SEARCH.`,
+  if (webSearchDenied) {
+    stripWebSearchPlugin(llmConfig);
+    logger.warn(
+      '[initializeAgent] Provider-native web search was requested but blocked by WEB_SEARCH.USE. Restore the role grant explicitly; removing interface.webSearch does not reset stored permissions.',
     );
   }
   const tokensModel =
@@ -1434,44 +1707,31 @@ export async function initializeAgent(
   const agentRequestsCodeExec = (agent.tools ?? []).includes(Tools.execute_code);
   const configuredCodeEnvironments =
     appConfig?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.environments;
-  const attachedEnvironmentOptOut = optsOutOfAttachedCodeEnvironment(
+  const {
+    attachedEnvironmentOptOut,
+    codeEnvAvailable: effectiveCodeEnvAvailable,
+    statefulSessions: effectiveStatefulSessions,
+    statefulCodeEnvironment,
+    context: codeExecutionContext,
+  } = resolveAgentCodeExecution({
     agent,
     requestBody,
-    configuredCodeEnvironments,
-    isImplicitStatefulCodeRouteAvailable(
+    conversation: runtime.resolvedConversation,
+    codeExecutionAvailable: params.codeEnvAvailable === true,
+    statefulSessionsAvailable: params.statefulSessionsAvailable === true,
+    allowedStatefulCodeEnvironments: resolveAllowedStatefulCodeEnvironments(
+      params.allowedStatefulCodeEnvironments ??
+        appConfig?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.allowedEnvironments,
+    ),
+    allowEnvironmentSelection:
+      appConfig?.endpoints?.agents?.statefulCodeSessions?.allowEnvironmentSelection,
+    inheritedEnvironments: runtime.codeWorkspaceInheritance,
+    environments: configuredCodeEnvironments,
+    implicitStatefulRouteAvailable: isImplicitStatefulCodeRouteAvailable(
       process.env.CODE_ENVIRONMENT_DECISION_VERSION,
       process.env.LIBRECHAT_CODE_BASEURL_STATEFUL,
     ),
-  );
-  const effectiveCodeEnvAvailable =
-    params.codeEnvAvailable === true && agentRequestsCodeExec && !attachedEnvironmentOptOut;
-  const effectiveStatefulSessions =
-    effectiveCodeEnvAvailable &&
-    params.statefulSessionsAvailable === true &&
-    (agent.stateful_code_sessions === true ||
-      isStatefulDefaultEligible(
-        agent,
-        configuredCodeEnvironments,
-        params.allowedStatefulCodeEnvironments ??
-          appConfig?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.allowedEnvironments,
-      ));
-  const statefulCodeEnvironment = normalizeStatefulCodeEnvironment(agent.stateful_code_environment);
-  if (effectiveStatefulSessions) {
-    const allowedStatefulCodeEnvironments = resolveAllowedStatefulCodeEnvironments(
-      params.allowedStatefulCodeEnvironments ??
-        appConfig?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.allowedEnvironments,
-    );
-    if (!allowedStatefulCodeEnvironments.includes(statefulCodeEnvironment)) {
-      throw createStatefulCodeEnvironmentPolicyError(statefulCodeEnvironment);
-    }
-  }
-  const codeExecutionContext = resolveCodeExecutionContext({
-    statefulSessions: effectiveStatefulSessions,
-    environment: statefulCodeEnvironment,
-    environmentId: agent.code_environment_id,
-    environments: configuredCodeEnvironments,
     userId: requestFileOwnerId,
-    agentId: agent.id,
     conversationId,
   });
   const attachedWorkspaceTools =
@@ -1505,11 +1765,6 @@ export async function initializeAgent(
     codeEnvAvailable: params.codeEnvAvailable === true && !attachedEnvironmentOptOut,
     fileSearchAvailable: params.fileSearchAvailable,
   });
-  let runtimeToolResources = agent.tool_resources;
-  if (attachedEnvironmentOptOut && runtimeToolResources != null) {
-    runtimeToolResources = { ...runtimeToolResources };
-    delete runtimeToolResources[EToolResources.execute_code];
-  }
 
   /**
    * Load conversation files for ALL agents, not just the initial agent.
@@ -1538,6 +1793,10 @@ export async function initializeAgent(
     /** Falsy anchors cannot match a parent chain, so they get no walk. */
     const threadAnchor =
       parentMessageId && parentMessageId !== Constants.NO_PARENT ? parentMessageId : null;
+    /* A turn sent at the root has no history at all. The conversation's file refs then
+     * belong to sibling roots (an edited first message, or one retried without its files),
+     * so a root turn takes none of them, unlike a continuation that names no anchor. */
+    const isRootTurn = parentMessageId === Constants.NO_PARENT;
     /* Either provisioning resource needs the anchor: deferred attachments for
      * file_search are found by thread file ids just as code files are. */
     const needsThreadWalk = wantsProvisioning && threadAnchor != null && getThreadMessages != null;
@@ -1553,7 +1812,10 @@ export async function initializeAgent(
      * every code-output ref.
      */
     const [convoFileIds, threadMessages] = await Promise.all([
-      readResolvedConversationFiles(runtime, conversationId) ?? db.getConvoFiles(conversationId),
+      isRootTurn
+        ? []
+        : (readResolvedConversationFiles(runtime, conversationId) ??
+          db.getConvoFiles(conversationId)),
       needsThreadWalk && getThreadMessages
         ? getThreadMessages({ conversationId }, 'messageId parentMessageId files attachments')
         : null,
@@ -1785,36 +2047,26 @@ export async function initializeAgent(
       endpointType,
     });
 
+    currentFiles = admitCurrentFileBudget(
+      currentFiles,
+      deliveryRouting.endpointConfig.totalSizeLimit,
+    );
+
     /* The same endpoint configuration governs both paths. A file this endpoint refuses
      * by size, MIME type, or a files-disabled setting must not reach the Code API or
      * RAG through provisioning just because it left the delivery set. */
     if (deferredProvisionFiles.length > 0) {
-      /* One request, one total-size allowance. Filtering each set from zero would let a
-       * delivery attachment and a provisioning candidate that each fit alone exceed the
-       * limit together once withDeferredCandidates merges them.
-       *
-       * A file can appear in both sets, an embedded attachment still missing the active
-       * code route being the case in point, and the merge deduplicates afterwards. Charging
-       * it twice would spend an allowance the request never uses and drop a different
-       * candidate that fits, so the shared ones are counted once. */
-      const deferredFileIds = new Set(
-        deferredProvisionFiles
-          .map((file) => file.file_id)
-          .filter((fileId): fileId is string => fileId != null),
+      const { committed, pending } = partitionCommittedFiles(deferredProvisionFiles, currentFiles);
+      /* Current admission is final. Charge only new deferred identities against its
+       * remainder, regardless of their order relative to overlapping current files. */
+      deferredProvisionFiles = committed.concat(
+        filterFilesByEndpointRuntimeConfig(appConfig, {
+          files: pending,
+          endpoint: agent.endpoint ?? '',
+          endpointType,
+          consumedBytes: sumUniqueBytes(currentFiles),
+        }) as IMongoFile[],
       );
-      deferredProvisionFiles = filterFilesByEndpointRuntimeConfig(appConfig, {
-        files: deferredProvisionFiles,
-        endpoint: agent.endpoint ?? '',
-        endpointType,
-        /* The deferred pass charges its own list as it walks it, so a file in both sets
-         * is counted there. Only what delivery spends on files the deferred pass will
-         * not see is carried in. */
-        consumedBytes: sumUniqueBytes(
-          (currentFiles ?? []).filter(
-            (file) => file.file_id == null || !deferredFileIds.has(file.file_id),
-          ),
-        ),
-      }) as IMongoFile[];
     }
   }
 
@@ -1843,6 +2095,48 @@ export async function initializeAgent(
     });
   }
 
+  const canUseProjectFileSearch =
+    shouldUseChatProjectContext &&
+    runtime.chatProjectContext != null &&
+    effectiveToolNames.includes(Tools.file_search) &&
+    params.fileSearchAvailable !== false &&
+    (appConfig?.endpoints?.[EModelEndpoint.agents]?.capabilities ?? []).includes(
+      AgentCapabilities.file_search,
+    );
+  let projectRuntimeFiles: TFile[] = [];
+  if (canUseProjectFileSearch && runtime.chatProjectContext != null && requestFileOwnerScope) {
+    runtime.chatProjectContextResourcesPromise ??=
+      params.req?.chatProjectContextResourcesPromise ??
+      hydrateChatProjectContextResources(runtime.chatProjectContext, {
+        userId: requestFileOwnerScope.userId,
+        tenantId: requestFileOwnerScope.tenantId,
+        getProjectFiles: db.getProjectFiles,
+      });
+    if (params.req) {
+      params.req.chatProjectContextResourcesPromise = runtime.chatProjectContextResourcesPromise;
+    }
+    runtime.chatProjectContext = await runtime.chatProjectContextResourcesPromise;
+    if (params.req) {
+      params.req.chatProjectContext = runtime.chatProjectContext;
+    }
+    runtime.chatProjectFilesPromise ??=
+      params.req?.chatProjectFilesPromise ??
+      resolveRuntimeProjectFiles({
+        context: runtime.chatProjectContext,
+        getProjectFiles: db.getProjectFiles,
+        scope: requestFileOwnerScope,
+        filters: appConfig?.filters,
+      });
+    if (params.req) {
+      params.req.chatProjectFilesPromise = runtime.chatProjectFilesPromise;
+    }
+    projectRuntimeFiles = await runtime.chatProjectFilesPromise;
+    runtime.chatProjectFiles = projectRuntimeFiles;
+    if (params.req) {
+      params.req.chatProjectFiles = projectRuntimeFiles;
+    }
+  }
+
   /**
    * Usage accounting is the first file mutation. It runs only after every
    * hydrated file in the exact snapshot above has passed endpoint filtering
@@ -1862,12 +2156,18 @@ export async function initializeAgent(
     });
   }
 
+  let runtimeToolResources = agent.tool_resources;
+  if (attachedEnvironmentOptOut && runtimeToolResources != null) {
+    runtimeToolResources = { ...runtimeToolResources };
+    delete runtimeToolResources[EToolResources.execute_code];
+  }
+  let admittedPersistentFiles: TFile[] = [];
   const {
     attachments: primedAttachments,
     requestAttachments: primedRequestAttachments,
     agentContextAttachments: primedAgentContextAttachments,
     tool_resources,
-    provisionState,
+    provisionState: primedProvisionState,
     warnings: provisionWarnings,
   } = await primeResources({
     req: params.req,
@@ -1884,9 +2184,13 @@ export async function initializeAgent(
     enabledToolResources: toolResourceSet,
     checkSessionsAlive: db.checkSessionsAlive,
     loadCodeApiKey: db.loadCodeApiKey,
+    adoptLegacySearchEmbeddings: db.adoptLegacySearchEmbeddings,
+    hasEntityEmbeddings: db.hasEntityEmbeddings,
     provisionCandidates: deferredProvisionFiles as unknown as TFile[],
     codeRouteKey: codeExecutionContext.executionRouteKey ?? codeExecutionContext.executionProfile,
     codeBaseUrl: codeExecutionContext.baseUrl,
+    codeExecutionProfile: codeExecutionContext.executionProfile,
+    codeBridgeWorkerId: codeExecutionContext.bridgeWorkerId,
     screenPersistentFiles: (files) => {
       /* Persistent agent files are read inside primeResources, so they miss both checks
        * the caller already applied to this turn's other files. They face the same
@@ -1905,7 +2209,7 @@ export async function initializeAgent(
       /* Dropped rather than fatal, matching the deferred candidates: these were not
        * attached by this request, so refusing the conversation over a historical record
        * would be harsher than leaving it out. */
-      return committed.concat(withinPolicy).filter((file) => {
+      admittedPersistentFiles = committed.concat(withinPolicy).filter((file) => {
         try {
           assertModelBoundContent({
             filters: appConfig?.filters,
@@ -1920,8 +2224,37 @@ export async function initializeAgent(
           return false;
         }
       });
+      return admittedPersistentFiles;
     },
   });
+  if (projectRuntimeFiles.length > 0) {
+    /* Project repairs join after priming, but spend the same allowance as the files
+     * already admitted above. Reuse their snapshots without charging overlaps twice. */
+    const committedFiles = [
+      ...(currentFiles ?? []),
+      ...deferredProvisionFiles,
+      ...admittedPersistentFiles,
+    ];
+    const { committed, pending } = partitionCommittedFiles(projectRuntimeFiles, committedFiles);
+    projectRuntimeFiles = committed.concat(
+      filterFilesByEndpointRuntimeConfig(appConfig, {
+        files: pending,
+        endpoint: agent.endpoint ?? '',
+        endpointType: endpointFileType,
+        consumedBytes: sumUniqueBytes(committedFiles),
+      }),
+    );
+  }
+  const projectResources = addProjectFilesToFileSearch(
+    tool_resources,
+    projectRuntimeFiles,
+    effectiveToolNames,
+    appConfig,
+    params.fileSearchAvailable,
+    primedProvisionState,
+  );
+  runtimeToolResources = projectResources.resources;
+  const provisionState = projectResources.provisionState;
 
   /* A spreadsheet automatic reading sends to Run Code is Run Code's alone: queued for File
    * Search too, a programmatic tool call would embed every row before the code could run. */
@@ -1942,80 +2275,25 @@ export async function initializeAgent(
 
   /* Automatic reading moves files the model would otherwise see; classic keeps the note as
    * it was, including under the legacy chooser. */
-  const searchToolResources = automaticDelivery
-    ? addQueuedFilesToFileSearch(
-        tool_resources,
-        provisionState,
-        (file) =>
-          hasInferredLLMDeliveryPath(file) &&
-          resolveTurnLLMDeliveryPath(deliveryRouting, file, fileConsumers) === 'none',
-      )
-    : tool_resources;
-
-  /**
-   * Pre-resolve manually-invoked + always-apply skill primes so their
-   * `allowed-tools` can be unioned into the agent's effective tool set
-   * BEFORE `loadTools` runs. Single load is correctness-critical: a
-   * second `loadTools` pass would compute its own `userMCPAuthMap` /
-   * `toolContextMap` / OAuth flow state that the InitializedAgent never
-   * sees, so an MCP tool added via `allowed-tools` would be visible to
-   * the model but fail at execution time without its per-user auth
-   * context.
-   *
-   * Resolution uses `params.accessibleSkillIds` (not the active-filtered
-   * subset that `injectSkillCatalog` will produce later) — see
-   * `resolveManualSkills` doc for why a skill outside the catalog cap can
-   * still be authorizable for direct manual invocation.
-   *
-   * Manual + always-apply primes feed the same `unionPrimeAllowedTools`
-   * call — the helper is pure / set-based, so concatenating the two
-   * lists gives the right union with no double-counting. Manual primes
-   * go first so their names win on dedup (primes earlier in the list
-   * contribute before the same name gets deduped on a later prime).
-   */
-  if (hasSkillAccess) {
-    /** Skill `allowed-tools` are legacy-heal candidates too: a raw MCP key
-     *  declared before the normalized-key convention would neither dedupe
-     *  against the healed agent tools nor match the normalized-keyed tool
-     *  map, silently dropping the skill-contributed tool. Same lazy audit
-     *  and skip-on-unavailable semantics as the agent-key heal. */
-    const combinedPrimes = [...(manualSkillPrimes ?? []), ...(alwaysApplySkillPrimes ?? [])];
-    const primesNeedHeal = combinedPrimes.some((prime) =>
-      prime.allowedTools?.some((name) => name.includes(Constants.mcp_delimiter)),
+  if (automaticDelivery) {
+    runtimeToolResources = addQueuedFilesToFileSearch(
+      runtimeToolResources,
+      provisionState,
+      (file) =>
+        hasInferredLLMDeliveryPath(file) &&
+        resolveTurnLLMDeliveryPath(deliveryRouting, file, fileConsumers) === 'none',
     );
-    const primeHealNames = primesNeedHeal ? await resolveHealNames() : null;
-    if (primeHealNames != null) {
-      resolvedAuditNames = primeHealNames;
-    }
-    const primesForUnion =
-      primeHealNames != null
-        ? combinedPrimes.map((prime) =>
-            prime.allowedTools?.length
-              ? {
-                  ...prime,
-                  allowedTools: normalizeAgentToolKeys({
-                    tools: prime.allowedTools,
-                    toolOptions: undefined,
-                    rawServerNames: primeHealNames,
-                  }).tools,
-                }
-              : prime,
-          )
-        : combinedPrimes;
-    if (primesForUnion.length > 0) {
-      const union = unionPrimeAllowedTools({
-        primes: primesForUnion,
-        agentToolNames: agent.tools ?? [],
-      });
-      extraAllowedToolNames = union.extraToolNames;
-      perSkillExtras = union.perSkillExtras;
-    }
   }
-
-  const baseToolNames = agent.tools ?? [];
-  const requestedToolNames =
-    extraAllowedToolNames.length > 0 ? [...baseToolNames, ...extraAllowedToolNames] : baseToolNames;
-
+  const dropFileSearchResources = (): void => {
+    if (runtimeToolResources?.[EToolResources.file_search] == null) {
+      return;
+    }
+    const { [EToolResources.file_search]: _fileSearch, ...remaining } = runtimeToolResources;
+    runtimeToolResources = Object.keys(remaining).length > 0 ? remaining : undefined;
+  };
+  if (params.fileSearchAvailable === false || !effectiveToolNames.includes(Tools.file_search)) {
+    dropFileSearchResources();
+  }
   /**
    * `loadTools` failures take two forms:
    *   1. The wrapper throws — rare; only when something around the
@@ -2041,9 +2319,10 @@ export async function initializeAgent(
       tools,
       model: agent.model,
       tool_options: agent.tool_options,
-      tool_resources: searchToolResources,
+      tool_resources: runtimeToolResources,
       requestBody,
       codeExecutionContext,
+      attachedEnvironmentOptOut,
       accessibleMcpServerNames: resolvedAuditNames,
     });
 
@@ -2066,6 +2345,9 @@ export async function initializeAgent(
         `[allowedTools] loadTools threw with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them`,
         { errorName: err instanceof Error ? err.name : 'UnknownError' },
       );
+      if (!baseToolNames.includes(Tools.file_search)) {
+        dropFileSearchResources();
+      }
       loadToolsResult = await callLoadTools(baseToolNames);
     } else {
       throw err;
@@ -2078,6 +2360,9 @@ export async function initializeAgent(
     logger.warn(
       `[allowedTools] loadTools returned no result with ${extraAllowedToolNames.length} skill-added extra(s); retrying without them.`,
     );
+    if (!baseToolNames.includes(Tools.file_search)) {
+      dropFileSearchResources();
+    }
     loadToolsResult = await callLoadTools(baseToolNames);
   }
 
@@ -2095,6 +2380,7 @@ export async function initializeAgent(
     oauthActionToolNames,
     tools: structuredTools,
     primedCodeFiles,
+    codeContextEntries,
     codeExecutionContext: loadedCodeExecutionContext,
     repositoryInstructionSource,
   } = loadToolsResult ?? {
@@ -2111,6 +2397,7 @@ export async function initializeAgent(
     actionsEnabled: undefined,
     oauthActionToolNames: undefined,
     primedCodeFiles: undefined,
+    codeContextEntries: undefined,
     codeExecutionContext: undefined,
     repositoryInstructionSource: undefined,
   };
@@ -2124,6 +2411,19 @@ export async function initializeAgent(
       ? resolveAttachedWorkspaceCommandTimeoutMax(
           trustedCodeExecutionContext.codeEnvironmentConfigSchema,
           trustedCodeExecutionContext.codeWorkspace?.maxCommandTimeoutMs,
+        )
+      : undefined;
+  const attachedWorkspaceCommandTimeoutDefaultMs =
+    trustedCodeExecutionContext.environmentType === 'attached'
+      ? resolveAttachedWorkspaceCommandTimeoutDefault(
+          trustedCodeExecutionContext.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs,
+          attachedWorkspaceCommandTimeoutMaxMs,
+        )
+      : undefined;
+  const attachedWorkspaceReadFileDefaultLines =
+    trustedCodeExecutionContext.environmentType === 'attached'
+      ? resolveAttachedWorkspaceReadFileLines(
+          trustedCodeExecutionContext.codeEnvironmentConfigSchema,
         )
       : undefined;
   if (
@@ -2209,8 +2509,11 @@ export async function initializeAgent(
       workspaceTools: attachedWorkspaceTools,
       workspaceOperations: attachedWorkspaceOperations,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
+      workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
+      workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
       workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
+      workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
     });
     toolDefinitions = codeExecResult.toolDefinitions;
     recordCapabilityToolNames(AgentCapabilities.execute_code, codeExecResult.toolNames);
@@ -2262,6 +2565,8 @@ export async function initializeAgent(
       workspaceTools: attachedWorkspaceTools,
       workspaceOperations: attachedWorkspaceOperations,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
+      workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
+      workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
     });
     toolDefinitions = skillReadResult.toolDefinitions;
     recordCapabilityToolNames(AgentCapabilities.skills, skillReadResult.toolNames);
@@ -2381,6 +2686,40 @@ export async function initializeAgent(
   if (options.configOptions) {
     (agent.model_parameters as Record<string, unknown>).configuration = options.configOptions;
   }
+  retainAgentInferenceInput(agent, provider, {
+    ...inference.parameters,
+    ...inference.customParameters,
+  });
+
+  /**
+   * Resolves an `instructionsPrompt` link before special-vars substitution, so
+   * a linked prompt's `{{current_date}}`-style placeholders are replaced the
+   * same way inline instructions are. A link without a resolver, or one that
+   * resolves to `unavailable`, continues the turn with empty instructions
+   * rather than failing initialization — the inline-text fallback is AI-2150.
+   * The resolution itself started well above, in parallel with everything
+   * between; this only awaits it.
+   */
+  let instructionsPromptFacts: LinkedInstructionsFacts | undefined;
+  if (instructionsPromptLink) {
+    if (linkedInstructionsPromise) {
+      const linkedResult = await linkedInstructionsPromise;
+      if (linkedResult.status === 'resolved') {
+        agent.instructions = linkedResult.prompt;
+        instructionsPromptFacts = linkedResult.facts;
+      } else {
+        agent.instructions = '';
+        logger.warn(
+          `[initializeAgent] Linked instructions unavailable for agent ${agent.id} (group ${instructionsPromptLink.groupId}): ${linkedResult.reason}`,
+        );
+      }
+    } else {
+      agent.instructions = '';
+      logger.warn(
+        `[initializeAgent] Agent ${agent.id} links instructions to group ${instructionsPromptLink.groupId} but no resolver was provided; continuing with empty instructions`,
+      );
+    }
+  }
 
   if (agent.instructions && agent.instructions !== '') {
     const resolvedInstructions = replaceSpecialVars({
@@ -2455,8 +2794,11 @@ export async function initializeAgent(
       workspaceOperations: attachedWorkspaceOperations,
       userId: user?.id,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
+      workspaceCommandTimeoutDefaultMs: attachedWorkspaceCommandTimeoutDefaultMs,
+      workspaceReadFileDefaultLines: attachedWorkspaceReadFileDefaultLines,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
       workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
+      workspaceNativeSandbox: trustedCodeExecutionContext.codeWorkspace?.nativeSandbox,
       skillStates: params.skillStates,
       defaultActiveOnShare: params.defaultActiveOnShare,
       maxCatalogSkills: getMaxCatalogSkills(runtime),
@@ -2556,27 +2898,6 @@ export async function initializeAgent(
   if (consumersChanged && automaticDelivery && contextWindowKnown) {
     deliveryRouting.overBudgetFileIds = planInlineAttachmentBudget(budgetCandidates, budgetParams);
   }
-  /* Upstream names queued sandbox files in prepareQueuedCodeFileContext; 0.8.8 lists only files
-   * with refs, so a spreadsheet sent to Run Code would otherwise be unknown to the model. The
-   * name mirrors provision/callback.ts; a same-name collision suffix there is not mirrored. */
-  let queuedCodeNote = '';
-  if (automaticDelivery && fileConsumers.executeCode && provisionState?.codeEnvFiles.length) {
-    const location = getCodeFileLocation(trustedCodeExecutionContext);
-    queuedCodeNote = (dynamicToolContextMap?.[Tools.execute_code] as string | undefined) ?? '';
-    for (const file of provisionState.codeEnvFiles) {
-      const name = provisionState.codeEnvRecoveryNames?.get(file.file_id)?.name ?? file.filename;
-      queuedCodeNote = appendCodeFileContextLine(
-        queuedCodeNote,
-        getCodeFileContextLine(
-          file,
-          provisionState.agentScopedFileIds,
-          getCodeEnvUploadFilename(resolveSandboxFilename(name, file.type)),
-          location,
-        ),
-        location,
-      );
-    }
-  }
   const finalizeAttachments = (files: Array<TFile | undefined> | undefined): IMongoFile[] => {
     const hydrated = toMongoFiles(files);
     return consumersChanged
@@ -2655,7 +2976,7 @@ export async function initializeAgent(
     toolRegistry,
     mcpAvailableTools,
     requestScopedConnections,
-    tool_resources: searchToolResources,
+    tool_resources: runtimeToolResources,
     userMCPAuthMap,
     toolDefinitions,
     hasDeferredTools,
@@ -2688,9 +3009,7 @@ export async function initializeAgent(
     agentContextAttachments,
     fileConsumers,
     toolContextMap: toolContextMap ?? {},
-    dynamicToolContextMap: queuedCodeNote
-      ? { ...(dynamicToolContextMap ?? {}), [Tools.execute_code]: queuedCodeNote }
-      : (dynamicToolContextMap ?? {}),
+    dynamicToolContextMap: dynamicToolContextMap ?? {},
     useLegacyContent: !!options.useLegacyContent,
     tools: (tools ?? []) as GenericTool[] & string[],
     maxToolResultChars: maxToolResultCharsResolved,
@@ -2702,8 +3021,42 @@ export async function initializeAgent(
         ? maxContextTokens
         : Math.max(1024, Math.round(baseContextTokens * (1 - DEFAULT_RESERVE_RATIO))),
     primedCodeFiles,
+    codeContextEntries,
     endpointTokenConfig: options.endpointTokenConfig,
+    instructionsPromptFacts,
   };
+
+  prepareQueuedCodeFileContext(initializedAgent, [initializedAgent], user?.id);
+  const queuedFileContext = initializedAgent.dynamicToolContextMap?.queued_code_files;
+  if (typeof queuedFileContext === 'string') {
+    assertModelBoundContent({
+      filters: appConfig?.filters,
+      files: [{ content: queuedFileContext }],
+    });
+  }
+
+  /**
+   * Usage is recorded only once initialization has fully succeeded — every
+   * step above (tool loading, resource priming, provider setup, the queued
+   * code file content check just above) has already run without throwing. A
+   * resolved link with no `instructionsPromptFacts` never reaches here; an
+   * initialization that throws after resolution never reaches here either,
+   * so it records no use. Fire-and-forget: the turn does not wait on the
+   * increment, and `recordUse` itself catches and logs its own errors. The
+   * `typeof` guard is load-bearing, not defensive noise: `resolveLinkedInstructions`
+   * is typed as a plain callable in `InitializeAgentParams`, so a
+   * caller-supplied plain function (matching the type but not the resolver's
+   * `Object.assign(resolve, { recordUse })` shape) would otherwise throw here
+   * — after initialization has already fully succeeded — rather than
+   * silently recording no usage.
+   */
+  if (
+    instructionsPromptFacts &&
+    (params.recordLinkedPromptUsage ?? true) &&
+    typeof params.resolveLinkedInstructions?.recordUse === 'function'
+  ) {
+    params.resolveLinkedInstructions.recordUse(instructionsPromptFacts);
+  }
 
   return initializedAgent;
 }

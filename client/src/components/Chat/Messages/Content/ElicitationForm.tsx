@@ -132,12 +132,12 @@ function CardHeader({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-tertiary text-text-secondary">
+      <div className="bg-surface-tertiary text-text-secondary flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-text-primary">{title}</p>
-        {identity && <p className="truncate text-xs text-text-secondary">{identity}</p>}
+        <p className="text-text-primary text-sm font-medium">{title}</p>
+        {identity && <p className="text-text-secondary truncate text-xs">{identity}</p>}
       </div>
     </div>
   );
@@ -420,7 +420,7 @@ export default function ElicitationForm({
 
   const requiredMark = (required: boolean) =>
     required ? (
-      <span aria-hidden="true" className="ml-1 text-text-destructive">
+      <span aria-hidden="true" className="text-text-destructive ml-1">
         *
       </span>
     ) : null;
@@ -439,12 +439,12 @@ export default function ElicitationForm({
       const selected = Array.isArray(values[key]) ? (values[key] as Array<string | number>) : [];
       return (
         <fieldset key={key} className="flex flex-col gap-1">
-          <legend className="text-sm font-medium text-text-primary">
+          <legend className="text-text-primary text-sm font-medium">
             {label}
             {requiredMark(required)}
           </legend>
           {schema.description && (
-            <p id={descId} className="text-xs text-text-secondary">
+            <p id={descId} className="text-text-secondary text-xs">
               {schema.description}
             </p>
           )}
@@ -464,15 +464,15 @@ export default function ElicitationForm({
                     checked={selected.includes(option.value)}
                     onChange={(e) => toggleArrayValue(key, option.value, e.target.checked)}
                     disabled={submitting}
-                    className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="border-border-light accent-ring-primary ring-offset-surface-primary focus-visible:ring-focus-control h-4 w-4 rounded focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
                   />
-                  <span className="text-sm text-text-primary">{option.label}</span>
+                  <span className="text-text-primary text-sm">{option.label}</span>
                 </label>
               );
             })}
           </div>
           {error && (
-            <p id={errId} className="text-xs text-text-destructive">
+            <p id={errId} className="text-text-destructive text-xs">
               {error}
             </p>
           )}
@@ -483,12 +483,12 @@ export default function ElicitationForm({
     if (schema.oneOf) {
       return (
         <div key={key} className="flex flex-col gap-1">
-          <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+          <Label htmlFor={fieldId}>
             {label}
             {requiredMark(required)}
           </Label>
           {schema.description && (
-            <p id={descId} className="text-xs text-text-secondary">
+            <p id={descId} className="text-text-secondary text-xs">
               {schema.description}
             </p>
           )}
@@ -501,7 +501,7 @@ export default function ElicitationForm({
             aria-required={required || undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={describedBy}
-            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="border-border-light bg-surface-primary text-text-primary ring-offset-surface-primary focus-visible:ring-focus-control rounded-lg border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
           >
             <option value="">{localize('com_ui_select')}</option>
             {schema.oneOf.map((option) => (
@@ -511,7 +511,7 @@ export default function ElicitationForm({
             ))}
           </select>
           {error && (
-            <p id={errId} className="text-xs text-text-destructive">
+            <p id={errId} className="text-text-destructive text-xs">
               {error}
             </p>
           )}
@@ -522,12 +522,12 @@ export default function ElicitationForm({
     if (schema.enum) {
       return (
         <div key={key} className="flex flex-col gap-1">
-          <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+          <Label htmlFor={fieldId}>
             {label}
             {requiredMark(required)}
           </Label>
           {schema.description && (
-            <p id={descId} className="text-xs text-text-secondary">
+            <p id={descId} className="text-text-secondary text-xs">
               {schema.description}
             </p>
           )}
@@ -540,7 +540,7 @@ export default function ElicitationForm({
             aria-required={required || undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={describedBy}
-            className="rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm text-text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="border-border-light bg-surface-primary text-text-primary ring-offset-surface-primary focus-visible:ring-focus-control rounded-lg border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
           >
             <option value="">{localize('com_ui_select')}</option>
             {schema.enum.map((opt, i) => (
@@ -550,7 +550,7 @@ export default function ElicitationForm({
             ))}
           </select>
           {error && (
-            <p id={errId} className="text-xs text-text-destructive">
+            <p id={errId} className="text-text-destructive text-xs">
               {error}
             </p>
           )}
@@ -572,20 +572,20 @@ export default function ElicitationForm({
               aria-required={required || undefined}
               aria-invalid={error ? true : undefined}
               aria-describedby={describedBy}
-              className="h-4 w-4 rounded border-border-light accent-ring-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="border-border-light accent-ring-primary ring-offset-surface-primary focus-visible:ring-focus-control h-4 w-4 rounded focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
             />
-            <span className="text-sm text-text-primary">
+            <span className="text-text-primary text-sm">
               {label}
               {requiredMark(required)}
             </span>
           </label>
           {schema.description && (
-            <p id={descId} className="text-xs text-text-secondary">
+            <p id={descId} className="text-text-secondary text-xs">
               {schema.description}
             </p>
           )}
           {error && (
-            <p id={errId} className="text-xs text-text-destructive">
+            <p id={errId} className="text-text-destructive text-xs">
               {error}
             </p>
           )}
@@ -611,12 +611,12 @@ export default function ElicitationForm({
 
     return (
       <div key={key} className="flex flex-col gap-1">
-        <Label htmlFor={fieldId} className="text-sm font-medium text-text-primary">
+        <Label htmlFor={fieldId}>
           {label}
           {requiredMark(required)}
         </Label>
         {schema.description && (
-          <p id={descId} className="text-xs text-text-secondary">
+          <p id={descId} className="text-text-secondary text-xs">
             {schema.description}
           </p>
         )}
@@ -635,10 +635,9 @@ export default function ElicitationForm({
           max={schema.maximum}
           minLength={schema.minLength}
           maxLength={schema.maxLength}
-          className={cn(error && 'border-border-destructive focus-visible:ring-border-destructive')}
         />
         {error && (
-          <p id={errId} className="text-xs text-text-destructive">
+          <p id={errId} className="text-text-destructive text-xs">
             {error}
           </p>
         )}
@@ -647,7 +646,7 @@ export default function ElicitationForm({
   };
 
   const errorLine = sendFailed ? (
-    <p role="alert" className="text-xs text-text-destructive">
+    <p role="alert" className="text-text-destructive text-xs">
       {localize('com_ui_elicitation_error')}
     </p>
   ) : null;
@@ -664,9 +663,9 @@ export default function ElicitationForm({
     // Once resolved, recede to a muted one-line trace at the sibling tool call's
     // "Completed …" altitude rather than lingering as a full card.
     card = (
-      <div className="my-1.5 flex h-5 items-center gap-2 text-text-secondary">
+      <div className="text-text-secondary my-1.5 flex h-5 items-center gap-2">
         {succeeded ? (
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" aria-hidden="true" />
+          <CheckCircle2 className="text-status-success h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         ) : (
           <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         )}
@@ -675,29 +674,29 @@ export default function ElicitationForm({
     );
   } else if (isUrlMode) {
     card = (
-      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
+      <div className="border-border-light bg-surface-secondary my-2 rounded-xl border p-4">
         <div className="flex flex-col gap-3">
           <CardHeader
             icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
             title={localize('com_ui_elicitation_title')}
             identity={identity}
           />
-          <p className="text-sm text-text-secondary">{message}</p>
+          <p className="text-text-secondary text-sm">{message}</p>
           {/* MUST be visible and readable before the user clicks anything — see
               `getSafeUrl`/`getHostname`/`hasPunycodeLabel`. Rendered above the
               button row regardless of `urlOpened` so it stays available to
               re-examine before Continue, too. */}
           {safeUrl && (
-            <div className="flex flex-col gap-1 rounded-lg border border-border-light bg-surface-tertiary p-2.5">
-              <p className="text-xs text-text-secondary">
+            <div className="border-border-light bg-surface-tertiary flex flex-col gap-1 rounded-lg border p-2.5">
+              <p className="text-text-secondary text-xs">
                 {localize('com_ui_elicitation_url_domain_label')}{' '}
-                <span className="font-semibold text-text-primary">{hostname}</span>
+                <span className="text-text-primary font-semibold">{hostname}</span>
               </p>
-              <p title={safeUrl} className="break-all text-xs text-text-secondary">
+              <p title={safeUrl} className="text-text-secondary text-xs break-all">
                 {safeUrl}
               </p>
               {suspiciousHostname && (
-                <p role="alert" className="flex items-center gap-1.5 text-xs text-text-warning">
+                <p role="alert" className="text-text-warning flex items-center gap-1.5 text-xs">
                   <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   {localize('com_ui_elicitation_suspicious_url')}
                 </p>
@@ -708,28 +707,31 @@ export default function ElicitationForm({
             {!urlOpened ? (
               <>
                 {safeUrl ? (
-                  <Button
-                    asChild
-                    variant="submit"
-                    size="sm"
-                    aria-disabled={submitting || undefined}
-                    className={cn(submitting && 'pointer-events-none opacity-50')}
+                  <span
+                    className={cn('inline-flex', submitting && 'pointer-events-none opacity-50')}
                   >
-                    <a
-                      href={safeUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      tabIndex={submitting ? -1 : undefined}
-                      onClick={markUrlOpened}
-                      onAuxClick={markUrlOpened}
+                    <Button
+                      asChild
+                      variant="submit"
+                      size="sm"
+                      aria-disabled={submitting || undefined}
                     >
-                      <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                      {localize('com_ui_elicitation_open_url')}
-                    </a>
-                  </Button>
+                      <a
+                        href={safeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        tabIndex={submitting ? -1 : undefined}
+                        onClick={markUrlOpened}
+                        onAuxClick={markUrlOpened}
+                      >
+                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                        {localize('com_ui_elicitation_open_url')}
+                      </a>
+                    </Button>
+                  </span>
                 ) : (
                   url && (
-                    <p role="alert" className="text-xs text-text-destructive">
+                    <p role="alert" className="text-text-destructive text-xs">
                       {localize('com_ui_elicitation_invalid_url')}
                     </p>
                   )
@@ -760,25 +762,28 @@ export default function ElicitationForm({
                   />
                 </Button>
                 {safeUrl && (
-                  <Button
-                    asChild
-                    variant="outline"
-                    size="sm"
-                    aria-disabled={submitting || undefined}
-                    className={cn(submitting && 'pointer-events-none opacity-50')}
+                  <span
+                    className={cn('inline-flex', submitting && 'pointer-events-none opacity-50')}
                   >
-                    <a
-                      href={safeUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      tabIndex={submitting ? -1 : undefined}
-                      onClick={markUrlOpened}
-                      onAuxClick={markUrlOpened}
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      aria-disabled={submitting || undefined}
                     >
-                      <RotateCw className="h-4 w-4" aria-hidden="true" />
-                      {localize('com_ui_elicitation_reopen')}
-                    </a>
-                  </Button>
+                      <a
+                        href={safeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        tabIndex={submitting ? -1 : undefined}
+                        onClick={markUrlOpened}
+                        onAuxClick={markUrlOpened}
+                      >
+                        <RotateCw className="h-4 w-4" aria-hidden="true" />
+                        {localize('com_ui_elicitation_reopen')}
+                      </a>
+                    </Button>
+                  </span>
                 )}
               </>
             )}
@@ -800,14 +805,14 @@ export default function ElicitationForm({
     );
   } else {
     card = (
-      <div className="my-2 rounded-xl border border-border-light bg-surface-secondary p-4">
+      <div className="border-border-light bg-surface-secondary my-2 rounded-xl border p-4">
         <div className="flex flex-col gap-3">
           <CardHeader
             icon={<ClipboardList className="h-4 w-4" aria-hidden="true" />}
             title={localize('com_ui_elicitation_form_title')}
             identity={identity}
           />
-          {formIntro && <p className="text-sm text-text-secondary">{formIntro}</p>}
+          {formIntro && <p className="text-text-secondary text-sm">{formIntro}</p>}
           {fields.length > 0 && (
             <div className="flex flex-col gap-3">{fields.map((field) => renderField(field))}</div>
           )}

@@ -9,8 +9,10 @@ import type {
 } from 'librechat-data-provider';
 import type { useLocalize } from '~/hooks';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
-import { Endpoint, SelectedValues } from '~/common';
+import { resolveProviderIcon } from '~/hooks/Endpoint/useProviderIcon';
+import { createEndpointIcon } from '~/hooks/Endpoint/useEndpoints';
 import { getModelLabel, getSpecAgentAvatarURL } from '~/utils';
+import { Endpoint, SelectedValues } from '~/common';
 
 type NamedEndpoint = Pick<Endpoint, 'value' | 'agentNames' | 'assistantNames' | 'modelLabels'>;
 
@@ -221,13 +223,18 @@ export function getSelectedIcon({
       );
     }
 
-    return (
-      selectedEndpoint.icon ||
-      React.createElement(Bot, {
-        size: 20,
-        className: 'icon-md shrink-0 text-text-primary',
-      })
-    );
+    if (selectedEndpoint.icon) {
+      return createEndpointIcon(
+        endpoint,
+        resolveProviderIcon({ endpoint, endpointsConfig }),
+        model,
+      );
+    }
+
+    return React.createElement(Bot, {
+      size: 20,
+      className: 'icon-md shrink-0 text-text-primary',
+    });
   }
 
   if (endpoint) {

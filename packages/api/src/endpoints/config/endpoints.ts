@@ -1,6 +1,7 @@
 import {
   AuthType,
   CODE_APPROVAL_MODES,
+  DEFAULT_AGENT_CODE_ENVIRONMENT_CHOICES,
   EModelEndpoint,
   isAgentsEndpoint,
   orderEndpointsConfig,
@@ -11,6 +12,7 @@ import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, TCustomEndpointsConfig } from '~/types';
 import type { GetAppConfigOptions } from '~/app/service';
 import { loadCustomEndpointsConfig as defaultLoadCustomEndpoints } from '~/endpoints/custom';
+import { isCodeEnvironmentSelectionEnabled } from '~/code/protocol';
 import { getAppConfigOptionsFromUser } from '~/app/service';
 import { getCodeDefaultProfile } from '~/code/config';
 import { getResponsesApiRouting } from './responses';
@@ -103,6 +105,14 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
       const clientStatefulCodeSessions = statefulCodeSessions
         ? {
             allowedEnvironments: statefulCodeSessions.allowedEnvironments,
+            ...(isCodeEnvironmentSelectionEnabled(statefulCodeSessions.allowEnvironmentSelection)
+              ? {
+                  allowEnvironmentSelection: true,
+                  maxEnvironmentChoices:
+                    statefulCodeSessions.maxEnvironmentChoices ??
+                    DEFAULT_AGENT_CODE_ENVIRONMENT_CHOICES,
+                }
+              : {}),
             approvalsEnabled: toolApproval?.enabled !== false,
             approvalModes,
             environments: statefulCodeSessions.environments
@@ -133,6 +143,14 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
         codeDefaultProfile: getCodeDefaultProfile(),
         maxSubagents,
         fileSharing,
+        toolApproval: {
+          enabled: toolApproval?.enabled === true,
+          agentModes: toolApproval?.enabled === true && toolApproval.agentModes === true,
+          mode: toolApproval?.mode,
+          allow: toolApproval?.allow,
+          deny: toolApproval?.deny,
+          ask: toolApproval?.ask,
+        },
       };
     }
 

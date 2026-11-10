@@ -8,6 +8,7 @@ jest.mock('@librechat/api', () => ({
   logAxiosError: jest.fn(),
   generateShortLivedToken: jest.fn(() => 'jwt'),
   sanitizeFilename: jest.fn((name) => name),
+  dispatchFileStorageOperation: jest.fn((_onStart, run) => run()),
 }));
 jest.mock('@librechat/data-schemas', () => ({ logger: { error: jest.fn(), debug: jest.fn() } }));
 

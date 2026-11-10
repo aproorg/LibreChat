@@ -18,6 +18,7 @@ jest.mock('~/server/controllers/agents/openai', () => ({
   },
 }));
 jest.mock('~/server/middleware', () => ({
+  requireTermsAcceptance: (req, res, next) => next(),
   agentEventUserLimiter: (req, res, next) => next(),
   configMiddleware: (req, res, next) => next(),
 }));

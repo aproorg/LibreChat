@@ -57,7 +57,9 @@ describe.each([
   it('saves stateful_code_sessions true when execute_code is on', async () => {
     render(<Harness values={{ execute_code: true, ...saved }} />);
     await waitFor(() => expect(form.getValues('stateful_code_sessions')).toBe(true));
-    const { payload } = composeAgentUpdatePayload(form.getValues(), 'agent_1');
+    const { payload } = composeAgentUpdatePayload(form.getValues(), 'agent_1', undefined, {
+      instructionsPromptChanged: false,
+    });
     expect(payload.stateful_code_sessions).toBe(true);
   });
 });

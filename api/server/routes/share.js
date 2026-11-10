@@ -27,6 +27,7 @@ const {
   traceIdForMessage,
   resolveDownloadPath,
   sendOfficePdfPreview,
+  prepareResultToolCallPreviews,
 } = require('@librechat/api');
 const {
   logger,
@@ -61,6 +62,10 @@ const configMiddleware = require('~/server/middleware/config/app');
 const { getAppConfig } = require('~/server/services/Config/app');
 const router = express.Router();
 const sharedLinkConfigMiddleware = createSharedLinkConfigMiddleware({ getAppConfig });
+const sharedStartupConfigMiddleware = createSharedLinkConfigMiddleware({
+  getAppConfig,
+  failClosed: true,
+});
 
 const getSharedLangfuseSessionUrl = createSharedLangfuseSessionResolver({
   getHeldCapabilities,
@@ -357,7 +362,7 @@ if (allowSharedLinks) {
     '/:shareId/config',
     optionalJwtAuth,
     canAccessSharedLink,
-    sharedLinkConfigMiddleware,
+    sharedStartupConfigMiddleware,
     (req, res) => {
       try {
         const payload = buildSharedLinkStartupPayload(req.config);
@@ -431,6 +436,7 @@ if (allowSharedLinks) {
     sharedLinkConfigMiddleware,
     async (req, res) => {
       try {
+        const previewToolCalls = prepareResultToolCallPreviews(req, { getAppConfig });
         const result = await forkSharedConversation({
           shareId: req.params.shareId,
           shareResourceId: req.shareResourceId,
@@ -451,7 +457,7 @@ if (allowSharedLinks) {
         if (!result) {
           return res.status(404).json({ message: 'Shared conversation not found' });
         }
-        return res.status(201).json(result);
+        return res.status(201).json(await previewToolCalls(result));
       } catch (error) {
         if (isContentFilterError(error)) {
           return res.status(error.statusCode).json(error.body);

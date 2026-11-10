@@ -18,6 +18,7 @@ jest.mock('~/server/controllers/agents/responses', () => ({
   listModels: (req, res) => res.sendStatus(200),
 }));
 jest.mock('~/server/middleware', () => ({
+  requireTermsAcceptance: (req, res, next) => next(),
   configMiddleware: (req, res, next) => next(),
 }));
 jest.mock('../middleware', () => ({

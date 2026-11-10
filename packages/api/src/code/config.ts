@@ -1,9 +1,9 @@
 import { logger } from '@librechat/data-schemas';
 import {
-  CODE_ENVIRONMENT_DECISION_VERSION,
   CODE_ENVIRONMENT_MOVE_VERSION,
   CODE_ENVIRONMENT_TRANSITION_VERSION,
   CODE_WORKSPACE_RECOVERY_VERSION,
+  CODE_WORKSPACE_INHERITANCE_VERSION,
   EModelEndpoint,
 } from 'librechat-data-provider';
 import type { Agent, TStartupConfig } from 'librechat-data-provider';
@@ -13,6 +13,12 @@ import type {
   CodeEnvironmentPrincipalContext,
 } from './environments';
 import { normalizeStatefulCodeEnvironment } from '~/agents/execution';
+import { resolveCodeEnvironmentDecisionVersion } from './protocol';
+
+export {
+  resolveCodeEnvironmentDecisionVersion,
+  isCodeEnvironmentSelectionEnabled,
+} from './protocol';
 
 type ConfigurationRegistry = {
   listAccessibleConfigurations: (
@@ -25,18 +31,6 @@ type StatefulCodeConfig = NonNullable<
   NonNullable<AppConfig['endpoints']>[EModelEndpoint.agents]
 >['statefulCodeSessions'];
 type CodeEnvironmentConfig = NonNullable<NonNullable<StatefulCodeConfig>['environments']>[number];
-
-/**
- * Resolves the deployment-wide browser protocol gate. The exact version match
- * keeps older and future wire shapes on the legacy-safe path.
- */
-export function resolveCodeEnvironmentDecisionVersion(
-  configuredVersion?: string,
-): typeof CODE_ENVIRONMENT_DECISION_VERSION | undefined {
-  return configuredVersion === String(CODE_ENVIRONMENT_DECISION_VERSION)
-    ? CODE_ENVIRONMENT_DECISION_VERSION
-    : undefined;
-}
 
 export type CodeDefaultProfile = 'default' | 'stateful';
 
@@ -137,6 +131,15 @@ export function resolveCodeEnvironmentMoveCapabilities(
     codeEnvironmentMoveVersion,
     codeWorkspaceRecoveryVersion: CODE_WORKSPACE_RECOVERY_VERSION,
   };
+}
+
+/** Subagent machine inheritance rides on the decision protocol that records the selections. */
+export function resolveCodeWorkspaceInheritanceCapability(
+  configuredDecisionVersion?: string,
+): Pick<TStartupConfig, 'codeWorkspaceInheritanceVersion'> {
+  return resolveCodeEnvironmentDecisionVersion(configuredDecisionVersion) == null
+    ? {}
+    : { codeWorkspaceInheritanceVersion: CODE_WORKSPACE_INHERITANCE_VERSION };
 }
 
 /** Enables the implicit managed route only after the versioned rollout is complete. */

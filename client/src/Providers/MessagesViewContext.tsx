@@ -6,6 +6,8 @@ interface MessagesViewContextValue {
   conversation: ReturnType<typeof useChatContext>['conversation'];
   conversationId: string | null | undefined;
 
+  readOnly: boolean;
+
   /** Submission and control states */
   isSubmitting: ReturnType<typeof useChatContext>['isSubmitting'];
   abortScroll: ReturnType<typeof useChatContext>['abortScroll'];
@@ -27,6 +29,12 @@ interface MessagesViewContextValue {
 type MessagesOperations = Pick<
   MessagesViewContextValue,
   'ask' | 'regenerate' | 'handleContinue' | 'getMessages' | 'setMessages'
+>;
+
+/** The view's conversation with the operations an inline editor writes through. */
+export type MessagesEditing = Pick<
+  MessagesViewContextValue,
+  'conversation' | 'ask' | 'getMessages' | 'setMessages'
 >;
 
 const MessagesViewContext = createContext<MessagesViewContextValue | undefined>(undefined);
@@ -110,6 +118,7 @@ export function MessagesViewProvider({ children }: { children: React.ReactNode }
   /** Combine all values into final context value */
   const contextValue = useMemo<MessagesViewContextValue>(
     () => ({
+      readOnly: false,
       ...conversationValues,
       ...submissionStates,
       ...messageOperations,
@@ -138,6 +147,11 @@ export function useMessagesViewContext() {
     throw new Error('useMessagesViewContext must be used within MessagesViewProvider');
   }
   return context;
+}
+
+/** Defaults to read-only when no provider is present, so live auth-bearing app actions stay off. */
+export function useIsMessagesViewReadOnly(): boolean {
+  return useContext(MessagesViewContext)?.readOnly ?? true;
 }
 
 /** Hook for components that only need conversation data */
@@ -191,13 +205,4 @@ export function useOptionalMessagesConversation() {
   const conversation = context?.conversation;
   const conversationId = context?.conversationId;
   return useMemo(() => ({ conversation, conversationId }), [conversation, conversationId]);
-}
-
-/** Hook for components that only need message state */
-export function useMessagesState() {
-  const { index, latestMessageId, latestMessageDepth } = useMessagesViewContext();
-  return useMemo(
-    () => ({ index, latestMessageId, latestMessageDepth }),
-    [index, latestMessageId, latestMessageDepth],
-  );
 }

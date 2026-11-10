@@ -22,7 +22,7 @@ export default function UserToggleSelect({ toolOptionKey, labelId }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <span id={labelId} className="text-sm font-medium text-text-primary">
+      <span id={labelId} className="text-text-primary text-sm font-medium">
         {localize('com_ui_tool_toggle_label')}
       </span>
       <Radio
@@ -32,7 +32,7 @@ export default function UserToggleSelect({ toolOptionKey, labelId }: Props) {
         fullWidth
         aria-labelledby={labelId}
       />
-      <p className="text-sm leading-relaxed text-text-secondary">
+      <p className="text-text-secondary text-sm leading-relaxed">
         {localize('com_ui_tool_toggle_info')}
       </p>
     </div>

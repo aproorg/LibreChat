@@ -1,7 +1,7 @@
 import { Suspense, useMemo, Fragment } from 'react';
-import { useRecoilValue } from 'recoil';
 import { DelayedRender } from '@librechat/client';
 import { ContentTypes } from 'librechat-data-provider';
+import { MessageContext, useMessageContext } from '@librechat/chat/react';
 import type {
   Agents,
   TMessage,
@@ -11,12 +11,12 @@ import type {
 } from 'librechat-data-provider';
 import type { ReactNode, ReactElement } from 'react';
 import { ErrorSourceProvider } from '~/components/Messages/Content/Error/source';
-import { MessageContext, SearchContext, useMessageContext } from '~/Providers';
+import { useMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import { ErrorMessage, UnfinishedMessage } from './MessageContent';
 import { cn, mapAttachments } from '~/utils';
+import { SearchContext } from '~/Providers';
 import MarkdownLite from './MarkdownLite';
 import { AgentUpdate } from './Parts';
-import store from '~/store';
 import Part from './Part';
 
 /**
@@ -39,7 +39,7 @@ const SearchContent = ({
   /** Author icon + label re-rendered before content that resumes after an inline steer. */
   authorHeader?: ReactNode;
 }) => {
-  const enableUserMsgMarkdown = useRecoilValue(store.enableUserMsgMarkdown);
+  const { enableUserMsgMarkdown } = useMessagePartsHost().useUserTextPreferences();
   const messageContext = useMessageContext();
   const { messageId } = message;
 
@@ -81,7 +81,7 @@ const SearchContent = ({
              *  (`useToolArtifactClaim`) scopes correctly regardless of
              *  caller: the search-results route renders `SearchContent`
              *  with no ambient `MessageContext`, while `Share/Message.tsx`
-             *  already provides one with `messageId` set — this explicit
+             *  already provides one with `messageId` set; this explicit
              *  per-part provider keeps both paths consistent instead of
              *  relying on whichever context happens to be ambient.
              *  An error part additionally resolves the agent a handoff made
@@ -134,7 +134,7 @@ const SearchContent = ({
   return (
     <div
       className={cn(
-        'markdown prose dark:prose-invert light w-full break-words',
+        'markdown prose light w-full break-words',
         message.isCreatedByUser && !enableUserMsgMarkdown && 'whitespace-pre-wrap',
         'text-text-primary',
       )}

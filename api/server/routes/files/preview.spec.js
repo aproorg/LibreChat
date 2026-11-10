@@ -52,13 +52,13 @@ jest.mock('~/server/middleware/roles/capabilities', () => ({
   hasCapability: jest.fn(() => (_req, _res, next) => next()),
 }));
 
+jest.mock('~/server/services/Config', () => ({
+  checkCapability: jest.fn().mockResolvedValue(false),
+}));
+
 jest.mock('~/server/services/PermissionService', () => ({
   checkPermission: jest.fn(() => (_req, _res, next) => next()),
   getEffectivePermissions: jest.fn().mockResolvedValue(0),
-}));
-
-jest.mock('~/server/services/Files', () => ({
-  hasAccessToFilesViaAgent: jest.fn(),
 }));
 
 jest.mock('~/server/utils/files', () => ({

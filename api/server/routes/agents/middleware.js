@@ -28,6 +28,7 @@ const requireRemoteAgentAuth = createRemoteAgentAuth({
   isPrincipalActive: db.isAgentTriggerPrincipalActive,
   hasCapability,
   getAppConfig,
+  recordAuditEntry: db.recordAuditEntry,
 });
 
 const requireAgentManagementAuth = createAgentManagementAuth({

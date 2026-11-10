@@ -4,6 +4,14 @@ const mockRegistry = {
 };
 const mockUpstreamTokenProvider = jest.fn().mockResolvedValue(null);
 const mockCreateOpenIDSessionTokenProvider = jest.fn(() => mockUpstreamTokenProvider);
+const defaultMCPAppsPolicy = {
+  enabled: false,
+  legacyHtmlEnabled: true,
+  maxAdmissionRequestsPerMinute: 240,
+  maxActiveViews: 3,
+  maxActionPreviewChars: 16384,
+  maxPersistedAppBytes: 1048576,
+};
 
 jest.mock('~/config', () => ({
   getMCPServersRegistry: jest.fn(() => mockRegistry),
@@ -13,6 +21,7 @@ jest.mock('~/config', () => ({
 }));
 
 jest.mock('@librechat/data-schemas', () => ({
+  ...jest.requireActual('@librechat/data-schemas'),
   getTenantId: jest.fn(() => 'tenant-1'),
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -33,10 +42,7 @@ jest.mock('@librechat/api', () => ({
   sendEvent: jest.fn(),
   MCPOAuthHandler: jest.fn(),
   isMCPDomainAllowed: jest.fn(),
-  normalizeServerName: jest.fn((name) => name),
-  normalizeJsonSchema: jest.fn((schema) => schema),
   GenerationJobManager: { emitChunk: jest.fn(), getJob: jest.fn() },
-  resolveJsonSchemaRefs: jest.fn((schema) => schema),
   buildOAuthToolCallName: jest.fn((name) => name),
   getUserMCPAuthMap: jest.fn(),
   createAuthIdentityContext: ({ user, tenantId }) => ({
@@ -93,7 +99,12 @@ const {
   cacheMCPServerTools,
 } = require('~/server/services/Config');
 const { reinitMCPServer } = require('~/server/services/Tools/mcp');
-const { sendEvent, GenerationJobManager, getUserMCPAuthMap } = require('@librechat/api');
+const {
+  sendEvent,
+  GenerationJobManager,
+  getUserMCPAuthMap,
+  STANDARD_MCP_CAPABILITY_PROFILE,
+} = require('@librechat/api');
 const {
   createMCPTool,
   healMcpToolNames,
@@ -138,7 +149,12 @@ describe('getAssistantToolDefinitions', () => {
       },
       accessibleServerNames: ['app-server'],
     });
-    expect(getMCPServerTools).toHaveBeenCalledWith('u1', 'app-server', serverConfig);
+    expect(getMCPServerTools).toHaveBeenCalledWith(
+      'u1',
+      'app-server',
+      serverConfig,
+      STANDARD_MCP_CAPABILITY_PROFILE,
+    );
   });
 
   it('recovers and re-caches a referenced server when its slice is missing', async () => {
@@ -164,6 +180,8 @@ describe('getAssistantToolDefinitions', () => {
       serverTools: { [toolKey]: mcpDefinition },
       serverConfig,
       publicationGeneration: 'connection-generation',
+      publicationRevision: undefined,
+      capabilityProfile: STANDARD_MCP_CAPABILITY_PROFILE,
     });
   });
 
@@ -190,6 +208,8 @@ describe('getAssistantToolDefinitions', () => {
       serverConfig,
       userMCPAuthMap,
       upstreamTokenProvider: mockUpstreamTokenProvider,
+      recoveryPolicy: undefined,
+      mcpApps: defaultMCPAppsPolicy,
       oboIdentityContext: {
         appUserId: 'u1',
         openidSubject: undefined,
@@ -370,6 +390,7 @@ describe('resolveAllMcpConfigs', () => {
         cfg_srv: { name: 'cfg_srv' },
       },
       'user',
+      { idOnTheSource: undefined },
     );
   });
 
@@ -381,7 +402,9 @@ describe('resolveAllMcpConfigs', () => {
     const result = await resolveAllMcpConfigs('u1', { id: 'u1' });
 
     expect(result).toEqual({ yaml_srv: { name: 'yaml_srv' } });
-    expect(mockRegistry.getAllServerConfigs).toHaveBeenCalledWith('u1', {});
+    expect(mockRegistry.getAllServerConfigs).toHaveBeenCalledWith('u1', {}, undefined, {
+      idOnTheSource: undefined,
+    });
   });
 
   it('propagates getAllServerConfigs failures', async () => {
@@ -603,8 +626,6 @@ describe('resolveElicitationFlow', () => {
     });
   });
 });
-
-
 
 describe('healMcpToolNames', () => {
   beforeEach(() => jest.clearAllMocks());

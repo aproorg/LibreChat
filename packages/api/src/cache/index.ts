@@ -5,5 +5,8 @@ export { default as keyvMongo } from './keyvMongo';
 export * from './cacheFactory';
 export * from './flows';
 export * from './principals';
+export * from './pullRequests';
 export * from './redisUtils';
 export * from './redisTelemetry';
+export * from './audit';
+export * from './lock';

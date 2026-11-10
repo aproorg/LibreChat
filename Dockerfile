@@ -1,10 +1,10 @@
-# v0.8.8
+# v0.8.9-rc1
 
 # Base node image
-FROM node:24.16.0-alpine AS node
+FROM node:24.22.1-alpine AS node
 
 RUN apk upgrade --no-cache
-RUN apk add --no-cache jemalloc
+RUN apk add --no-cache bash jemalloc
 RUN apk add --no-cache python3 py3-pip uv
 # LibreOffice for high-fidelity PPTX previews (OFFICE_PREVIEW_LIBREOFFICE).
 # With only font-liberation, any font without a Liberation twin (Calibri, Aptos,
@@ -38,6 +38,8 @@ COPY --chown=node:node client/package.json ./client/package.json
 COPY --chown=node:node packages/data-provider/package.json ./packages/data-provider/package.json
 COPY --chown=node:node packages/data-schemas/package.json ./packages/data-schemas/package.json
 COPY --chown=node:node packages/api/package.json ./packages/api/package.json
+COPY --chown=node:node vendor/code ./vendor/code
+COPY --chown=node:node packages/chat/package.json ./packages/chat/package.json
 
 RUN \
     # Allow mounting of these files, which have no default
@@ -62,6 +64,7 @@ RUN \
 
 COPY --chown=node:node . .
 
+ARG VITE_MCP_SANDBOX_URL=
 RUN \
     # React client build with configurable memory
     NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}" npm run frontend && \

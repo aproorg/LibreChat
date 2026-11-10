@@ -1,9 +1,9 @@
 import path from 'path';
 import * as fs from 'fs';
-import { JSDOM } from 'jsdom';
-import type { DOMWindow } from 'jsdom';
 import JSZip from 'jszip';
+import { JSDOM } from 'jsdom';
 import { fillOfficeFileShell } from 'librechat-data-provider';
+import type { DOMWindow } from 'jsdom';
 import { _internal, pptxToHtml, wordDocToHtml } from './html';
 import { buildEmf } from './__tests__/emf.helper';
 

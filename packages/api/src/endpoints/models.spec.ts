@@ -1138,3 +1138,38 @@ describe('fetchModels transport failure', () => {
     await expect(fetchModels({ ...params, throwOnError: true })).resolves.toEqual([]);
   });
 });
+
+describe('configured model lists skip provider discovery', () => {
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    delete process.env.OPENAI_MODELS;
+    delete process.env.ANTHROPIC_MODELS;
+    process.env.OPENAI_API_KEY = 'sk-test';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    mockedAxios.get.mockReset();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns the configured OpenAI list without requesting /models', async () => {
+    const models = await getOpenAIModels({ user: 'user-1', configuredModels: ['gpt-a', 'gpt-b'] });
+    expect(models).toEqual(['gpt-a', 'gpt-b']);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('returns the configured Anthropic list without requesting /models', async () => {
+    const models = await getAnthropicModels({ user: 'user-1', configuredModels: ['claude-a'] });
+    expect(models).toEqual(['claude-a']);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('still discovers models when no list is configured', async () => {
+    mockedAxios.get.mockResolvedValue({ data: { data: [{ id: 'gpt-discovered' }] } });
+    await getOpenAIModels({ user: 'user-1' });
+    expect(mockedAxios.get).toHaveBeenCalled();
+  });
+});
