@@ -88,11 +88,11 @@ Before the trial, run the data methods against the engine:
 cd packages/data-schemas && DOCUMENTDB_STRICT=true npx jest --config misc/documentdb/jest.documentdb.config.mjs
 ```
 
-It needs `DOCUMENTDB_URI` pointing at a database of its own with change streams enabled, as [runbook.md](runbook.md#engine-compatibility-run) describes. Without strict mode a rejected query only prints, and without the URI every suite skips.
+It needs `DOCUMENTDB_URI` pointing at a database of its own with change streams enabled, as [runbook.md](../../docs/search/runbook.md#engine-compatibility-run) describes. Without strict mode a rejected query only prints, and without the URI every suite skips.
 
 ## 7. The sandbox trial: operator path on the sandbox tenant (US3, SC-017)
 
-Runs with `languages: [en]` until T146's image is ready ([R-02](research.md#r-02-language-data-delivery)), with the `is` checks deferred to stage 8. Follow [runbook.md](runbook.md):
+Runs with `languages: [en]` until T146's image is ready ([R-02](research.md#r-02-language-data-delivery)), with the `is` checks deferred to stage 8. Follow [runbook.md](../../docs/search/runbook.md):
 
 1. Turn search data on and request `node config/search-job.js backfill`. `status` shows progress; kill a process mid-way and confirm it resumes; pause and resume it.
 2. Confirm `/api/search/enable` stays Meilisearch-driven until `backend: search` and verification has passed.

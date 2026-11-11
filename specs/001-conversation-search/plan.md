@@ -117,7 +117,7 @@ client/src/data-provider/queries.ts, packages/data-provider/src/data-service.ts 
 client/src/components/Nav/SettingsTabs/Data/SharedLinks.tsx # busy, failed and stop-word states
 client/src/locales/en/translation.json
 
-specs/001-conversation-search/runbook.md              # new, generic: no tenant data
+docs/search/                                         # new: the feature's documentation, with runbook.md (generic: no tenant data)
 ```
 
 **Structure Decision**: Monorepo layout as `AGENTS.md` requires and §9 proposes. New code stays in its own directories, with four read seams and no write-path edits, to keep the fork carry small. Infrastructure work lives in the separate infrastructure repository and is listed in `tasks.md` as such.

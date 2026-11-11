@@ -1,5 +1,7 @@
 # Runbook: Conversation Search
 
+Part of the [search documentation](README.md). For what the commands and jobs do, see [jobs.md](jobs.md).
+
 Operator steps, one tenant at a time. This file is public, so it holds no tenant names, hosts, IPs or figures from a tenant.
 
 ## Public repository check
@@ -29,6 +31,7 @@ Any line printed stops the PR until a person has read it, because a version numb
 Every tenant moves to DocumentDB 8.0 before search work reaches it (FR-031). Meilisearch keeps serving throughout.
 
 **Before starting**
+
 1. Confirm `MaxCapacity` is at least 3.
 2. Take a manual snapshot and record its identifier in the private tenant record.
 3. Upgrade a clone of the tenant first. Time the downtime, and check that the `$type` partial indexes in `codeEnvironment.ts` survive.
@@ -36,6 +39,7 @@ Every tenant moves to DocumentDB 8.0 before search work reaches it (FR-031). Mei
 5. Announce a window as long as the clone's downtime, plus the data-loss window below.
 
 **During the upgrade**
+
 - The cluster is unavailable and reboots several times.
 - An index metadata refresh then runs for minutes up to two hours, with degraded performance. Don't reboot, fail over or scale the writer during it.
 
@@ -52,20 +56,32 @@ Every tenant moves to DocumentDB 8.0 before search work reaches it (FR-031). Mei
 Fills one tenant's search collections while Meilisearch keeps serving (FR-028, FR-039). Users see no change. Every command below runs from the repository root in a one-off task with the tenant's environment.
 
 **Cluster setup, once per tenant**
+
 1. Enable change streams on the two source collections, each by itself, on the tenant's cluster:
 
    ```javascript
-   db.adminCommand({ modifyChangeStreams: 1, database: '<database>', collection: 'messages', enable: true });
-   db.adminCommand({ modifyChangeStreams: 1, database: '<database>', collection: 'conversations', enable: true });
+   db.adminCommand({
+     modifyChangeStreams: 1,
+     database: '<database>',
+     collection: 'messages',
+     enable: true,
+   });
+   db.adminCommand({
+     modifyChangeStreams: 1,
+     database: '<database>',
+     collection: 'conversations',
+     enable: true,
+   });
    ```
 
 2. Raise change stream retention to 7 days: set `change_stream_log_retention_duration` to `604800` in the cluster parameter group.
 3. Record both in the private tenant record: the date streams were enabled and the retention value in force. A gap longer than the retention forces a restart of sync at the current position and a reconcile.
 
 **Entry checks**
+
 1. The tenant is on engine 8.0 (Upgrade).
 2. Streams are enabled on both collections and the retention value is recorded.
-3. The `/metrics` scrape is on and the chat save p95 query returns data ([contracts/telemetry.md](contracts/telemetry.md)). A tenant on `api/server/experimental.js` has no `/metrics`, so this check fails there.
+3. The `/metrics` scrape is on and the chat save p95 query returns data ([contracts/telemetry.md](../../specs/001-conversation-search/contracts/telemetry.md)). A tenant on `api/server/experimental.js` has no `/metrics`, so this check fails there.
 4. Alarms are attached and have fired in a test: chat save p95, cursor errors, capacity pinned at maximum, sync lag and liveness, sync gap, verification failure, pack failure.
 5. Two weeks of chat save baseline exist (SC-008), and the same two weeks of capacity hours (SC-012).
 6. If `is` is in `search.languages`, the language data is in the image and `search.languageDataDir` points at it. Without it the pack fails to load and nothing below starts.
@@ -78,6 +94,7 @@ Fills one tenant's search collections while Meilisearch keeps serving (FR-028, F
    Read the `distinct tenantId values` line. More than one value means the database holds more than one tenant: stop, because one writer serves one database. `not read` means that read timed out, or a chain is running: run `status` again before going on, since the line has to show values or `-`.
 
 **Steps**
+
 1. Set `search.data: true`, leave `search.backend: meilisearch`, and do a rolling restart. Each process loads the language packs after it listens. One process takes the lease, creates the four search collections and starts following changes.
 2. Run `node config/search-job.js status` and expect `lease held: true`. If it stays `false`, look for `[search] Background start failed`, `[search] Job heartbeat failed` or `[search] Language pack failed` in the server logs. Each carries the error's class and driver code.
 3. Check that the stream delivers changes, because a stream that opens and delivers nothing looks healthy: `sync: last saved` keeps moving on an idle stream. Send one chat message on the tenant, wait a few seconds and run `status` again. `last change` on the `sync:` line must show a time at or after the message. If it stays `-`, the database-level stream does not see collections enabled one by one on this engine: set `search.sync.watch: collections`, restart, and repeat this step. Do not request the backfill until it passes.
@@ -88,6 +105,7 @@ Fills one tenant's search collections while Meilisearch keeps serving (FR-028, F
    ```
 
    Or set `search.jobs.backfillOnStart: true` in step 1. The lease holder then requests it by itself after startup, once, if no chain exists. Step 3 still applies: verification fails as `sync_not_started` when the stream cannot open, and with `mismatch` on a stream that opens and delivers nothing.
+
 5. Watch it with `node config/search-job.js status`. The lease holder runs the chain in order: backfill, indexes, word list, reconcile, verify. The `chain step` line shows the step, each collection's line shows rows processed, rate and estimated finish, and the `next:` line names the one thing to do.
 6. It is done when status shows `chain step: finished` and `verify: passed`. Meilisearch still serves, and `/api/search/enable` still answers from Meilisearch.
 
@@ -97,11 +115,11 @@ A crash or deploy mid-way needs no action: the next lease holder resumes the cha
 
 From the start of the backfill, the abort thresholds of SC-008 and SC-011 apply (FR-028):
 
-| Measure | Threshold |
-|---|---|
+| Measure       | Threshold                                      |
+| ------------- | ---------------------------------------------- |
 | Cursor errors | Any on a chat route, or above 0.1% of searches |
-| Chat save p95 | 25% worse than the baseline for 1 hour |
-| Capacity | Pinned at maximum for 1 hour |
+| Chat save p95 | 25% worse than the baseline for 1 hour         |
+| Capacity      | Pinned at maximum for 1 hour                   |
 
 Nothing pauses by itself. The alarm calls the owner, and the action is to pause:
 
@@ -128,15 +146,16 @@ node config/search-job.js resume
 
 **Gate terms**, fixed before the trial is read and before any hold starts:
 
-| Term | Meaning |
-|---|---|
-| Warm | A search with `coldAfterIdle` false: not the first in its process after 30 minutes with none |
-| First search after idle | `coldAfterIdle` true, kept only where capacity was at the floor |
-| Working hours, normal load | Set per tenant in the private tenant record, before its numbers are read |
-| Chat save baseline | The tenant's two weeks before search data was turned on |
-| Sample minimum | 20 per latency measure, the largest user's included. Fewer counts as not measured |
+| Term                       | Meaning                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| Warm                       | A search with `coldAfterIdle` false: not the first in its process after 30 minutes with none |
+| First search after idle    | `coldAfterIdle` true, kept only where capacity was at the floor                              |
+| Working hours, normal load | Set per tenant in the private tenant record, before its numbers are read                     |
+| Chat save baseline         | The tenant's two weeks before search data was turned on                                      |
+| Sample minimum             | 20 per latency measure, the largest user's included. Fewer counts as not measured            |
 
 **Entry checks, per tenant**
+
 1. SC-001 to SC-004 pass on the release being deployed (Release checklist).
 2. The sandbox trial's verdict is recorded, and no later analyzer or ranking change is waiting on a rerun.
 3. The backfill is verified: status shows `verify: passed`, with `last passed` later than the last restart that moved the tenant off the new search or turned search data off. `/api/search/enable` reports ready on `backend: search` only after verification passes.
@@ -144,18 +163,19 @@ node config/search-job.js resume
 5. Meilisearch is healthy and in sync, so the way back is open.
 
 **Steps**
+
 1. Set `search.backend: search` and do a rolling restart. Record how long it takes to reach all processes.
 2. Confirm `/api/search/enable` answers `true` and a search for a known word returns it.
 3. Hold for 30 days. Meilisearch stays running and in sync: leave `MEILI_HOST` and `MEILI_MASTER_KEY` set, and do not remove or resize its volume (FR-036).
 4. During the hold these thresholds apply (FR-035). Crossing an abort threshold means Rollback (a), with a written cause.
 
-   | Measure | Abort |
-   |---|---|
-   | SC-005: another user's content, a temporary or subagent result, tool output or private text | Any |
-   | SC-008: cursor errors; chat save p95 | Any on a chat route, or above 0.1% of searches; 25% worse for 1 hour |
-   | SC-009: sync lag | Above 1 hour |
-   | SC-011: capacity pinned at maximum | For 1 hour |
-   | SC-006: warm p95 above 500 ms, or the largest user's above 1 s | No abort. The alarm goes to the owner, who decides |
+   | Measure                                                                                     | Abort                                                                |
+   | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+   | SC-005: another user's content, a temporary or subagent result, tool output or private text | Any                                                                  |
+   | SC-008: cursor errors; chat save p95                                                        | Any on a chat route, or above 0.1% of searches; 25% worse for 1 hour |
+   | SC-009: sync lag                                                                            | Above 1 hour                                                         |
+   | SC-011: capacity pinned at maximum                                                          | For 1 hour                                                           |
+   | SC-006: warm p95 above 500 ms, or the largest user's above 1 s                              | No abort. The alarm goes to the owner, who decides                   |
 
 5. On the sandbox trial only: seven days in, run `node config/search-job.js reconcile` and read its `missing`, `orphans`, `stale` and `of` counts in status for SC-010. They are counted before anything is repaired.
 6. At cutover plus 30 days with no abort, remove Meilisearch and its volume together, in the infrastructure repository, and roll out with `MEILI_HOST` and `MEILI_MASTER_KEY` unset. `SEARCH=true` stays set: without it `/api/search/enable` answers false and the search box disappears, with no log line. The app runs cleanly without the two Meilisearch variables (SC-015). Before the first removal anywhere, Rollback (b) must have been timed once on a snapshot clone of the trial tenant's data.
@@ -193,6 +213,7 @@ Do these in exactly this order. Rehearse it once on a snapshot clone of the tria
    ```
 
    This updates every message and conversation. It comes after step 1 because, with search data on, those updates would flood the sync writer.
+
 3. Redeploy Meilisearch on an empty volume. Then roll out with `MEILI_HOST` and `MEILI_MASTER_KEY` set. The rollout is what starts the full sync, because `indexSync` runs only at process start.
 4. Wait. Search stays hidden until the full sync passes the gate: per model, nothing pending indexing or cleanup, and unprocessed documents within `MEILI_SYNC_THRESHOLD`.
 5. Roll out `search.meiliResyncPending: false`.
@@ -228,7 +249,12 @@ Used by the upgrade and by the release checklist. The suites write and drop coll
 2. Enable change streams for that database, or the stream checks only report that streams are off:
 
    ```js
-   db.adminCommand({ modifyChangeStreams: 1, database: 'librechat_search_compat', collection: '', enable: true });
+   db.adminCommand({
+     modifyChangeStreams: 1,
+     database: 'librechat_search_compat',
+     collection: '',
+     enable: true,
+   });
    ```
 
 3. Run every suite in strict mode. Without `DOCUMENTDB_STRICT=true` a query the engine rejects is only printed, and the run still exits 0:
@@ -256,8 +282,9 @@ For every release that reaches a tenant with search data on (FR-031, FR-034, FR-
    ```
 
    A miss stops cutovers until it is fixed, or the owner re-baselines in writing.
+
 4. **Token changes.** After a deploy that changes tokens (a pack, a stop list, folding, splitting or a cap) has reached every process, run `node config/search-job.js reconcile` on each tenant with search data on. During a rolling deploy an old process can retake the lease and write older tokens behind the walk, so the writer's own reconcile at start is not enough.
 5. **Meilisearch index settings.** If the release changes Meilisearch index settings, write a plan first. `indexSync` then resets every sync flag at process start, which updates every message and conversation while the sync writer is on. Schedule it outside working hours, watch sync lag against SC-009, and expect the lag alarm.
-6. **Upstream.** Before each cutover, check upstream's own search direction again and record it ([R-20](research.md#r-20-upstream-search-check)).
+6. **Upstream.** Before each cutover, check upstream's own search direction again and record it ([R-20](../../specs/001-conversation-search/research.md#r-20-upstream-search-check)).
 7. **Public repository.** Run the public repository check at the top of this file.
-8. **The tenant's `search` block.** Read it against this release's [contracts/config.md](contracts/config.md) before the deploy. The block is strict, and a configuration that fails validation stops the process at startup, so a key this release no longer accepts turns a deploy into a crash loop. Removed so far: `backend: shadow`, everything under `shadow:` (move `shadow.largestUserId` to `largestUserId`), and a `rankWindow` below 25.
+8. **The tenant's `search` block.** Read it against this release's [contracts/config.md](../../specs/001-conversation-search/contracts/config.md) before the deploy. The block is strict, and a configuration that fails validation stops the process at startup, so a key this release no longer accepts turns a deploy into a crash loop. Removed so far: `backend: shadow`, everything under `shadow:` (move `shadow.largestUserId` to `largestUserId`), and a `rankWindow` below 25.
