@@ -23,6 +23,7 @@ export * from './mutations';
 export * from './prompts';
 export * from './queries';
 export * from './roles';
+export * from './search';
 export * from './tags';
 export * from './MCP';
 export * from './SSE';

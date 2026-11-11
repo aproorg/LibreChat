@@ -19,10 +19,13 @@ import type { ConversationListParams, TConversation } from 'librechat-data-provi
 import type { SortingState, Updater } from '@tanstack/react-table';
 import type { TableColumn } from '@librechat/client';
 import {
+  retrySearch,
+  getSearchErrorCode,
   useConversationsInfiniteQuery,
   useDeleteConversationMutation,
   useArchiveConvoMutation,
 } from '~/data-provider';
+import { SearchErrorState, SearchPartialState, SearchStopWordHint } from '~/components/Search';
 import { MinimalIcon } from '~/components/Endpoints';
 import { NotificationSeverity } from '~/common';
 import { formatDate, logger } from '~/utils';
@@ -56,13 +59,36 @@ export default function ArchivedChatsTable() {
   const [queryParams, setQueryParams] = useState<ConversationListParams>(DEFAULT_PARAMS);
   const [deleteConversation, setDeleteConversation] = useState<TConversation | null>(null);
 
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, refetch, isLoading, isFetching } =
-    useConversationsInfiniteQuery(queryParams, {
-      staleTime: 0,
-      cacheTime: 5 * 60 * 1000,
-      refetchOnWindowFocus: false,
-      refetchOnMount: false,
-    });
+  const {
+    data,
+    error,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+    isLoading,
+    isFetching,
+    isPreviousData,
+  } = useConversationsInfiniteQuery(queryParams, {
+    staleTime: 0,
+    cacheTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: retrySearch,
+  });
+
+  /** New search backend only: the default one sends no code, flag or reason, so each of
+   *  these stays unset and the table renders as before. */
+  const isShowingSearch = Boolean(queryParams.search) && !isFetching && !isPreviousData;
+  const searchErrorCode = isShowingSearch && isError ? getSearchErrorCode(error) : undefined;
+  const isPartialSearch = isShowingSearch && data?.pages.some((page) => page?.partial === true);
+  const isStopWordSearch =
+    isShowingSearch && !isError && data?.pages[0]?.reason === 'only_stop_words';
+
+  const handleSearchRetry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   const handleFilterChange = useCallback((value: string) => {
     setQueryParams((prev) => ({
@@ -265,6 +291,11 @@ export default function ArchivedChatsTable() {
 
   return (
     <>
+      {searchErrorCode != null && (
+        <SearchErrorState code={searchErrorCode} onRetry={handleSearchRetry} className="mb-2" />
+      )}
+      {isPartialSearch && <SearchPartialState className="mb-2" />}
+      {isStopWordSearch && <SearchStopWordHint className="mb-2" />}
       {/* The skeleton count matches the minimum height so the loading and loaded
           states are close in size, while a short list still collapses the box. */}
       <VirtualizedDataTable

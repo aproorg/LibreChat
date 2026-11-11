@@ -32,6 +32,7 @@ import type {
 import type t from 'librechat-data-provider';
 import type { ConversationCursorData } from '~/utils/convos';
 import { findConversationInInfinite, isNotFoundError } from '~/utils';
+import { cursorSearchText } from './search';
 
 export const useGetPresetsQuery = (
   config?: UseQueryOptions<TPreset[]>,
@@ -93,16 +94,19 @@ export const useConversationsInfiniteQuery = (
       isArchived ? QueryKeys.archivedConversations : QueryKeys.allConversations,
       { isArchived, sortBy, sortDirection, tags, search, projectId },
     ],
-    queryFn: async ({ pageParam }) => {
-      const page = await dataService.listConversations({
-        isArchived,
-        sortBy,
-        sortDirection,
-        tags,
-        search,
-        projectId,
-        cursor: pageParam?.toString(),
-      });
+    queryFn: async ({ pageParam, signal }) => {
+      const page = await dataService.listConversations(
+        {
+          isArchived,
+          sortBy,
+          sortDirection,
+          tags,
+          search,
+          projectId,
+          cursor: pageParam?.toString(),
+        },
+        signal,
+      );
       /* A row's own `isArchived` decides what its menu offers, so a backend that predates
          that field in the list projection would make archived rows offer Archive and submit
          a no-op. What the variant asked for is the answer for any row that omits it. */
@@ -199,16 +203,21 @@ export const useMessagesInfiniteQuery = (
       QueryKeys.messages,
       { sortBy, sortDirection, pageSize, conversationId, messageId, search },
     ],
-    queryFn: ({ pageParam }) =>
-      dataService.listMessages({
-        sortBy,
-        sortDirection,
-        pageSize,
-        conversationId,
-        messageId,
-        search,
-        cursor: pageParam?.toString(),
-      }),
+    queryFn: ({ pageParam, signal }) => {
+      const cursor: string | undefined = pageParam?.toString();
+      return dataService.listMessages(
+        {
+          sortBy,
+          sortDirection,
+          pageSize,
+          conversationId,
+          messageId,
+          search: cursor ? cursorSearchText(search) : search,
+          cursor,
+        },
+        signal,
+      );
+    },
     getNextPageParam: (lastPage) => lastPage?.nextCursor ?? undefined,
     keepPreviousData: true,
     staleTime: 5 * 60 * 1000, // 5 minutes
