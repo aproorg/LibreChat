@@ -215,7 +215,7 @@ The search data is derived from messages and conversations, and it falls under t
    node config/search-job.js drop --yes
    ```
 
-   `--yes` confirms it, since a one-off task has no terminal to ask in. It refuses while search data is on, and it removes only the four search collections: `msearch`, `csearch`, `search_vocab` and `search_state`. Messages and conversations are untouched. Record the date in the private tenant record. Turning search data on again after a drop needs a new backfill.
+   `--yes` confirms it, since a one-off task has no terminal to ask in. It refuses while search data is on, while a process still holds the sync lease, and when the configuration it loads has no `search` block (set `search.data: false` rather than deleting the block, and check `CONFIG_PATH`). And it removes only the four search collections: `msearch`, `csearch`, `search_vocab` and `search_state`. Messages and conversations are untouched. Record the date in the private tenant record. Turning search data on again after a drop needs a new backfill.
 
 ## Release checklist
 

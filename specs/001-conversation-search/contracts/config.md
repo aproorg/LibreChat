@@ -15,7 +15,7 @@ search:
   rankWindow: 200            # max 200; bounds cursor size (R-06)
   readConcurrency: 2
   maxConcurrentSearches: 4
-  queryWordLimit: 10
+  queryWordLimit: 10         # max 32; the words ride in the cursor (R-06)
   searchTimeoutMs: 10000
   syncTakeoverSeconds: 30
   vocabFlushSeconds: 300
@@ -39,7 +39,7 @@ search:
     maxRareTokens: 200
     maxVocabRows: 50000
   typo:
-    maxCorrections: 8
+    maxCorrections: 8        # max 16
     maxVocabRows: 50000
 ```
 
