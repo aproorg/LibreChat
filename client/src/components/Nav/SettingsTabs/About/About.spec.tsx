@@ -12,8 +12,10 @@ jest.mock('copy-to-clipboard', () => ({
 }));
 
 const mockUseGetStartupConfig = jest.fn();
+const mockUseGetSearchMetaQuery = jest.fn();
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => mockUseGetStartupConfig(),
+  useGetSearchMetaQuery: () => mockUseGetSearchMetaQuery(),
 }));
 
 jest.mock('~/hooks', () => ({
@@ -31,6 +33,8 @@ beforeEach(() => {
   mockCopy.mockReset();
   mockCopy.mockReturnValue(true);
   mockUseGetStartupConfig.mockReturnValue({ data: { buildInfo: populatedBuildInfo } });
+  mockUseGetSearchMetaQuery.mockReset();
+  mockUseGetSearchMetaQuery.mockReturnValue({ data: {} });
 });
 
 describe('About', () => {
@@ -161,6 +165,25 @@ describe('About', () => {
 
       await user.click(screen.getByRole('button', { name: /com_nav_about_diagnostics_copy/i }));
       expect(status.textContent).toMatch(/com_ui_copied/);
+    });
+  });
+
+  describe('search attribution', () => {
+    it('shows none with the default configuration', () => {
+      render(<About />);
+      expect(screen.queryByTestId('search-attribution')).not.toBeInTheDocument();
+    });
+
+    it("shows the server's attribution when the response carries one", () => {
+      const attribution = { text: 'The Example Lexicon.', url: 'https://lexicon.example.org' };
+      mockUseGetSearchMetaQuery.mockReturnValue({ data: { attribution } });
+      render(<About />);
+
+      expect(screen.getByTestId('search-attribution')).toHaveTextContent(attribution.text);
+      expect(screen.getByRole('link', { name: attribution.url })).toHaveAttribute(
+        'href',
+        attribution.url,
+      );
     });
   });
 });
