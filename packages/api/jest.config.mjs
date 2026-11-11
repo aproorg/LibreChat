@@ -29,6 +29,7 @@ export default {
     '\\.helper\\.d\\.ts$',
     '/__tests__/helpers/',
     '\\.manual\\.spec\\.[jt]sx?$',
+    '/misc/',
   ],
   coverageReporters: ['text', 'cobertura'],
   testResultsProcessor: 'jest-junit',

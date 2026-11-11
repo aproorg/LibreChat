@@ -200,3 +200,6 @@ scripts/activity-labels/results/
 
 # Mutation testing sandboxes
 .stryker-tmp/
+
+# Private language data (FR-045)
+vendor/search-language/

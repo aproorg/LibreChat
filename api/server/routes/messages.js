@@ -192,6 +192,11 @@ router.get('/', async (req, res) => {
         messages: await previewToolCalls(messageResult.value.messages),
       };
     } else if (search) {
+      const searched = await req.app.locals.search?.messages(req, res, search, cursor);
+      if (searched) {
+        return res.status(searched.status).json(searched.body);
+      }
+
       const pageSize = await pageSizeRead;
       const searchResults = await db.searchMessages(
         search,

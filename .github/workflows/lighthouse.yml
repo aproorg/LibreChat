@@ -95,6 +95,7 @@ jobs:
           chrome=$(node -p "require('@playwright/test').chromium.executablePath()")
           "$chrome" --version
           echo "CHROME_PATH=$chrome" >> "$GITHUB_ENV"
+      - run: npm run test:lighthouse-database
       - run: npm run e2e:prepare
       - name: Audit serial database latency
         id: audit

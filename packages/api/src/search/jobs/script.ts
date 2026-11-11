@@ -1,0 +1,409 @@
+import { randomUUID } from 'node:crypto';
+import type { SearchMethods, SearchSourceCollection } from '@librechat/data-schemas';
+import type { ConversationSearchConfig } from 'librechat-data-provider';
+import type { DropRefusalCode } from './drop';
+import {
+  BACKFILL_KEYS,
+  CHAIN_KEY,
+  JOB_STATE_READ,
+  LEASE_KEY,
+  RECONCILE_KEY,
+  requestJob,
+  SOURCE_COLLECTIONS,
+  STREAM_KEY,
+  VERIFICATION_KEY,
+  VOCAB_KEY,
+} from './control';
+import { createSearchConfigSnapshot } from '../config';
+import { dropSearchData } from './drop';
+
+export type SearchScriptMethods = Pick<
+  SearchMethods,
+  | 'readSearchState'
+  | 'writeSearchState'
+  | 'searchStateExists'
+  | 'listSearchJobRequests'
+  | 'readSearchSourceTenants'
+  | 'dropSearchCollections'
+>;
+
+const REQUEST_COMMANDS = ['backfill', 'pause', 'resume', 'reconcile', 'verify'] as const;
+const USAGE = 'Usage: search-job <status|backfill|pause|resume|reconcile|verify|drop --yes>';
+const CONFIRM_FLAG = '--yes';
+const DROP_REFUSALS: Readonly<Record<DropRefusalCode, string>> = {
+  search_data_on:
+    'Nothing dropped: search.data is true. Set it to false, restart every process, then run drop again.',
+  search_lease_held:
+    'Nothing dropped: a process still holds the sync lease, so it runs with search data on. ' +
+    'Restart every process with search.data false, wait for the lease to run out, then run drop again.',
+  search_sync_recent:
+    'Nothing dropped: a sync writer saved its position within the takeover time, so a process may still run with search data on. ' +
+    'Wait until every process has restarted with search.data false, then run drop again.',
+};
+/** A rate older than this came from a process that stopped, so it predicts nothing. */
+const RATE_STALE_MS = 5 * 60_000;
+
+export interface SearchCollectionStatus {
+  status: string | null;
+  processed: number;
+  /** An estimate taken when the walk started. */
+  total: number | null;
+  skipped: number;
+  /** Rows that should have a record, where a language pack threw. Verification fails on these. */
+  analysisFailures: number;
+  /** Source rows per second, or `null` when nothing is running. */
+  rate: number | null;
+  estimatedFinish: Date | null;
+}
+
+export interface SearchJobStatus {
+  chain: {
+    step: string | null;
+    startedAt: Date | null;
+    finishedAt: Date | null;
+    /** Failed attempts since the chain last moved. Above zero, the chain is retrying. */
+    failures: number;
+    lastFailureAt: Date | null;
+    /** An error class and driver code, never its message. */
+    lastFailureCode: string | null;
+  };
+  paused: boolean;
+  collections: Record<SearchSourceCollection, SearchCollectionStatus>;
+  verification: Record<string, unknown> | null;
+  wordList: Record<string, unknown> | null;
+  reconcile: Record<string, unknown> | null;
+  /** When the sync writer last saved its position, or `null` if no writer has run. */
+  syncSavedAt: Date | null;
+  /** When the last change the stream delivered happened, or `null` if it has delivered none. */
+  syncLastChangeAt: Date | null;
+  gapAt: Date | null;
+  leaseHeld: boolean;
+  pendingRequests: string[];
+  /**
+   * Read for the check before a backfill. `null` while a chain runs, because this is polled
+   * then and each read walks both source collections, or when the read fails, so that a slow
+   * `distinct` cannot hide progress.
+   */
+  tenants: string[] | null;
+}
+
+const dateOf = (value: unknown): Date | null => (value instanceof Date ? value : null);
+const numberOf = (value: unknown): number | null => (typeof value === 'number' ? value : null);
+
+function collectionStatus(
+  entry: Record<string, unknown> | null,
+  now: number,
+): SearchCollectionStatus {
+  const processed = numberOf(entry?.processed) ?? 0;
+  const total = numberOf(entry?.total);
+  const savedRate = numberOf(entry?.rate) ?? 0;
+  const rateAt = dateOf(entry?.rateAt)?.getTime() ?? 0;
+  const rate =
+    entry?.status === 'running' && savedRate > 0 && now - rateAt < RATE_STALE_MS ? savedRate : null;
+  return {
+    status: typeof entry?.status === 'string' ? entry.status : null,
+    processed,
+    total,
+    skipped: numberOf(entry?.skipped) ?? 0,
+    analysisFailures: numberOf(entry?.analysisFailures) ?? 0,
+    rate,
+    estimatedFinish:
+      rate !== null && total !== null
+        ? new Date(now + (Math.max(total - processed, 0) / rate) * 1000)
+        : null,
+  };
+}
+
+/** Only reads. Works before search data is on, since a read of an absent collection is empty. */
+export async function readSearchJobStatus(
+  methods: SearchScriptMethods,
+  now: number = Date.now(),
+): Promise<SearchJobStatus> {
+  const read = (key: string) => methods.readSearchState(key, JOB_STATE_READ);
+  const chain = await read(CHAIN_KEY);
+  const running = chain != null && chain.finishedAt == null;
+  const [
+    messages,
+    conversations,
+    verification,
+    wordList,
+    reconcile,
+    stream,
+    lease,
+    requests,
+    tenants,
+  ] = await Promise.all([
+    read(BACKFILL_KEYS.messages),
+    read(BACKFILL_KEYS.conversations),
+    read(VERIFICATION_KEY),
+    read(VOCAB_KEY),
+    read(RECONCILE_KEY),
+    read(STREAM_KEY),
+    read(LEASE_KEY),
+    methods.listSearchJobRequests(),
+    running ? null : methods.readSearchSourceTenants().catch(() => null),
+  ]);
+  return {
+    chain: {
+      step: typeof chain?.step === 'string' ? chain.step : null,
+      startedAt: dateOf(chain?.startedAt),
+      finishedAt: dateOf(chain?.finishedAt),
+      failures: numberOf(chain?.failures) ?? 0,
+      lastFailureAt: dateOf(chain?.lastFailureAt),
+      lastFailureCode: typeof chain?.lastFailureCode === 'string' ? chain.lastFailureCode : null,
+    },
+    paused: messages?.pause === true,
+    collections: {
+      messages: collectionStatus(messages, now),
+      conversations: collectionStatus(conversations, now),
+    },
+    verification,
+    wordList,
+    reconcile,
+    syncSavedAt: dateOf(stream?.savedAt),
+    syncLastChangeAt: dateOf(stream?.lastEventAt),
+    gapAt: dateOf(stream?.gapAt),
+    leaseHeld: (dateOf(lease?.leaseUntil)?.getTime() ?? 0) > now,
+    pendingRequests: requests.map(({ job }) => String(job)),
+    tenants,
+  };
+}
+
+const show = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '-';
+  }
+  return value instanceof Date ? value.toISOString() : String(value);
+};
+
+export function formatSearchJobStatus(status: SearchJobStatus): string[] {
+  const { chain, collections, verification, wordList, reconcile } = status;
+  const lines = [
+    `chain step: ${chain.finishedAt ? 'finished' : show(chain.step)}`,
+    `chain started: ${show(chain.startedAt)}  finished: ${show(chain.finishedAt)}`,
+    `failed attempts: ${chain.failures}  last failure: ${show(chain.lastFailureAt)} ${show(chain.lastFailureCode)}`,
+    `paused: ${status.paused}  lease held: ${status.leaseHeld}`,
+  ];
+  for (const name of SOURCE_COLLECTIONS) {
+    const entry = collections[name];
+    lines.push(
+      `${name}: ${show(entry.status)}  processed ${entry.processed} of about ${show(entry.total)}` +
+        `  skipped ${entry.skipped}  analysis failures ${entry.analysisFailures}` +
+        `  rate ${entry.rate === null ? '-' : `${Math.round(entry.rate)}/s`}` +
+        `  estimated finish ${show(entry.estimatedFinish)}`,
+    );
+  }
+  const missingIds = Array.isArray(verification?.missingIds) ? verification.missingIds : [];
+  lines.push(
+    `word list: ${show(wordList?.status)}  phase ${show(wordList?.phase)}  walked ${show(wordList?.walked)}  last update ${show(wordList?.walkedAt)}`,
+    `sync: last saved ${show(status.syncSavedAt)}  last change ${show(status.syncLastChangeAt)}  last gap ${show(status.gapAt)}`,
+    `reconcile: ${show(reconcile?.status)}  pass ${show(reconcile?.pass)}  phase ${show(reconcile?.phase)}` +
+      `  missing ${show(reconcile?.missing)}  orphans ${show(reconcile?.orphans)}  stale ${show(reconcile?.stale)}` +
+      `  of ${show(reconcile?.of)}  repaired ${show(reconcile?.repaired)}` +
+      `  analysis failures ${show(reconcile?.analysisFailures)}  finished ${show(reconcile?.finishedAt)}`,
+    `verify: ${show(verification?.status)}${verification?.running === true ? ' (walk running)' : ''}  checked ${show(verification?.checked)}  reason ${show(verification?.reason)}` +
+      `  mismatched users ${show(verification?.mismatchedUsers)}` +
+      `  missing ${show(verification?.missing)}  orphans ${show(verification?.orphans)}` +
+      `  expired, awaiting deletion ${show(verification?.expired)}` +
+      `  analysis failures ${show(verification?.analysisFailures)}` +
+      `  other analyzer version ${show(verification?.otherVersion)}` +
+      `  failed attempts ${show(verification?.failures)}` +
+      `  round ${show(verification?.rounds)}` +
+      `  last passed ${show(verification?.passedAt)}  invalidated ${show(verification?.invalidatedAt)}`,
+    ...(missingIds.length > 0
+      ? [`sample of source IDs with no record: ${missingIds.join(', ')}`]
+      : []),
+    `pending requests: ${status.pendingRequests.join(', ') || '-'}`,
+    `distinct tenantId values: ${status.tenants === null ? 'not read' : status.tenants.join(', ') || '-'}`,
+    `next: ${nextAction(status)}`,
+  );
+  return lines;
+}
+
+/** One thing to do, so the output never leaves the operator guessing. */
+function nextAction(status: SearchJobStatus): string {
+  const { chain, paused, leaseHeld, verification, pendingRequests } = status;
+  const running = chain.step !== null && chain.finishedAt === null;
+  if (chain.step === null && pendingRequests.length === 0) {
+    return 'run backfill to start.';
+  }
+  if (paused) {
+    return 'run resume to carry on.';
+  }
+  if ((running || pendingRequests.length > 0) && !leaseHeld) {
+    return 'no process holds the lease: check the server is up and search.data is true, and look for "[search] Background start failed", "[search] Job heartbeat failed" or "[search] Language pack failed" in its logs.';
+  }
+  if (isTenantStop(status)) {
+    return 'this database holds more than one tenant, and one writer and one word list serve one: turn search.data off here. Backfill, reconcile and verify will not get past this.';
+  }
+  if (running && chain.failures > 0) {
+    return 'it retries by itself. Look for "[search] Job failed" in the server logs.';
+  }
+  if (running) {
+    return `nothing. The chain is working on ${chain.step}.`;
+  }
+  if (pendingRequests.length > 0) {
+    return 'nothing. The lease holder picks up the request on its next heartbeat.';
+  }
+  if (verification?.status === 'failed' && verification.reason === 'sync_not_started') {
+    return 'the sync writer has never saved a position, so nothing written from now on would be searchable: check that change streams are enabled on both source collections and look for "[search] Sync failed" in the server logs. The writer retries by itself, up to five minutes apart: wait until "sync: last saved" shows a time, then run verify.';
+  }
+  if (verification?.status === 'failed' && verification.reason === 'analysis_failed') {
+    return 'a language pack threw on some rows: fix the pack, then run backfill, which re-reads every row.';
+  }
+  if (verification?.status === 'failed' && verification.gaveUp !== true && status.syncSavedAt) {
+    return 'nothing yet. The mismatch loop reconciles and verifies again, up to three rounds.';
+  }
+  if (verification?.status === 'failed' && status.syncSavedAt) {
+    return 'three rounds failed: read the sample IDs, fix the cause, then run reconcile and verify.';
+  }
+  if (verification?.status === 'failed') {
+    return 'run backfill to fill the gaps, then check again. Rows a language pack threw on need a fixed pack first.';
+  }
+  if (isInvalidated(verification)) {
+    return 'the last pass was invalidated, by a rollback or by search data going off: run reconcile, then verify, before the new search serves again.';
+  }
+  return 'nothing. The chain has finished.';
+}
+
+/**
+ * A second tenant's rows were met (R-04): by the sync writer, which then withdrew the pass, or
+ * by a backfill or reconcile walk, which fails on them at every attempt.
+ */
+function isTenantStop({ chain, reconcile, verification }: SearchJobStatus): boolean {
+  const failing = (code: unknown, failures: unknown) =>
+    code === 'TenantMismatch' && typeof failures === 'number' && failures > 0;
+  if (failing(chain.lastFailureCode, chain.failures)) {
+    return true;
+  }
+  if (failing(reconcile?.lastFailureCode, reconcile?.failures)) {
+    return true;
+  }
+  const passedAt = dateOf(verification?.passedAt);
+  const invalidatedAt = dateOf(verification?.invalidatedAt);
+  return (
+    verification?.invalidatedBy === 'tenant_mismatch' &&
+    invalidatedAt !== null &&
+    (passedAt === null || passedAt.getTime() <= invalidatedAt.getTime())
+  );
+}
+
+/** A pass that `/api/search/enable` no longer accepts: not later than the last invalidation. */
+function isInvalidated(verification: Record<string, unknown> | null): boolean {
+  const passedAt = dateOf(verification?.passedAt);
+  const invalidatedAt = dateOf(verification?.invalidatedAt);
+  return (
+    verification?.status === 'passed' &&
+    invalidatedAt !== null &&
+    (passedAt === null || passedAt.getTime() <= invalidatedAt.getTime())
+  );
+}
+
+/**
+ * The whole of `config/search-job.js` past its wiring. Answers an exit code. `status` only
+ * reads. `drop` runs here, because with search data off no lease holder exists to run it. The
+ * others write one `jobRequest:<id>` for the lease holder, and never run a job here.
+ */
+export async function runSearchJobCommand({
+  argv,
+  methods,
+  print,
+  loadAppConfig,
+  now = Date.now,
+  randomId = randomUUID,
+}: {
+  argv: readonly string[];
+  methods: SearchScriptMethods;
+  print(line: string): void;
+  /** The base config as the server reads it. Called only by `drop`, so `status` stays cheap. */
+  loadAppConfig?: () => Promise<{ search?: ConversationSearchConfig }>;
+  now?: () => number;
+  randomId?: () => string;
+}): Promise<number> {
+  const [command] = argv;
+  if (command === 'status') {
+    formatSearchJobStatus(await readSearchJobStatus(methods, now())).forEach(print);
+    return 0;
+  }
+  if (command === 'drop') {
+    return runDrop({ argv, methods, print, loadAppConfig, now });
+  }
+  if (!REQUEST_COMMANDS.includes(command as (typeof REQUEST_COMMANDS)[number])) {
+    print(USAGE);
+    return 2;
+  }
+  /* Without this the write would create the collection on a tenant with search data off. */
+  if (!(await methods.searchStateExists())) {
+    print(
+      'Nothing written: the search collections do not exist. Either search.data is off, or the ' +
+        'language packs failed to load: set search.data to true, restart, and look for ' +
+        '"[search] Language pack failed" in the server logs.',
+    );
+    return 1;
+  }
+  const [chain, lease] = await Promise.all([
+    methods.readSearchState(CHAIN_KEY, JOB_STATE_READ),
+    methods.readSearchState(LEASE_KEY, JOB_STATE_READ),
+  ]);
+  if (command === 'backfill' && chain != null && chain.finishedAt == null) {
+    print(
+      `Nothing written: a chain is already at step ${show(chain.step)}. Use status to watch it.`,
+    );
+    return 0;
+  }
+  const id = randomId();
+  await requestJob(methods, id, command, now());
+  print(`Requested ${command} (${id}). The lease holder picks it up on its next heartbeat.`);
+  if ((dateOf(lease?.leaseUntil)?.getTime() ?? 0) <= now()) {
+    print('No process holds the lease right now, so this waits until one does. Check the server.');
+  }
+  return 0;
+}
+
+async function runDrop({
+  argv,
+  methods,
+  print,
+  loadAppConfig,
+  now,
+}: {
+  argv: readonly string[];
+  methods: SearchScriptMethods;
+  print(line: string): void;
+  loadAppConfig?: () => Promise<{ search?: ConversationSearchConfig }>;
+  now: () => number;
+}): Promise<number> {
+  if (!argv.includes(CONFIRM_FLAG)) {
+    print(
+      'Nothing dropped: drop removes the four search collections for good, and nothing else. ' +
+        `Run it again with ${CONFIRM_FLAG} to go ahead.`,
+    );
+    return 2;
+  }
+  if (!loadAppConfig) {
+    print('Nothing dropped: the configuration could not be read, so search.data is unknown.');
+    return 1;
+  }
+  const appConfig = await loadAppConfig();
+  /* A config that failed to load looks the same as one with no block, and both default to off. */
+  if (appConfig.search == null) {
+    print(
+      'Nothing dropped: the loaded configuration has no search block, so search.data is ' +
+        'unknown. Set search.data to false in librechat.yaml, check CONFIG_PATH, and run it again.',
+    );
+    return 1;
+  }
+  const config = createSearchConfigSnapshot(appConfig);
+  const result = await dropSearchData({ methods, config, now });
+  if (!result.ok) {
+    print(DROP_REFUSALS[result.error.code]);
+    return 1;
+  }
+  const { dropped } = result.value;
+  print(
+    dropped.length > 0
+      ? `Dropped ${dropped.join(', ')}.`
+      : 'Nothing to drop: no search collection exists.',
+  );
+  return 0;
+}

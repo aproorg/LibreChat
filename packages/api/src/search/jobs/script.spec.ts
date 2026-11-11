@@ -1,0 +1,445 @@
+import type { SearchHarness } from '../__tests__/helpers/harness';
+import {
+  createSearchHarness,
+  sourceConversation,
+  sourceMessage,
+  searchConfig,
+} from '../__tests__/helpers/harness';
+import { formatSearchJobStatus, readSearchJobStatus, runSearchJobCommand } from './script';
+import { storeSources } from './__tests__/helpers/jobs';
+import { BACKFILL_KEYS } from './control';
+
+describe('search-job script', () => {
+  let harness: SearchHarness;
+  const NOW = Date.parse('2026-06-01T12:00:00Z');
+
+  let appConfig: { search?: ReturnType<typeof searchConfig> };
+  const loadAppConfig = jest.fn(async () => appConfig);
+
+  const run = async (...argv: string[]) => {
+    const lines: string[] = [];
+    const code = await runSearchJobCommand({
+      argv,
+      methods: harness.methods,
+      print: (line) => lines.push(line),
+      loadAppConfig,
+      now: () => NOW,
+    });
+    return { code, lines };
+  };
+  const collections = async () =>
+    (await harness.database.connection.db!.listCollections().toArray()).map(({ name }) => name);
+
+  beforeAll(async () => {
+    harness = await createSearchHarness();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+  });
+
+  beforeEach(async () => {
+    await harness.reset();
+    appConfig = {};
+    loadAppConfig.mockClear();
+  });
+
+  it.each(['backfill', 'pause', 'resume', 'reconcile', 'verify'])(
+    '%s writes one request and runs nothing',
+    async (job) => {
+      const { code } = await run(job);
+
+      expect(code).toBe(0);
+      const requests = await harness.methods.listSearchJobRequests();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ job, requestedAt: new Date(NOW) });
+      expect(requests[0]._id).toMatch(/^jobRequest:/);
+      expect(await harness.methods.readSearchState('chain', { maxTimeMS: 5000 })).toBeNull();
+    },
+  );
+
+  it.each(['nonsense', undefined])('rejects %s with usage', async (job) => {
+    const { code, lines } = await run(...(job ? [job] : []));
+
+    expect(code).toBe(2);
+    expect(lines.join()).toContain('Usage');
+    expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+  });
+
+  describe('drop', () => {
+    const SEARCH_COLLECTIONS = ['csearch', 'msearch', 'search_state', 'search_vocab'];
+
+    /* What the runbook leaves behind before a drop: the block kept, with search data off. */
+    beforeEach(() => {
+      appConfig = { search: searchConfig({ data: false, backend: 'meilisearch' }) };
+    });
+
+    it('runs in the script: removes the four collections and queues no request', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kept' })]);
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(0);
+      expect(lines.join()).toContain('Dropped');
+      const names = await collections();
+      expect(names).toContain('messages');
+      expect(names.filter((name) => SEARCH_COLLECTIONS.includes(name))).toEqual([]);
+      expect(await harness.database.connection.db!.collection('messages').countDocuments()).toBe(1);
+    });
+
+    it('does nothing without --yes, and reads no config', async () => {
+      const { code, lines } = await run('drop');
+
+      expect(code).toBe(2);
+      expect(lines.join()).toContain('--yes');
+      expect(loadAppConfig).not.toHaveBeenCalled();
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses while search data is on', async () => {
+      appConfig = { search: searchConfig({ data: true }) };
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('search.data is true');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses while a process still holds the lease', async () => {
+      await harness.methods.writeSearchState('lease', { leaseUntil: new Date(NOW + 1000) });
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('holds the sync lease');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses when the loaded configuration has no search block: a failed load looks the same', async () => {
+      appConfig = {};
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('no search block');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('says so when there is nothing to drop, and creates nothing', async () => {
+      await harness.database.connection.db!.dropDatabase();
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(0);
+      expect(lines.join()).toContain('Nothing to drop');
+      expect(await collections()).toEqual([]);
+    });
+
+    it('refuses when the configuration cannot be read', async () => {
+      const lines: string[] = [];
+      const code = await runSearchJobCommand({
+        argv: ['drop', '--yes'],
+        methods: harness.methods,
+        print: (line) => lines.push(line),
+      });
+
+      expect(code).toBe(1);
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+  });
+
+  it('writes no backfill request while a chain runs, and says why', async () => {
+    await harness.methods.writeSearchState('chain', { step: 'vocab' });
+
+    const { code, lines } = await run('backfill');
+
+    expect(code).toBe(0);
+    expect(lines.join()).toContain('already at step vocab');
+    expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+  });
+
+  it('warns when a request waits with no holder, and not when one holds', async () => {
+    expect((await run('verify')).lines.join()).toContain('No process holds the lease');
+
+    await harness.methods.writeSearchState('lease', { leaseUntil: new Date(NOW + 1000) });
+
+    expect((await run('verify')).lines.join()).not.toContain('No process holds the lease');
+  });
+
+  it('refuses a request where search data was never on, and creates no collection', async () => {
+    const db = harness.database.connection.db!;
+    await db.dropDatabase();
+
+    const { code } = await run('backfill');
+
+    expect(code).toBe(1);
+    const names = (await db.listCollections().toArray()).map(({ name }) => name);
+    expect(names).not.toContain('search_state');
+  });
+
+  describe('status', () => {
+    it('only reads', async () => {
+      const db = harness.database.connection.db!;
+      await db.dropDatabase();
+
+      const { code } = await run('status');
+
+      expect(code).toBe(0);
+      expect((await db.listCollections().toArray()).map(({ name }) => name)).not.toContain(
+        'search_state',
+      );
+    });
+
+    it('shows step, processed, total, rate, estimated finish and the verify result', async () => {
+      await harness.methods.writeSearchState('chain', {
+        step: 'backfill',
+        startedAt: new Date(NOW - 1000),
+      });
+      await harness.methods.writeSearchState(BACKFILL_KEYS.messages, {
+        status: 'running',
+        processed: 1000,
+        total: 3000,
+        skipped: 2,
+        rate: 100,
+        rateAt: new Date(NOW - 1000),
+      });
+      await harness.methods.writeSearchState(BACKFILL_KEYS.conversations, {
+        status: 'finished',
+        processed: 7,
+        total: 7,
+      });
+      await harness.methods.writeSearchState('verification', {
+        status: 'failed',
+        reason: 'mismatch',
+        mismatchedUsers: 2,
+        missing: 3,
+      });
+
+      const status = await readSearchJobStatus(harness.methods, NOW);
+
+      expect(status.chain.step).toBe('backfill');
+      expect(status.collections.messages).toEqual({
+        status: 'running',
+        processed: 1000,
+        total: 3000,
+        skipped: 2,
+        analysisFailures: 0,
+        rate: 100,
+        estimatedFinish: new Date(NOW + 20_000),
+      });
+      expect(status.collections.conversations).toMatchObject({
+        processed: 7,
+        rate: null,
+        estimatedFinish: null,
+      });
+      const text = formatSearchJobStatus(status).join('\n');
+      expect(text).toContain('chain step: backfill');
+      expect(text).toContain('messages: running  processed 1000 of about 3000');
+      expect(text).toContain('rate 100/s');
+      expect(text).toContain(new Date(NOW + 20_000).toISOString());
+      expect(text).toContain(
+        'verify: failed  checked -  reason mismatch  mismatched users 2  missing 3',
+      );
+    });
+
+    it('still reports progress when the tenant read fails', async () => {
+      await harness.methods.writeSearchState('chain', {
+        step: 'verify',
+        failures: 3,
+        finishedAt: new Date(NOW),
+      });
+      const methods = {
+        ...harness.methods,
+        readSearchSourceTenants: () => Promise.reject(new Error('timed out')),
+      };
+
+      const status = await readSearchJobStatus(methods, NOW);
+
+      expect(status.tenants).toBeNull();
+      expect(status.chain).toMatchObject({ step: 'verify', failures: 3 });
+      const text = formatSearchJobStatus(status).join('\n');
+      expect(text).toContain('distinct tenantId values: not read');
+      expect(text).toContain('failed attempts: 3');
+    });
+
+    it.each([
+      ['no chain', {}, 'next: run backfill'],
+      [
+        'a request and no holder',
+        { 'jobRequest:a': { job: 'backfill' } },
+        'no process holds the lease',
+      ],
+      [
+        'a request and a holder',
+        { 'jobRequest:a': { job: 'backfill' }, lease: { leaseUntil: new Date(NOW + 1000) } },
+        'picks up the request',
+      ],
+      [
+        'paused',
+        { chain: { step: 'backfill' }, 'backfill:messages': { pause: true } },
+        'next: run resume',
+      ],
+      ['no holder', { chain: { step: 'vocab' } }, 'no process holds the lease'],
+      [
+        'retrying',
+        {
+          chain: { step: 'vocab', failures: 2 },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        '[search] Job failed',
+      ],
+      [
+        'failed verify',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'failed',
+            reason: 'mismatch',
+            missing: 1,
+            missingIds: ['abc123'],
+          },
+        },
+        'run backfill to fill the gaps',
+      ],
+      [
+        'a pass invalidated by a rollback',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW - 1000),
+            invalidatedAt: new Date(NOW),
+          },
+        },
+        'run reconcile, then verify',
+      ],
+      [
+        'a backfill that met a second tenant',
+        {
+          chain: { step: 'backfill', failures: 2, lastFailureCode: 'TenantMismatch' },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        'holds more than one tenant',
+      ],
+      [
+        'a chain that got past an earlier failure of that kind',
+        {
+          chain: { step: 'vocab', failures: 0, lastFailureCode: 'TenantMismatch' },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        'The chain is working on vocab',
+      ],
+      [
+        'a reconcile that met a second tenant',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          reconcile: { status: 'running', failures: 1, lastFailureCode: 'TenantMismatch' },
+        },
+        'holds more than one tenant',
+      ],
+      [
+        'a sync writer stopped by a second tenant',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW - 1000),
+            invalidatedAt: new Date(NOW),
+            invalidatedBy: 'tenant_mismatch',
+          },
+        },
+        'Backfill, reconcile and verify will not get past this',
+      ],
+      [
+        'a sync writer that never saved a position',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: { status: 'failed', reason: 'sync_not_started' },
+        },
+        'wait until "sync: last saved" shows a time, then run verify',
+      ],
+      [
+        'a pass later than its invalidation',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW),
+            invalidatedAt: new Date(NOW - 1000),
+          },
+        },
+        'nothing. The chain has finished.',
+      ],
+    ])('names the next action: %s', async (_name, state, expected) => {
+      for (const [key, fields] of Object.entries(state)) {
+        await harness.methods.writeSearchState(key, fields as Record<string, unknown>);
+      }
+
+      const { lines } = await run('status');
+
+      expect(lines[lines.length - 1]).toContain(expected);
+    });
+
+    it('prints the failure code and the sample of missing IDs', async () => {
+      await harness.methods.writeSearchState('chain', {
+        step: 'verify',
+        failures: 1,
+        lastFailureCode: 'MongoServerError:13',
+      });
+      await harness.methods.writeSearchState('verification', {
+        status: 'failed',
+        missingIds: ['abc123'],
+      });
+
+      const text = (await run('status')).lines.join('\n');
+
+      expect(text).toContain('MongoServerError:13');
+      expect(text).toContain('abc123');
+    });
+
+    it('does not walk the sources for tenants while a chain is running', async () => {
+      await harness.methods.writeSearchState('chain', { step: 'backfill' });
+      const readTenants = jest.fn(harness.methods.readSearchSourceTenants);
+
+      const status = await readSearchJobStatus(
+        { ...harness.methods, readSearchSourceTenants: readTenants },
+        NOW,
+      );
+
+      expect(readTenants).not.toHaveBeenCalled();
+      expect(status.tenants).toBeNull();
+    });
+
+    it('gives no rate from a process that stopped reporting', async () => {
+      await harness.methods.writeSearchState(BACKFILL_KEYS.messages, {
+        status: 'running',
+        processed: 1,
+        total: 2,
+        rate: 100,
+        rateAt: new Date(NOW - 10 * 60_000),
+      });
+
+      const { collections } = await readSearchJobStatus(harness.methods, NOW);
+
+      expect(collections.messages).toMatchObject({ rate: null, estimatedFinish: null });
+    });
+
+    it('reports distinct tenant values, and whether a request waits', async () => {
+      await storeSources(harness, 'messages', [
+        sourceMessage({ text: 'a', tenantId: 'tenant-one' }),
+        sourceMessage({ text: 'b', tenantId: 'tenant-two' }),
+        sourceMessage({ text: 'c' }),
+      ]);
+      await storeSources(harness, 'conversations', [
+        sourceConversation({ tenantId: 'tenant-one' }),
+      ]);
+      await run('pause');
+
+      const status = await readSearchJobStatus(harness.methods, NOW);
+
+      expect(status.tenants?.sort()).toEqual(['tenant-one', 'tenant-two']);
+      expect(status.pendingRequests).toEqual(['pause']);
+    });
+  });
+});

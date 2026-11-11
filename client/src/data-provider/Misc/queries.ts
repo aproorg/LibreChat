@@ -1,7 +1,8 @@
 import { useRecoilValue } from 'recoil';
-import { QueryKeys, dataService } from 'librechat-data-provider';
 import { useQuery } from '@tanstack/react-query';
+import { QueryKeys, dataService } from 'librechat-data-provider';
 import type { QueryObserverResult, UseQueryOptions } from '@tanstack/react-query';
+import type { SearchMeta } from 'librechat-data-provider';
 import type t from 'librechat-data-provider';
 import store from '~/store';
 
@@ -36,6 +37,20 @@ export const useGetSearchEnabledQuery = (
 ): QueryObserverResult<boolean> => {
   const queriesEnabled = useRecoilValue<boolean>(store.queriesEnabled);
   return useQuery<boolean>([QueryKeys.searchEnabled], () => dataService.getSearchEnabled(), {
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    ...config,
+    enabled: (config?.enabled ?? true) === true && queriesEnabled,
+  });
+};
+
+/** Search attribution for the About tab. An empty object with the default configuration. */
+export const useGetSearchMetaQuery = (
+  config?: UseQueryOptions<SearchMeta>,
+): QueryObserverResult<SearchMeta> => {
+  const queriesEnabled = useRecoilValue<boolean>(store.queriesEnabled);
+  return useQuery<SearchMeta>([QueryKeys.searchMeta], () => dataService.getSearchMeta(), {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,

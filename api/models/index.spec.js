@@ -79,3 +79,17 @@ describe('channel storage configuration dependency wiring', () => {
     expect(channelStorageConfigReader.getConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('search port binding', () => {
+  it('hands createMethods a getter that answers null until the port is set', () => {
+    const { getSearchPort } = dependencies;
+    expect(getSearchPort()).toBeNull();
+
+    const port = { conversationMatches: jest.fn(), titleMatches: jest.fn() };
+    models.setSearchPort(port);
+    expect(getSearchPort()).toBe(port);
+
+    models.setSearchPort(null);
+    expect(getSearchPort()).toBeNull();
+  });
+});

@@ -146,6 +146,8 @@ export * from './rum/policy';
 export * from './rum/config';
 export * from './rum/limiter';
 export * from './clientlimits/client';
+/* Search */
+export * from './search';
 /* OpenAPI */
 export { createOpenApiRouter } from './openapi/router';
 export type { OpenApiRouterDeps } from './openapi/router';

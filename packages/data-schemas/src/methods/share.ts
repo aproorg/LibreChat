@@ -9,11 +9,13 @@ import {
 } from 'librechat-data-provider';
 import type { FilterQuery, Model } from 'mongoose';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+import type { SearchContext, SearchPort } from '~/types/search';
 import type * as t from '~/types';
 import {
   sanitizeUIResourceContent,
   stripMessageUIResourceMarkers,
 } from '~/utils/stripUIResourceMarkers';
+import { isSearchError, SearchError } from '~/utils/searchError';
 import { activeExpirationFilter } from '~/utils/retention';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { MEILI_SEARCH_LIMIT } from '~/common/search';
@@ -908,8 +910,16 @@ export interface SharedLinkAccessRecord {
   expiredAt?: Date;
 }
 
+export interface ShareMethodDeps {
+  /** The search service's port, or `null` until the server has bound it after config loads. */
+  getSearchPort?: () => SearchPort | null;
+}
+
 /** Factory function that takes mongoose instance and returns the methods */
-export function createShareMethods(mongoose: typeof import('mongoose')): {
+export function createShareMethods(
+  mongoose: typeof import('mongoose'),
+  deps: ShareMethodDeps = {},
+): {
   findShareConversationRetention: (
     user: string,
     conversationId: string,
@@ -927,6 +937,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
     sortBy?: string,
     sortDirection?: string,
     search?: string,
+    searchContext?: SearchContext,
   ) => Promise<t.SharedLinksResult>;
   createSharedLink: (
     user: string,
@@ -1192,6 +1203,7 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
     sortBy: string = 'createdAt',
     sortDirection: string = 'desc',
     search?: string,
+    searchContext?: SearchContext,
   ): Promise<t.SharedLinksResult> {
     try {
       const SharedLink = mongoose.models.SharedLink as Model<t.ISharedLink>;
@@ -1220,23 +1232,48 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
 
       if (search && search.trim()) {
         try {
-          const searchResults = await Conversation.meiliSearch(search, {
-            filter: `user = "${user}"`,
-            limit: MEILI_SEARCH_LIMIT,
-            attributesToRetrieve: ['conversationId'],
-          });
+          /* `null` from the port means Meilisearch serves, and today's code below runs unchanged. */
+          const portMatches = searchContext
+            ? await Promise.resolve(
+                (deps.getSearchPort?.() ?? null)?.titleMatches(searchContext, search),
+              ).catch((portError: unknown) => {
+                /* Whatever the port throws is a failed search, never an empty result. */
+                throw isSearchError(portError) ? portError : new SearchError('search_failed');
+              })
+            : null;
+          if (portMatches) {
+            if (!portMatches.conversationIds.length) {
+              return {
+                links: [],
+                nextCursor: undefined,
+                hasNextPage: false,
+                ...(portMatches.reason ? { reason: portMatches.reason } : {}),
+              };
+            }
+            query['conversationId'] = { $in: portMatches.conversationIds };
+          } else {
+            const searchResults = await Conversation.meiliSearch(search, {
+              filter: `user = "${user}"`,
+              limit: MEILI_SEARCH_LIMIT,
+              attributesToRetrieve: ['conversationId'],
+            });
 
-          if (!searchResults?.hits?.length) {
-            return {
-              links: [],
-              nextCursor: undefined,
-              hasNextPage: false,
-            };
+            if (!searchResults?.hits?.length) {
+              return {
+                links: [],
+                nextCursor: undefined,
+                hasNextPage: false,
+              };
+            }
+
+            const conversationIds = searchResults.hits.map((hit) => hit.conversationId);
+            query['conversationId'] = { $in: conversationIds };
           }
-
-          const conversationIds = searchResults.hits.map((hit) => hit.conversationId);
-          query['conversationId'] = { $in: conversationIds };
         } catch (searchError) {
+          /* A coded search failure must reach the route, or an outage reads as no results (FR-018). */
+          if (isSearchError(searchError)) {
+            throw searchError;
+          }
           logger.error('[getSharedLinks] Meilisearch error', {
             error: searchError instanceof Error ? searchError.message : 'Unknown error',
             user,
@@ -1277,6 +1314,9 @@ export function createShareMethods(mongoose: typeof import('mongoose')): {
         hasNextPage,
       };
     } catch (error) {
+      if (isSearchError(error)) {
+        throw error;
+      }
       logger.error('[getSharedLinks] Error getting shares', {
         error: error instanceof Error ? error.message : 'Unknown error',
         user,

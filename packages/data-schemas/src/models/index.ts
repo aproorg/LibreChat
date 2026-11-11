@@ -12,6 +12,7 @@ import { createSkillSyncCredentialModel } from './skillSyncCredential';
 import { createOpenIDRefreshFlightModel } from './openidRefreshFlight';
 import { createAgentTriggerUserPurgeModel } from './triggerUserPurge';
 import { createRefreshTokenBridgeModel } from './refreshTokenBridge';
+import { createConversationSearchModel } from './conversationSearch';
 import { createAgentTriggerDeliveryModel } from './triggerDelivery';
 import { createToolApprovalGrantModel } from './toolApprovalGrant';
 import { createSkillUploadIntentModel } from './skillUploadIntent';
@@ -21,6 +22,7 @@ import { createSkillSyncStatusModel } from './skillSyncStatus';
 import { createConversationTagModel } from './conversationTag';
 import { createCodeEnvironmentModel } from './codeEnvironment';
 import { createSkillDeletionModel } from './skillDeletion';
+import { createMessageSearchModel } from './messageSearch';
 import { createAgentCategoryModel } from './agentCategory';
 import { createResponseScopeModel } from './responseScope';
 import { createChannelScopeModel } from './channelScope';
@@ -31,6 +33,8 @@ import { createAgentApiKeyModel } from './agentApiKey';
 import { createTransactionModel } from './transaction';
 import { createPromptGroupModel } from './promptGroup';
 import { createSystemGrantModel } from './systemGrant';
+import { createSearchVocabModel } from './searchVocab';
+import { createSearchStateModel } from './searchState';
 import { createPluginAuthModel } from './pluginAuth';
 import { createSharedLinkModel } from './sharedLink';
 import { createAccessRoleModel } from './accessRole';
@@ -132,6 +136,10 @@ export function createModels(mongoose: typeof import('mongoose')): {
   RefreshTokenBridge: ReturnType<typeof createRefreshTokenBridgeModel>;
   OpenIDRefreshFlight: ReturnType<typeof createOpenIDRefreshFlightModel>;
   ResourceLock: ReturnType<typeof createResourceLockModel>;
+  MessageSearch: ReturnType<typeof createMessageSearchModel>;
+  ConversationSearch: ReturnType<typeof createConversationSearchModel>;
+  SearchVocab: ReturnType<typeof createSearchVocabModel>;
+  SearchState: ReturnType<typeof createSearchStateModel>;
 } {
   const models = {
     User: createUserModel(mongoose),
@@ -198,6 +206,10 @@ export function createModels(mongoose: typeof import('mongoose')): {
     RefreshTokenBridge: createRefreshTokenBridgeModel(mongoose),
     OpenIDRefreshFlight: createOpenIDRefreshFlightModel(mongoose),
     ResourceLock: createResourceLockModel(mongoose),
+    MessageSearch: createMessageSearchModel(mongoose),
+    ConversationSearch: createConversationSearchModel(mongoose),
+    SearchVocab: createSearchVocabModel(mongoose),
+    SearchState: createSearchStateModel(mongoose),
   };
   /**
    * Background index builds fail silently unless an 'index' listener is

@@ -18,6 +18,7 @@ export enum QueryKeys {
   searchConversations = 'searchConversations',
   conversation = 'conversation',
   searchEnabled = 'searchEnabled',
+  searchMeta = 'searchMeta',
   langfuseConnection = 'langfuseConnection',
   langfuseSessionLink = 'langfuseSessionLink',
   langfusePrompts = 'langfusePrompts',
