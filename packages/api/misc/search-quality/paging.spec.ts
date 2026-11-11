@@ -30,6 +30,8 @@ const quiet = { info: () => undefined, warn: () => undefined };
 
 interface Paged {
   ids: string[];
+  /** In served order, to compare with the ranked read, which answers in message IDs. */
+  messageIds: string[];
   pages: number;
   anchor: number;
   /** The plan as the last page left it, with any expansion the walk froze. */
@@ -93,6 +95,7 @@ describe('load-more on the padded corpus', () => {
       { user: condition.user, run, methods: reads(), analyzer },
     );
     const ids = hits.map(({ _id }) => _id);
+    const messageIds = hits.map(({ messageId }) => messageId);
     let plan = read.plan;
     let pages = 1;
     await between?.();
@@ -111,11 +114,12 @@ describe('load-more on the padded corpus', () => {
         methods,
       });
       ids.push(...walked.rows.map(({ _id }) => _id));
+      messageIds.push(...walked.rows.map(({ messageId }) => messageId));
       plan = walked.cursor?.plan ?? plan;
       cursor = walked.cursor;
       pages += 1;
     }
-    return { ids, pages, anchor: read.startedAt, plan };
+    return { ids, messageIds, pages, anchor: read.startedAt, plan };
   };
 
   /** Every record the first word reaches at any tier: the union over word sets (R-07). */
@@ -184,7 +188,7 @@ describe('load-more on the padded corpus', () => {
         continue;
       }
       const ranked = await rankedMessageIds(reads(), analyzer, condition.user, query, RANK_WINDOW);
-      const firstPages = new Set(paged.ids.slice(0, RANK_WINDOW));
+      const firstPages = new Set(paged.messageIds.slice(0, RANK_WINDOW));
       rows.push({
         query,
         words,
