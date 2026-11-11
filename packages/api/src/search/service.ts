@@ -27,12 +27,11 @@ import {
   sharedReadSize,
 } from './read/window';
 import { createReadGate, createReadRunner } from './read/retry';
+import { createSearchLimiter, userShare } from './read/limiter';
 import { computeAnalyzerVersion } from './analyzer/version';
 import { isSearchDataOn, isSearchServing } from './config';
 import { resolveSearchPacks } from './languages/registry';
 import { createSearchCursorCodec } from './read/cursor';
-import { getSafeErrorMetadata } from '~/utils/errors';
-import { createSearchLimiter } from './read/limiter';
 import { createAnalyzer } from './analyzer/analyze';
 import { firstCursor, walkPage } from './read/page';
 import { SearchPackError } from './languages/pack';
@@ -41,13 +40,24 @@ import { analyzeQuery } from './analyzer/query';
 import { readSearchPlan } from './read/plan';
 import { expandPrefix } from './read/tiers';
 import { expandTypos } from './read/typo';
+import { safeFailure } from './failure';
 
 /** Expansions are a few hundred short tokens; this bounds how many queries' worth are kept. */
 const SHARED_EXPANSION_BYTES = 4 * 1024 * 1024;
 const ESTIMATED_TOKEN_BYTES = 64;
+/** Title reads a process runs at once, as a multiple of `maxConcurrentSearches`. */
+const TITLE_GATE_FACTOR = 4;
+/** A word with no expansion still holds a key and an entry, so it counts against the budget. */
+const ESTIMATED_ENTRY_BYTES = 256;
 
 /** `coldAfterIdle` means the first search after this long with none (`contracts/telemetry.md`). */
 const COLD_AFTER_IDLE_MS = 30 * 60 * 1000;
+/**
+ * One search fires `/search` and the sidebar together, and both wait on the same cold read.
+ * A request starting this soon after a cold one is cold too, or the second surface would
+ * log the cold read's time as warm.
+ */
+const COLD_SPAN_MS = 5_000;
 
 export type SearchPackState = 'loading' | 'loaded' | 'failed';
 
@@ -121,6 +131,7 @@ export interface SearchService extends SearchPort {
   requestRunner(ctx: SearchContext, surface: SearchSurface): SearchReadRunner;
   /** A sidebar search's figures, for its `search.request`. */
   readStats(ctx: SearchContext): SearchReadStats;
+  /** Call once, when the request starts: the answer depends on when the last one started. */
   noteRequest(user: string): SearchRequestNotes;
 }
 
@@ -131,6 +142,17 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
   const { resolvePacks = resolveSearchPacks } = deps;
   const limiter = createSearchLimiter({
     maxConcurrent: config.maxConcurrentSearches,
+    maxPerUser: userShare(config.maxConcurrentSearches),
+    timeoutMs: config.searchTimeoutMs,
+  });
+  /*
+   * Title reads stay outside the serving cap, so the sidebar still answers while message
+   * search is busy (FR-017). They get a gate of their own, sized from the same setting: one
+   * user's parallel requests could otherwise each open several word list reads at once.
+   */
+  const titleLimiter = createSearchLimiter({
+    maxConcurrent: config.maxConcurrentSearches * TITLE_GATE_FACTOR,
+    maxPerUser: config.maxConcurrentSearches,
     timeoutMs: config.searchTimeoutMs,
   });
   const sharedRead = createSharedRead<PlanRead>({
@@ -142,19 +164,20 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
   const sharedExpansions = createSharedRead<Expansion>({
     ttlMs: SHARED_READ_TTL_MS,
     maxBytes: SHARED_EXPANSION_BYTES,
-    sizeOf: ({ tokens }) => tokens.length * ESTIMATED_TOKEN_BYTES,
+    sizeOf: ({ tokens }) => ESTIMATED_ENTRY_BYTES + tokens.length * ESTIMATED_TOKEN_BYTES,
     now,
   });
   const size = sharedReadSize(config);
   const cursors = createSearchCursorCodec(deps.cursorSecret);
-  /** A multi-word page reads tokens and text to rank, once per shared read. */
-  const rankedPages = new WeakMap<PlanRead, DerivedHits>();
+  /** A multi-word page reads tokens and text to rank, once per shared read, in flight or done. */
+  const rankedPages = new WeakMap<PlanRead, Promise<DerivedHits>>();
 
   let state: SearchPackState = 'loading';
   let analyzer: Analyzer | null = null;
   let analyzerVersion = '';
   let loadedPacks: ReadonlyArray<Pick<LanguagePack, 'id' | 'attribution'>> = [];
   let lastRequestAt: number | null = null;
+  let coldSince: number | null = null;
   const gates = new WeakMap<SearchContext, ReadGate>();
   const sidebarStats = new WeakMap<SearchContext, SearchReadStats>();
 
@@ -207,7 +230,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       state = 'loaded';
     } catch (error) {
       state = 'failed';
-      logger.warn('[search] Language packs failed to load', getSafeErrorMetadata(error));
+      logger.warn('[search] Language packs failed to load', safeFailure(error));
     }
   }
 
@@ -230,7 +253,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
         realtext: metrics.realtext,
       });
     } catch (error) {
-      logger.warn('[search] Query analysis failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Query analysis failed', safeFailure(error));
       throw new SearchError('search_failed');
     }
   };
@@ -260,16 +283,22 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     });
 
   /**
-   * A word's prefix or typo expansion, read once for the title and message reads of a
-   * search and for both surfaces that fire it. The first caller's runner makes the read.
+   * A word's prefix or typo expansion, read once for the title and message reads of one
+   * user's search and for both surfaces that fire it. The first caller's runner makes the read.
    */
-  const expansionsFor = (signal: AbortSignal, run: SearchReadRunner): PlanExpansions => {
+  const expansionsFor = (
+    user: string,
+    signal: AbortSignal,
+    run: SearchReadRunner,
+  ): PlanExpansions => {
     const shared = async (
       kind: 'prefix' | 'typo',
       exact: string,
       read: () => Promise<Expansion>,
     ) => {
-      const key = JSON.stringify([getTenantId() ?? '', kind, exact]);
+      /* Per user, like every shared read (FR-015): across users, a skipped read would tell
+       * one of them that someone else had just searched the same word. */
+      const key = JSON.stringify([getTenantId() ?? '', user, kind, exact]);
       try {
         return await sharedExpansions.get(key, signal, read);
       } catch (error) {
@@ -304,29 +333,33 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       ctx.signal,
       (signal) => {
         started = true;
-        return limiter.run(signal, (scope) => {
-          const run = createReadRunner({
-            surface,
-            signal: scope.signal,
-            deadline: scope.deadline,
-            gate: gateFor(ctx),
-            metrics,
-            logger,
-          });
-          return readSearchPlan({
-            user: ctx.user,
-            words,
-            ...size,
-            readConcurrency: config.readConcurrency,
-            methods,
-            run,
-            prefix: config.prefix,
-            typo: config.typo,
-            expansions: expansionsFor(scope.signal, run),
-            realtext: metrics.realtext,
-            now,
-          });
-        });
+        return limiter.run(
+          signal,
+          (scope) => {
+            const run = createReadRunner({
+              surface,
+              signal: scope.signal,
+              deadline: scope.deadline,
+              gate: gateFor(ctx),
+              metrics,
+              logger,
+            });
+            return readSearchPlan({
+              user: ctx.user,
+              words,
+              ...size,
+              readConcurrency: config.readConcurrency,
+              methods,
+              run,
+              prefix: config.prefix,
+              typo: config.typo,
+              expansions: expansionsFor(ctx.user, scope.signal, run),
+              realtext: metrics.realtext,
+              now,
+            });
+          },
+          ctx.user,
+        );
       },
     );
     return { read, reads: started ? read.reads : 0, rows: started ? read.rows : 0 };
@@ -339,22 +372,69 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       lengthBucket: config.rank.lengthBucket,
     });
 
-  const firstPage = async (ctx: SearchContext, read: PlanRead): Promise<DerivedHits> => {
-    const ranked = rankedPages.get(read);
-    if (ranked) {
-      return ranked;
+  const rank = async (ctx: SearchContext, read: PlanRead): Promise<DerivedHits> => {
+    const options = {
+      limit: SEARCH_PAGE_SIZE,
+      rankWindow: config.rankWindow,
+      lengthBucket: config.rank.lengthBucket,
+    };
+    const analyzer_ = readyAnalyzer();
+    const until = ctx.startedAt + config.searchTimeoutMs;
+    const reads = (signal: AbortSignal, deadline: number) => ({
+      user: ctx.user,
+      run: createReadRunner({
+        surface: 'messages',
+        signal,
+        deadline,
+        gate: gateFor(ctx),
+        metrics,
+        logger,
+      }),
+      methods,
+      analyzer: analyzer_,
+      signal,
+      deadline,
+    });
+    if (read.plan.words.length < 2) {
+      /* One word ranks from the rows already read: no read, so no slot. */
+      return derivePage(read, options, reads(ctx.signal, until));
     }
-    const page = await derivePage(
-      read,
-      {
-        limit: SEARCH_PAGE_SIZE,
-        rankWindow: config.rankWindow,
-        lengthBucket: config.rank.lengthBucket,
-      },
-      { user: ctx.user, run: requestRunner(ctx, 'messages'), methods, analyzer: readyAnalyzer() },
+    /*
+     * Several words read every candidate's tokens and the text of the top ones, which is the
+     * costly part of such a search. So it holds a slot of the cap, as the plan read did.
+     */
+    return limiter.run(
+      ctx.signal,
+      (scope) => derivePage(read, options, reads(scope.signal, Math.min(scope.deadline, until))),
+      ctx.user,
     );
-    rankedPages.set(read, page);
-    return page;
+  };
+
+  /** Kept from the moment it starts, so identical requests in flight share one ranking. */
+  const startRanking = (ctx: SearchContext, read: PlanRead): Promise<DerivedHits> => {
+    const ranking = rank(ctx, read);
+    rankedPages.set(read, ranking);
+    ranking.catch(() => {
+      if (rankedPages.get(read) === ranking) {
+        rankedPages.delete(read);
+      }
+    });
+    return ranking;
+  };
+
+  const firstPage = async (ctx: SearchContext, read: PlanRead): Promise<DerivedHits> => {
+    const joined = rankedPages.get(read);
+    if (joined) {
+      try {
+        return await joined;
+      } catch (error) {
+        /* The search that started this ranking left or ran out of time. This one is still waiting. */
+        if (ctx.signal.aborted || !isSearchError(error) || error.code !== 'search_busy') {
+          throw error;
+        }
+      }
+    }
+    return rankedPages.get(read) ?? startRanking(ctx, read);
   };
 
   /** Load-more reads directly: its position is its own, so there is nothing to share (R-08). */
@@ -366,28 +446,32 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     readyAnalyzer();
     const scope = { user: ctx.user, query };
     const cursor = cursors.decode(cursorText, scope);
-    const walked = await limiter.run(ctx.signal, (limited) => {
-      const run = createReadRunner({
-        surface: 'messages',
-        signal: limited.signal,
-        deadline: limited.deadline,
-        gate: gateFor(ctx),
-        metrics,
-        logger,
-      });
-      return walkPage({
-        user: ctx.user,
-        cursor,
-        pageSize: SEARCH_PAGE_SIZE,
-        rankWindow: config.rankWindow,
-        lengthBucket: config.rank.lengthBucket,
-        prefix: config.prefix,
-        run,
-        methods,
-        expansions: expansionsFor(limited.signal, run),
-        realtext: metrics.realtext,
-      });
-    });
+    const walked = await limiter.run(
+      ctx.signal,
+      (limited) => {
+        const run = createReadRunner({
+          surface: 'messages',
+          signal: limited.signal,
+          deadline: limited.deadline,
+          gate: gateFor(ctx),
+          metrics,
+          logger,
+        });
+        return walkPage({
+          user: ctx.user,
+          cursor,
+          pageSize: SEARCH_PAGE_SIZE,
+          rankWindow: config.rankWindow,
+          lengthBucket: config.rank.lengthBucket,
+          prefix: config.prefix,
+          run,
+          methods,
+          expansions: expansionsFor(ctx.user, limited.signal, run),
+          realtext: metrics.realtext,
+        });
+      },
+      ctx.user,
+    );
     return {
       hits: walked.rows.map(({ messageId, conversationId }) => ({ messageId, conversationId })),
       nextCursor: walked.cursor ? cursors.encode(walked.cursor, scope) : null,
@@ -403,13 +487,18 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
 
   const titles = (ctx: SearchContext, analyzed: AnalyzedQuery, surface: SearchSurface) => {
     const run = requestRunner(ctx, surface);
-    return readTitleMatches({
-      user: ctx.user,
-      words: analyzed.words,
-      run,
-      methods,
-      expansions: expansionsFor(ctx.signal, run),
-    });
+    return titleLimiter.run(
+      ctx.signal,
+      () =>
+        readTitleMatches({
+          user: ctx.user,
+          words: analyzed.words,
+          run,
+          methods,
+          expansions: expansionsFor(ctx.user, ctx.signal, run),
+        }),
+      ctx.user,
+    );
   };
 
   async function searchMessages(
@@ -516,7 +605,10 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     readStats: (ctx) => sidebarStats.get(ctx) ?? {},
     noteRequest(user) {
       const at = now();
-      const coldAfterIdle = lastRequestAt === null || at - lastRequestAt >= COLD_AFTER_IDLE_MS;
+      if (lastRequestAt === null || at - lastRequestAt >= COLD_AFTER_IDLE_MS) {
+        coldSince = at;
+      }
+      const coldAfterIdle = coldSince !== null && at - coldSince < COLD_SPAN_MS;
       lastRequestAt = at;
       const { largestUserId } = config;
       return { coldAfterIdle, isLargestUser: largestUserId !== '' && user === largestUserId };

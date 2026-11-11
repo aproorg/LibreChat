@@ -1,8 +1,17 @@
 import type { SearchMethods } from '@librechat/data-schemas';
 import { JOB_STATE_READ, VOCAB_KEY } from '../jobs/control';
-import { getSafeErrorMetadata } from '~/utils/errors';
+import { safeFailure } from '../failure';
 
 export type VocabCounterMethods = Pick<SearchMethods, 'readSearchState' | 'incrementSearchVocab'>;
+
+/**
+ * Distinct tokens held before a flush is due, whatever the timer says. An import of unique
+ * words would otherwise grow the map without limit, on a process that also serves chat. The
+ * word list rebuild bounds its own map at the same size.
+ */
+export const MAX_PENDING_TOKENS = 50_000;
+/** Tokens per write, so a full map is not one bulk operation. */
+const WRITE_CHUNK = 10_000;
 
 /** The word list's counts from the sync writer, held in memory between flushes (R-10). */
 export interface VocabCounter {
@@ -10,6 +19,11 @@ export interface VocabCounter {
   add(tokens: readonly string[]): void;
   /** Writes what is held, if this process still holds the lease. Never rejects. */
   flush(): Promise<void>;
+  /**
+   * Flushes once the held tokens have reached their bound. The writer awaits it between
+   * records, so new tokens cannot arrive faster than they are written. Never rejects.
+   */
+  settle(): Promise<void>;
   /** Flushes every `vocabFlushSeconds`. Its timer never keeps the process alive. */
   start(): void;
   /** Stops the timer and flushes once more. */
@@ -49,16 +63,24 @@ export function createVocabCounter({
       /* A writer that lost its turn may have lost its records too: the next rebuild counts them. */
       return;
     }
+    const entries = [...held];
+    let written = 0;
     try {
       const rebuild = await methods.readSearchState(VOCAB_KEY, JOB_STATE_READ);
       const run =
         rebuild?.status === 'running' && typeof rebuild.run === 'number' ? rebuild.run : null;
-      await methods.incrementSearchVocab({ counts: [...held], run });
+      for (; written < entries.length; written += WRITE_CHUNK) {
+        await methods.incrementSearchVocab({
+          counts: entries.slice(written, written + WRITE_CHUNK),
+          run,
+        });
+      }
     } catch (error) {
-      for (const [token, count] of held) {
+      /* Only what was not written goes back, or a retry would count it twice. */
+      for (const [token, count] of entries.slice(written)) {
         counts.set(token, (counts.get(token) ?? 0) + count);
       }
-      logger.warn('[search] Word list flush failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Word list flush failed', safeFailure(error));
     }
   }
 
@@ -78,6 +100,13 @@ export function createVocabCounter({
       }
     },
     flush,
+    async settle() {
+      if (counts.size >= MAX_PENDING_TOKENS) {
+        /* The flush in flight holds an older map, so this one's turn comes after it. */
+        await flushing;
+        await flush();
+      }
+    },
     start() {
       if (timer) {
         return;

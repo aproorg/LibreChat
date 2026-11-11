@@ -11,11 +11,17 @@ import {
   waitFor,
 } from './__tests__/helpers/sync';
 import {
+  recordCount,
+  stateOf,
+  storeSources,
+  withMethods,
+  writerSaved,
+} from '../jobs/__tests__/helpers/jobs';
+import {
   createSearchHarness,
   sourceConversation,
   sourceMessage,
 } from '../__tests__/helpers/harness';
-import { recordCount, stateOf, storeSources, withMethods } from '../jobs/__tests__/helpers/jobs';
 import { computeAnalyzerVersion } from '../analyzer/version';
 import { runSearchJobCommand } from '../jobs/script';
 
@@ -70,6 +76,8 @@ describe('search sync writer', () => {
       .map(({ name }) => name)
       .sort();
     expect(names).toEqual(['csearch', 'messages', 'msearch', 'search_state', 'search_vocab']);
+    /* What `status` shows as `last change`: proof that the stream delivers. */
+    expect((await stateOf(harness, 'stream'))?.lastEventAt).toBeInstanceOf(Date);
   });
 
   it('rewrites a record on an edit, and writes nothing on a metadata-only update', async () => {
@@ -86,10 +94,14 @@ describe('search sync writer', () => {
     expect(edited?.h).not.toBe(before?.h);
 
     const writes = replace.mock.calls.flatMap(([, records]) => records).length;
+    const analyzed = jest.spyOn(harness.analyzer, 'analyzeMessage');
     await messages().updateOne({ _id: oid(id) }, { $set: { feedback: { rating: 'up' } } });
     await synced(harness);
     expect(replace.mock.calls.flatMap(([, records]) => records)).toHaveLength(writes);
     expect(await recordOf(harness, 'msearch', id)).toEqual(edited);
+    /* An unchanged row is told from its stored stamp, before any analysis. */
+    expect(analyzed).not.toHaveBeenCalled();
+    analyzed.mockRestore();
   });
 
   it('indexes a bulkWrite import in batches', async () => {
@@ -106,7 +118,7 @@ describe('search sync writer', () => {
     expect(eventsOf(harness, 'search.sync_lag').length).toBeGreaterThan(0);
   });
 
-  it('promises no catch-up from a batch that stopped at its cap', async () => {
+  it('reads an import larger than the batch cap in more than one batch', async () => {
     const seen: SearchStreamBatch[] = [];
     const watch = harness.methods.watchSearchSources;
     await startWriter({
@@ -123,9 +135,9 @@ describe('search sync writer', () => {
     await messages().insertMany(rows.map((row) => ({ ...row, _id: oid(String(row._id)) })));
     await synced(harness);
 
-    const full = seen.filter(({ events }) => events.length === 500);
-    expect(full.length).toBeGreaterThan(0);
-    expect(full.every(({ caughtUpTo }) => caughtUpTo === null)).toBe(true);
+    const withEvents = seen.filter(({ events }) => events.length > 0);
+    expect(withEvents.length).toBeGreaterThan(1);
+    expect(withEvents.every(({ events }) => events.length <= 500)).toBe(true);
     expect(await recordCount(harness, 'msearch')).toBe(600);
   });
 
@@ -313,6 +325,8 @@ describe('search sync writer', () => {
     it('queues reconcile on a token change once a chain has finished and records exist', async () => {
       await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
       proc = createSyncProcess(harness);
+      /* The chain's verify needs a saved position, and the writer has not started yet. */
+      await writerSaved(harness);
       await runSearchJobCommand({
         argv: ['backfill'],
         methods: harness.methods,
@@ -323,7 +337,24 @@ describe('search sync writer', () => {
         await proc.runner.idle();
       }
       await proc.runner.stop();
+      /* Back to no stream state, so `synced` below waits for this writer and not the stand-in. */
+      await harness.methods.deleteSearchState('stream');
       await harness.methods.writeSearchState('analyzer', { version: 'older' });
+
+      await startWriter();
+
+      const reconcile = (await requests()).filter(({ job }) => job === 'reconcile');
+      expect(reconcile.map(({ _id }) => _id)).toContain(`jobRequest:analyzer-${version()}`);
+    });
+
+    it('queues reconcile on a token change while the chain is at its verify step', async () => {
+      await startWriter();
+      await insertMessage({ text: 'kerfi' });
+      await synced(harness);
+      await proc?.stop();
+      /* The chain's reconcile walk is over, so only a new reconcile can rewrite this record. */
+      await harness.methods.writeSearchState('analyzer', { version: 'older' });
+      await harness.methods.writeSearchState('chain', { step: 'verify' });
 
       await startWriter();
 

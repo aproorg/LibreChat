@@ -2,7 +2,7 @@ import type { SearchHarness } from '../__tests__/helpers/harness';
 import type { PlannedWord } from './plan';
 import type { TieredRow } from './rank';
 import { createSearchHarness, sourceMessage } from '../__tests__/helpers/harness';
-import { NO_SPAN, readProximity, wordSpan } from './proximity';
+import { MAX_SPAN_CHARS, NO_SPAN, readProximity, wordSpan } from './proximity';
 import { createReadGate, createReadRunner } from './retry';
 import { derivePage, SEARCH_PAGE_SIZE } from './window';
 import { analyzeQuery } from '../analyzer/query';
@@ -110,7 +110,38 @@ describe('proximity', () => {
     });
   });
 
+  describe('wordSpan on a very long text', () => {
+    it('scans only the start of it, so one message cannot hold the event loop', () => {
+      const filler = 'one '.repeat(MAX_SPAN_CHARS / 4);
+      expect(span(`grumtak vindra ${filler}`, 'grumtak vindra')).toBe(1);
+      /* The second word lies past the scanned part: no span, as if the text lacked it. */
+      expect(span(`grumtak ${filler} vindra`, 'grumtak vindra')).toBe(NO_SPAN);
+    });
+  });
+
   describe('readProximity', () => {
+    it('stops with a busy code once the search has run out of time or was left', async () => {
+      await harness.seed({ messages: [sourceMessage({ text: 'grumtak vindra', messageId: 'a' })] });
+      const scan = (limits: { signal?: AbortSignal; deadline?: number }) =>
+        readProximity({
+          user: 'user-a',
+          rows: [row('a')],
+          words: planned('grumtak vindra'),
+          analyzer: harness.analyzer,
+          run: runner(),
+          methods: harness.methods,
+          ...limits,
+        });
+      const left = new AbortController();
+      left.abort();
+
+      await expect(scan({ deadline: Date.now() - 1 })).rejects.toMatchObject({
+        code: 'search_busy',
+      });
+      await expect(scan({ signal: left.signal })).rejects.toMatchObject({ code: 'search_busy' });
+      expect([...(await scan({ deadline: Date.now() + 10_000 }))]).toEqual([['a', -1]]);
+    });
+
     it('scores each row by its text, higher for closer, and last without text', async () => {
       await harness.seed({
         messages: [

@@ -36,7 +36,10 @@ export async function checkObserved({
   const wasServing = typeof previous.backend === 'string' && previous.backend !== 'meilisearch';
   const dataWentOff = previous.data === true && !config.data;
   if ((wasServing && config.backend === 'meilisearch') || dataWentOff) {
-    await methods.writeSearchState(VERIFICATION_KEY, { invalidatedAt: at });
+    await methods.writeSearchState(VERIFICATION_KEY, {
+      invalidatedAt: at,
+      invalidatedBy: 'config',
+    });
   }
   if (previous.data === false && config.data) {
     await methods.writeSearchState(STREAM_KEY, { resumeToken: null });

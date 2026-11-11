@@ -50,9 +50,12 @@ export default function LoadMore({
         type="button"
         variant="outline"
         size="sm"
-        onClick={onLoadMore}
-        disabled={isLoading}
+        onClick={isLoading ? undefined : onLoadMore}
+        /* Not `disabled`: a disabled button drops keyboard focus, and the user would have to
+         * tab back to it after every page. */
+        aria-disabled={isLoading}
         aria-busy={isLoading}
+        className={cn(isLoading && 'cursor-progress opacity-70')}
         data-testid="search-load-more"
       >
         {isLoading && <Spinner className="size-4" aria-hidden="true" />}

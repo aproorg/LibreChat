@@ -1,4 +1,4 @@
-import { isRegisteredSearchPack, resolveSearchPacks } from './registry';
+import { resolveSearchPacks } from './registry';
 
 describe('resolveSearchPacks', () => {
   it('builds each registered pack without loading anything', () => {
@@ -19,7 +19,6 @@ describe('resolveSearchPacks', () => {
         ok: false,
         error: { code: 'pack_unregistered', id },
       });
-      expect(isRegisteredSearchPack(id)).toBe(false);
     },
   );
 });

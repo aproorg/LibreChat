@@ -472,3 +472,118 @@ No High, no Medium, 5 Low. Four fixed, one rejected.
 - **L3:** the invented-data suite could be skipped when a push touched only its files, because selection drops `misc/`. It now has its own job.
 - **L4:** a conversation list read failing after a good search left the coded contract and the outcome metrics. Any failure with a search context is now `search_failed`, with a sanitized log.
 - **L5, rejected:** a stub word that is a real dictionary word. Checked against the private lists: none of the stub entries appear there.
+
+## Code review of the full change
+
+Three rounds on the whole change against its base (271 files), each with three reviewers that had a clean context and saw only a brief and the code. Round 1 split the change by area, round 2 by invariant, round 3 by way of reading. Findings are blocker, major, minor or nit.
+
+### Full loop 1: by area
+
+No blocker, 5 major, 15 minor, 9 nits. 27 fixed, 2 left with reasons.
+
+Read side:
+
+- **Major:** a multi-word first page analysed whole message texts in one synchronous pass. Proximity now scans the first 50,000 characters of a message, yields between messages and stops at the search's deadline.
+- **Minor:** prefix and typo expansions were shared across users, so a skipped read told one user that another had just searched the word. They are keyed per user.
+- **Minor:** chunked reads kept running after the search's deadline. All chunks share one time budget.
+- **Minor, left:** an aborted in-flight read closes its pooled connection. Its cost on DocumentDB is a measurement for the trial (R-05).
+- **Minor:** a failed read logged nothing that identified it. The log carries the driver's code and code name, never its message.
+- **Nits:** empty expansions now count against the cache budget; `http.md` no longer promises a cursor the code may withhold; the status read behind `/api/search/enable` is single-flight; `rankWindow` has a minimum of 25.
+
+Write side:
+
+- **Major:** under steady traffic a stream batch waited for a quiet second or 500 events. A batch closes 500 ms after its first event, and carries the time of its last change so the writer can prove it has caught up.
+- **Major:** the writer analysed every event before knowing whether a write was needed, and never yielded. It compares the stored hash first, analyses only rows that need a write, and yields between rows.
+- **Minor:** a source row whose `_id` is not an ObjectId stalled sync and every job. Walks skip such rows and the stream ignores their changes.
+- **Minor:** the writer's failure backoff never reset while it held the lease. It resets after each applied batch.
+- **Minor:** a token change during the chain's reconcile or verify step queued no reconcile. It does now.
+- **Minor:** a failed background start was never tried again. It retries from 5 s up to 5 min.
+- **Minor:** after a pack is removed, a failed attribution count could make reconcile loop. The count failing no longer fails reconcile.
+- **Minor:** the runbook never checked that the stream delivers. `status` prints `last change`, and the runbook has a step for it.
+- **Minor, left:** a stream batch is bounded by count and time, not bytes. A pipeline change is untested on DocumentDB, and the time bound limits what a replay reads.
+- **Nits:** the operator script prints an error's class and code only; takeover timing is stated in the config contract; `data-model.md` lists the stored fields.
+
+Client, CI and spec against code:
+
+- **Major:** the runbook's engine compatibility step passed whatever the engine answered. It now runs with `DOCUMENTDB_STRICT=true` and names what a failure looks like.
+- **Major:** a first search after idle logged its sidebar request as warm, which inflated SC-006. The cold mark is taken at request start and covers 5 s.
+- **Minor:** the quality gate enforced three of SC-003's categories. It gates every category at the reference row.
+- **Minor:** returning to `/search` refetched every loaded page. Focus, mount and reconnect refetch one page.
+- **Minor:** load-more failed for good when the 256-unit cut split a surrogate pair. The cut half is replaced with U+FFFD.
+- **Minor:** `/api/search/enable` answered false while packs loaded, and the client kept that for the session. It answers true once verification has passed.
+- **Nits:** two documents still described the cut throwaway pack; the failed-page Retry shows a busy state.
+
+### Full loop 2: by invariant
+
+No blocker, 7 major, 14 minor, 8 nits. 25 fixed, 1 answered by stating its bound, 2 left for the owner, 1 nit left.
+
+Exposure and cost:
+
+- **Major, left for the owner:** result order and the typo rule use word counts from the whole tenant's word list, so a user could infer how common a word is among other users. FR-029 covers timing only.
+- **Major:** the search cap ended before a multi-word page's costly reads. Ranking several words holds a slot, and identical requests in flight share one ranking.
+- **Major:** the writer's in-memory word counter had no size bound. It flushes at 50,000 tokens and writes in chunks.
+- **Major:** sidebar and shared-link title reads had no bound. They sit behind a gate of four times the cap, and typo expansion applies to at most three title words.
+- **Minor:** one user could hold every search slot. A user holds at most half the cap.
+- **Minor, left for the owner:** one user's made-up words can push the word list past the typo tier's row limit, which turns typo correction off for the tenant.
+- **Minor:** a second tenant in a database was stopped only by the writer. Backfill makes the same check, and the stop withdraws the verification pass.
+- **Minor:** every word of a query was analysed before the word limit applied. Only the words used are analysed.
+- **Nits:** cursor decoding requires the full GCM tag; a search failure on the sidebar path is logged by code.
+
+Stored state:
+
+- **Major:** verification passed in a relaxed mode exactly when the sync writer was broken. The mode is gone: with no saved stream position, verification fails as `sync_not_started`.
+- **Major:** an expired source that TTL had not yet deleted counted as an orphan and failed verification. Such rows are tallied as `expired`.
+- **Minor:** a failed observed-config check was dropped and then overwritten, so an abort might never invalidate the old pass. A process whose check failed does not record its settings, and checks again before starting sync.
+- **Minor:** a backfill request during a running verify made that verify fail. The runner holds the request while a job is active after a finished chain.
+- **Minor, bound stated:** word counts held in memory are lost when the holder is killed. R-10 now states the bound: at most `vocabFlushSeconds` of new words, missing from prefix and typo expansion until the next rebuild.
+- **Minor:** a skipped event queued a full reconcile each time. Skips share one request, and an analysis failure queues none.
+- **Minor:** `drop` could run in the gap after a lease release. It refuses for the takeover time after a writer last saved.
+- **Nits:** the `backfillOnStart` comment and `data-model.md` match the code. Left: request and run times come from different hosts' clocks.
+
+Default behaviour and surfaces:
+
+- **Major:** a `search` block with keys removed since an earlier build stops the process at startup, and no step said so. The release checklist has the step and lists the keys.
+- **Minor:** `status` showed `verify: passed` after an invalidation. It shows `invalidated` and the next action.
+- **Minor:** every conversation list passed its abort signal, not only searches. Only a search passes it.
+- **Minor:** load-more dropped keyboard focus. The button stays mounted, marked `aria-disabled`, while its page loads.
+- **Minor:** three tests asserted wall-clock bounds. Loosened to what each proves.
+- **Nits:** a test depending on another, four runbook gaps, one wrong comment.
+
+### Full loop 3: by way of reading
+
+No blocker, no major, 21 minor, 9 nits. All three verdicts were ready, one of them after fixes. 17 fixed, 5 fixed in part, 1 answered in the documents, 7 left with reasons. These fixes were made after the last review round, so no reviewer has read them.
+
+Examples traced through the code:
+
+- **Minor, left:** a misspelt word in a multi-word query. The first read uses the typo tier only while the whole search has found nothing, and load-more uses a word's frozen corrections in every stage, so what a user can reach depends on whether the all-word matches fill a page. Recorded under R-07: either fix changes the first page's results or the cursor's contents, and needs a quality run behind it.
+- **Minor, left:** the 3,000-token cap keeps the first tokens seen, and thinking parts come before the answer's text. A trial question under R-05 (`atCap` in `search.realtext`).
+- **Minor:** message search corrected every unknown word, while title search stopped at three. One constant now caps both.
+- **Minor:** the per-search read gate could run one read more than `readConcurrency`, when a read arrived as another finished. The finishing read now hands its slot to the waiter.
+- **Minor, left:** title matches past 1,000 are cut in index order, not by recency. A trial question under R-05, because the fix is a sort whose plan is unmeasured on the engine.
+- **Nit:** R-06 said the prefix expansion is not read up front, while almost every search reads it. Corrected.
+
+The uncommitted part, line by line:
+
+- **Minor:** plain conversation and message lists were still cancelled when their view left, because reading the query's `signal` at all tells React Query to cancel. A plain list no longer reads it, with tests that a page landing after its view left is still cached.
+- **Minor:** a second skipped event during a running reconcile lost its request, because skips share one request ID. The request stays when it was written again after the run began.
+- **Minor:** after the writer stopped on a second tenant, the next action `status` named brought search back. Reconcile now holds the tenant pin as backfill does, the stop records its reason, and `status` names all three cases.
+- **Minor:** the comparison with the stored settings was retried only with search data on. It is retried on every path, so a rollback by `data: false` cannot be missed when the database is away at start.
+- **Minor:** Load more still unmounted when its last page was short. It stays through the automatic fetches that follow a press.
+- **Minor:** the `sync_not_started` advice said to run verify at once, while the writer may be five minutes from its next attempt. It says to wait for `sync: last saved`.
+- **Minor:** the title gate, the per-user share as wired in the service, the path where a search joins a ranking whose starter leaves, and two `status` lines had no test. Each has one.
+- **Minor (a question):** the writer's backoff reset on an empty batch, so record writes that kept failing never backed off. It resets only after changes were applied.
+- **Nits:** the runbook lists the new `drop` refusal, and the tenant line in `status` no longer outlives its failure. Left: `drop`'s wait assumes a takeover time above the idle save; shared-link search passes no abort signal; the attribution cleanup logs nothing when its count fails; two near-identical yield helpers.
+
+As the maintainer who owns it after the merge:
+
+- **Minor:** 18 of 21 search failure logs said only `Error`. One helper adds the error's class, driver code and code name, by pattern and never the message, at every `[search]` log site.
+- **Minor:** a pack throwing on a message after backfill made the next verification run three reconcile rounds and give up. Reconcile's repair pass counts such rows, and verification then reports `analysis_failed` after one round.
+- **Minor, in part:** rules that must stay equal lived in two packages. The token cap, the page size, the cursor's query length and the request key are now shared, and a test holds that a job's projected read builds the same record as the whole document. Left: state keys named in both packages, the exclusion paths, and `MEILI_SYNC_THRESHOLD` parsed in two places.
+- **Minor:** the one-tenant check was written twice and missing from reconcile. One function serves the writer, backfill and reconcile.
+- **Minor:** the writer recognised an unusable source row by matching error text. It is a class now.
+- **Minor, answered in the documents:** pack loading starts before the process reports ready. Kept on purpose: started after readiness, the same synchronous work would stall live requests. R-02 and T074 now say what it can cost, and T150 measures it.
+- **Minor, in part:** repeated reads. The heartbeat lists requests once less. Left for the trial: chunked token reads run one after another inside a slot, and a sidebar search reads the same word list rows twice.
+- **Minor, in part:** dead code. Batch analysis, a registry helper, an identity parameter and an unreachable branch are gone, and the metrics flush stops and flushes at shutdown. Left: `AnalyzedQuery.dropped`, metric values never emitted, and the width of `index.ts`.
+- **Nits:** document drift corrected in `plan.md`, `tasks.md`, `data-model.md` and `research.md`. Left: `http/conversations.ts` and `http/shares.ts` are near copies, and two type and naming rough edges.
+
+After the round 3 fixes: the build, type checks in all four workspaces and the quality tooling, and the static checks pass. Tests pass: 829 under `packages/api/src/search`, 230 in `packages/data-schemas`, 37 in `packages/data-provider`, 66 in `api` and 120 in `client`. Under full parallel load a test with real waits timed out in two of six runs of the search suite, a different one each time, and each passes alone; one of them waited a fixed 20 ms and now waits for the event instead. The private quality measure is unchanged from before the review, for both conditions, with no isolation violation and token parity with the reference.

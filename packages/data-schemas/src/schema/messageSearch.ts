@@ -2,7 +2,10 @@ import { Schema } from 'mongoose';
 import type { Types } from 'mongoose';
 import type { MessageSearchRecord } from '~/types/search';
 
-/** Compound and inflected forms of a long message stop here (FR-007). */
+/**
+ * Compound and inflected forms of a long message stop here (FR-007). The analyzer's cap is
+ * this same constant, so a record it builds always passes the validators below.
+ */
 export const MAX_SEARCH_TOKENS = 3000;
 
 export type MessageSearchDocument = Omit<MessageSearchRecord, '_id'> & { _id: Types.ObjectId };

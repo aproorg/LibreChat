@@ -1,5 +1,6 @@
 import { SearchError } from '@librechat/data-schemas';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
+import { SEARCH_CURSOR_QUERY_CHARS } from 'librechat-data-provider';
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import type { EncodedPlan, FrozenPlan, PlannedWord } from './frozen';
 import { encodePlan, PLAN_SLOT_BYTES } from './frozen';
@@ -9,7 +10,7 @@ import { READ_TIERS } from './tiers';
 /** Marks a new-search cursor, so the Meilisearch branch can refuse one after a rollback. */
 export const SEARCH_CURSOR_PREFIX = 's1.';
 /** The client sends this much of the query with a cursor, and both sides hash the same (R-06). */
-export const CURSOR_QUERY_CHARS = 256;
+export const CURSOR_QUERY_CHARS = SEARCH_CURSOR_QUERY_CHARS;
 
 const CURSOR_VERSION = 1;
 const CURSOR_BACKEND = 'search';
@@ -203,7 +204,12 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
       let sealedPlan: unknown;
       try {
         const bytes = Buffer.from(value.slice(SEARCH_CURSOR_PREFIX.length), 'base64url');
-        const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, IV_BYTES));
+        if (bytes.length <= IV_BYTES + TAG_BYTES) {
+          return invalid();
+        }
+        const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, IV_BYTES), {
+          authTagLength: TAG_BYTES,
+        });
         decipher.setAAD(Buffer.from(user, 'utf8'));
         decipher.setAuthTag(bytes.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
         const opened = Buffer.concat([

@@ -1,7 +1,7 @@
 import type { SearchHarness } from '../__tests__/helpers/harness';
 import { createSearchHarness } from '../__tests__/helpers/harness';
+import { createVocabCounter, MAX_PENDING_TOKENS } from './vocab';
 import { waitFor } from './__tests__/helpers/sync';
-import { createVocabCounter } from './vocab';
 
 /** T112: counts merge in memory and reach the word list only at a flush, from the holder. */
 describe('the writer’s word list counts', () => {
@@ -43,6 +43,61 @@ describe('the writer’s word list counts', () => {
     ]);
     increment.mockRestore();
   });
+
+  it('flushes once it holds its bound, in chunks, without waiting for the timer', async () => {
+    const increment = jest.spyOn(harness.methods, 'incrementSearchVocab');
+    const counter = createVocabCounter({
+      methods: harness.methods,
+      flushSeconds: 300,
+      holds: () => true,
+      logger: harness.logger,
+    });
+
+    counter.add(Array.from({ length: MAX_PENDING_TOKENS - 1 }, (_, index) => `w${index}`));
+    await counter.settle();
+    expect(increment).not.toHaveBeenCalled();
+
+    counter.add(['one-more']);
+    await counter.settle();
+
+    expect(counter.pending()).toBe(0);
+    expect(increment.mock.calls.length).toBeGreaterThan(1);
+    expect(increment.mock.calls.every(([{ counts }]) => counts.length <= 10_000)).toBe(true);
+    expect(await harness.database.connection.db!.collection('search_vocab').countDocuments()).toBe(
+      MAX_PENDING_TOKENS,
+    );
+    increment.mockRestore();
+  }, 60_000);
+
+  it('puts back only what a failed flush did not write', async () => {
+    let calls = 0;
+    const counter = createVocabCounter({
+      methods: {
+        ...harness.methods,
+        incrementSearchVocab: async (params) => {
+          calls += 1;
+          if (calls === 2) {
+            throw new Error('write failed');
+          }
+          return harness.methods.incrementSearchVocab(params);
+        },
+      },
+      flushSeconds: 300,
+      holds: () => true,
+      logger: harness.logger,
+    });
+    counter.add(Array.from({ length: 25_000 }, (_, index) => `w${index}`));
+
+    await counter.flush();
+
+    /* The first chunk of 10,000 is written, and the other 15,000 wait for the next flush. */
+    expect(counter.pending()).toBe(15_000);
+    await counter.flush();
+    expect(counter.pending()).toBe(0);
+    const rows = await vocab();
+    expect(rows).toHaveLength(25_000);
+    expect(rows.every(({ df }) => df === 1)).toBe(true);
+  }, 60_000);
 
   it('flushes every vocabFlushSeconds, and once more on stop', async () => {
     const increment = jest.spyOn(harness.methods, 'incrementSearchVocab');

@@ -52,7 +52,7 @@ A shared suite each pack runs. It covers:
 
 A new pack also adds golden queries and measures tokens per message and stop-word collisions on real text (FR-046).
 
-**SC-016 check**: A throwaway stemmer pack whose words include letters from the Icelandic set passes this suite with `is` on and off, with a diff touching only `languages/`.
+**SC-016 check**: The invented dictionary pack, whose words include letters from the Icelandic set, and the English pack pass this suite in public CI, and the Icelandic pack passes it outside CI. Owner decision, 2026-11-10: the throwaway stemmer pack is cut, so the invented pack stands in for a new language.
 
 ## Analyzer version
 

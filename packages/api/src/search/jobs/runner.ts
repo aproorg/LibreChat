@@ -13,12 +13,14 @@ import type { VerifyMethods } from './verify';
 import {
   BACKFILL_KEYS,
   CHAIN_KEY,
+  JOB_REQUEST_PREFIX,
   JOB_STATE_READ,
   RECONCILE_KEY,
+  requestJob,
   SOURCE_COLLECTIONS,
   VERIFICATION_KEY,
 } from './control';
-import { getSafeErrorMetadata } from '~/utils/errors';
+import { safeFailure, safeFailureCode } from '../failure';
 import { createSearchLease } from '../sync/lease';
 import { runVocabRebuild } from './vocabRebuild';
 import { runReconcile } from './reconcile';
@@ -35,7 +37,7 @@ export type SearchJobMethods = BackfillMethods &
 /** The longest wait between attempts at a job that keeps failing. */
 const MAX_RETRY_DELAY_MS = 10 * 60_000;
 /** Fixed, so every restart of every process asks for the same one backfill. */
-const ON_START_REQUEST = 'jobRequest:backfill-on-start';
+const ON_START_REQUEST = 'backfill-on-start';
 /** Verification rounds before the mismatch loop stops and the owner is called (R-11). */
 export const MAX_VERIFY_ROUNDS = 3;
 /** Failures a reconcile can repair, so the mismatch loop runs on them. */
@@ -66,16 +68,6 @@ export interface SearchJobRunnerDeps {
   /** Created here when absent. The startup path passes one, so the writer can share it. */
   lease?: SearchLease;
   now?: () => number;
-}
-
-/**
- * Enough to tell an outage from a refused write: an error class name and a numeric driver
- * code. Never the message, which can echo submitted content.
- */
-function safeFailureCode(error: unknown): string {
-  const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown };
-  const label = typeof name === 'string' && /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
-  return typeof code === 'number' ? `${label}:${code}` : label;
 }
 
 /** One step of the chain. A step is safe to run again, so a new holder restarts the one it finds. */
@@ -190,7 +182,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   function startJob(run: () => Promise<void>, stateKey: string): void {
     const record = (fields: Record<string, unknown>) =>
       methods.writeSearchState(stateKey, fields).catch((error: unknown) => {
-        logger.warn('[search] Job state write failed', getSafeErrorMetadata(error));
+        logger.warn('[search] Job state write failed', safeFailure(error));
       });
     active = run()
       .then(async () => {
@@ -202,7 +194,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       })
       .catch(async (error: unknown) => {
         const lastFailureCode = safeFailureCode(error);
-        logger.warn('[search] Job failed', { ...getSafeErrorMetadata(error), lastFailureCode });
+        logger.warn('[search] Job failed', { ...safeFailure(error), lastFailureCode });
         failures += 1;
         retryAt =
           failures > 1
@@ -252,9 +244,18 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
   async function handleRequest(request: SearchStateEntry): Promise<void> {
     const key = request._id;
     switch (request.job) {
-      case 'backfill':
+      case 'backfill': {
+        /*
+         * A new run after a finished chain deletes the backfill state, which a verify or
+         * reconcile still running reads. That job would then fail and hide search until the
+         * whole new chain ends, so the request waits for it.
+         */
+        if (active && (await readState(CHAIN_KEY))?.finishedAt != null) {
+          return;
+        }
         await startBackfillChain(key);
         return;
+      }
       case 'pause':
       case 'resume':
         await setPause(request.job === 'pause');
@@ -364,9 +365,27 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
           return;
         }
       }
-      await methods.deleteSearchState(key);
+      if (verifyRound === null) {
+        await removeAnsweredRequest(key);
+      } else {
+        /* A round's request has an ID of its own, so nothing writes it again. */
+        await methods.deleteSearchState(key);
+      }
       await dropSatisfiedReconcileRequests();
     }, RECONCILE_KEY);
+  }
+
+  /**
+   * The writer's request for skipped events has one ID, so it can be written again while its
+   * reconcile runs, for a row that walk had already passed. That newer request stays.
+   */
+  async function removeAnsweredRequest(key: string): Promise<void> {
+    const requestedAt = (await readState(key))?.requestedAt;
+    const startedAt = (await readState(RECONCILE_KEY))?.startedAt;
+    if (requestedAt instanceof Date && startedAt instanceof Date && requestedAt > startedAt) {
+      return;
+    }
+    await methods.deleteSearchState(key);
   }
 
   /** Requests made before the reconcile that just finished began are answered by it. */
@@ -393,14 +412,14 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
    * three, after which `verification` keeps `failed` and `gaveUp`, and the owner is called.
    * Driven by state, so a new holder carries it on, and by request, so a crash cannot drop it.
    */
-  async function continueMismatchLoop(pending: readonly SearchStateEntry[]): Promise<void> {
+  async function continueMismatchLoop(pending: readonly SearchStateEntry[]): Promise<boolean> {
     const verification = await readState(VERIFICATION_KEY);
     if (
       verification?.status !== 'failed' ||
       verification.running === true ||
       !LOOP_REASONS.has(String(verification.reason))
     ) {
-      return;
+      return false;
     }
     const rounds = typeof verification.rounds === 'number' ? verification.rounds : 1;
     if (rounds >= MAX_VERIFY_ROUNDS) {
@@ -410,17 +429,18 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
           rounds,
         });
       }
-      return;
+      return false;
     }
-    const id = `mismatch-${rounds + 1}`;
-    if (pending.some(({ _id }) => _id === `jobRequest:${id}`)) {
-      return;
+    const key = `${JOB_REQUEST_PREFIX}mismatch-${rounds + 1}`;
+    if (pending.some(({ _id }) => _id === key)) {
+      return false;
     }
-    await methods.writeSearchState(`jobRequest:${id}`, {
+    await methods.writeSearchState(key, {
       job: 'reconcile',
       verifyRound: rounds + 1,
       requestedAt: new Date(now()),
     });
+    return true;
   }
 
   /**
@@ -453,10 +473,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
    */
   async function requestBackfillOnStart(): Promise<void> {
     if (backfillOnStart && !(await readState(CHAIN_KEY))) {
-      await methods.writeSearchState(ON_START_REQUEST, {
-        job: 'backfill',
-        requestedAt: new Date(now()),
-      });
+      await requestJob(methods, ON_START_REQUEST, 'backfill', now());
     }
   }
 
@@ -484,8 +501,10 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       startJob(() => runChain(chain), CHAIN_KEY);
       return;
     }
-    await continueMismatchLoop(await methods.listSearchJobRequests());
-    if ((await methods.listSearchJobRequests()).length === 0) {
+    /* One list read serves both: the loop says whether it queued a request of its own. */
+    const pending = await methods.listSearchJobRequests();
+    const queued = await continueMismatchLoop(pending);
+    if (pending.length === 0 && !queued) {
       await startDueReconcile();
     }
   }
@@ -497,7 +516,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     if (!ticking) {
       ticking = runAsSystem(heartbeat)
         .catch((error: unknown) => {
-          logger.warn('[search] Job heartbeat failed', getSafeErrorMetadata(error));
+          logger.warn('[search] Job heartbeat failed', safeFailure(error));
         })
         .finally(() => {
           ticking = null;
@@ -528,7 +547,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
       }
       await idle();
       await lease.release().catch((error: unknown) => {
-        logger.warn('[search] Lease release failed', getSafeErrorMetadata(error));
+        logger.warn('[search] Lease release failed', safeFailure(error));
       });
     },
     isHolder: () => lease.isHeld(),

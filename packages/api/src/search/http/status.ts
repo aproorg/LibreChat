@@ -10,7 +10,7 @@ import {
   isSearchEnvOn,
 } from '../meili';
 import { ANALYZER_KEY, VERIFICATION_KEY } from '../jobs/control';
-import { getSafeErrorMetadata } from '~/utils/errors';
+import { safeFailure } from '../failure';
 
 export interface SearchStatus {
   /** `/api/search/enable`: the whole table in `contracts/http.md`. Never rejects. */
@@ -72,6 +72,7 @@ export function createSearchStatus({
   const cacheMs = statusCacheSeconds * 1000;
 
   let verification: { passed: boolean; expiresAt: number } | null = null;
+  let verificationRead: Promise<boolean> | null = null;
   let kept: { attribution: Attribution | null; expiresAt: number } | null = null;
   let client: MeiliHealthClient | null | undefined;
   /* Once the full sync has caught up it stays so for this process: later saves index as they land. */
@@ -79,19 +80,28 @@ export function createSearchStatus({
   let resyncCheck: { result: Promise<boolean>; expiresAt: number } | null = null;
 
   /* `useSearchEnabled` calls `/enable` on every app load, so this read is cached (R-15). */
-  async function verificationPassed(): Promise<boolean> {
+  function verificationPassed(): Promise<boolean> {
     if (verification && now() < verification.expiresAt) {
-      return verification.passed;
+      return Promise.resolve(verification.passed);
     }
-    try {
-      const entry = await methods.readSearchState(VERIFICATION_KEY, { maxTimeMS: searchTimeoutMs });
-      const passed = hasPassed(entry);
-      verification = { passed, expiresAt: now() + cacheMs };
-      return passed;
-    } catch (error) {
-      logger.warn('[search] Status read failed', getSafeErrorMetadata(error));
-      return false;
-    }
+    /* Shared while in flight: on a slow database every app load would otherwise wait on,
+     * and add, a read of its own. A failure is not kept, so the next call asks again. */
+    verificationRead ??= (async () => {
+      try {
+        const entry = await methods.readSearchState(VERIFICATION_KEY, {
+          maxTimeMS: searchTimeoutMs,
+        });
+        const passed = hasPassed(entry);
+        verification = { passed, expiresAt: now() + cacheMs };
+        return passed;
+      } catch (error) {
+        logger.warn('[search] Status read failed', safeFailure(error));
+        return false;
+      } finally {
+        verificationRead = null;
+      }
+    })();
+    return verificationRead;
   }
 
   /** Built on first use and kept, so a process without Meilisearch never builds one. */
@@ -107,7 +117,7 @@ export function createSearchStatus({
     try {
       client = new meili.MeiliSearch({ host, apiKey });
     } catch (error) {
-      logger.warn('[search] Meilisearch client failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Meilisearch client failed', safeFailure(error));
     }
     return client;
   }
@@ -138,7 +148,7 @@ export function createSearchStatus({
       resyncPassed = progress.every((entry) => isMeiliSyncCaughtUp(entry, syncThreshold));
       return resyncPassed;
     } catch (error) {
-      logger.warn('[search] Meilisearch sync progress read failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Meilisearch sync progress read failed', safeFailure(error));
       return false;
     }
   }
@@ -173,7 +183,7 @@ export function createSearchStatus({
       kept = { attribution, expiresAt: now() + cacheMs };
       return attribution;
     } catch (error) {
-      logger.warn('[search] Attribution read failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Attribution read failed', safeFailure(error));
       return null;
     }
   }
@@ -184,7 +194,11 @@ export function createSearchStatus({
         return false;
       }
       if (backend === 'search') {
-        if (!data || service.packState() !== 'loaded') {
+        /* Loading is not a reason to answer false: the client asks once per app load and
+         * keeps the answer, so a few seconds after a restart would hide search for the
+         * session. A search in that window answers `search_busy`, which the client shows as
+         * busy, with a Retry. */
+        if (!data || service.packState() === 'failed') {
           return false;
         }
         return verificationPassed();

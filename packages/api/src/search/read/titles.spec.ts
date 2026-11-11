@@ -4,6 +4,7 @@ import { createReadGate, createReadRunner } from './retry';
 import { analyzeQuery } from '../analyzer/query';
 import { createPlanExpansions } from './plan';
 import { readTitleMatches } from './titles';
+import { MAX_TYPO_WORDS } from './typo';
 
 const BUDGETS = {
   prefix: { maxCommonReads: 4, maxRareTokens: 200, maxVocabRows: 50_000 },
@@ -121,6 +122,25 @@ describe('readTitleMatches', () => {
 
       expect((await matches('plomkat')).sort()).toEqual(['tag', 'title']);
       expect(await matches('plomkat report')).toEqual(['title']);
+    });
+
+    it('corrects at most three words of one search, and matches the rest as typed', async () => {
+      await harness.seed({
+        conversations: [
+          sourceConversation({
+            conversationId: 'four',
+            title: 'plomkit grundar vistage holmara',
+          }),
+        ],
+      });
+      const typos = jest.spyOn(harness.methods, 'readVocabRange');
+
+      /* Four misspellings: the first three are corrected, and the fourth then matches nothing. */
+      expect(await matches('plomkat grundur vistago holmaro extra')).toEqual([]);
+      const corrections = typos.mock.calls.filter(([{ start }]) => start.length === 1);
+      expect(corrections).toHaveLength(MAX_TYPO_WORDS);
+      /* Three misspellings are all corrected. */
+      expect(await matches('plomkat grundur vistago')).toEqual(['four']);
     });
 
     it('corrects nothing when the word list has the word', async () => {

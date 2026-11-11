@@ -84,11 +84,20 @@ describe('SearchLoadMore', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('is disabled and marked busy while loading', () => {
-    render(<SearchLoadMore onLoadMore={jest.fn()} isLoading />);
+  it('is marked busy while loading, ignores presses, and keeps keyboard focus', async () => {
+    const onLoadMore = jest.fn();
+    render(<SearchLoadMore onLoadMore={onLoadMore} isLoading />);
     const button = screen.getByTestId('search-load-more');
-    expect(button).toBeDisabled();
     expect(button).toHaveAttribute('aria-busy', 'true');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    /* Not the `disabled` attribute, which would drop focus to the document. */
+    expect(button).not.toBeDisabled();
+
+    const user = userEvent.setup();
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onLoadMore).not.toHaveBeenCalled();
   });
 
   it('becomes a retry with an alert when the last page failed', async () => {

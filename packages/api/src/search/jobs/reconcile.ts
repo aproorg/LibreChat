@@ -15,6 +15,7 @@ import { ANALYZER_KEY, giveWay, JOB_STATE_READ, RECONCILE_KEY } from './control'
 import { extractConversation, extractMessage } from '../sync/extract';
 import { removeRecordsOfGoneSources } from './check';
 import { runVocabRebuild } from './vocabRebuild';
+import { holdTenantPin } from '../sync/tenant';
 
 export type ReconcileMethods = VocabRebuildMethods &
   Pick<
@@ -60,6 +61,8 @@ interface ReconcileState {
   of: number;
   /** Records the repair pass inserted, rewrote or deleted. */
   repaired: number;
+  /** Sources with no record that a pack threw on in the repair pass, so they stay without one. */
+  analysisFailures: number;
   /** Run inside the chain, where the word list step just ran. */
   inChain: boolean;
 }
@@ -91,6 +94,7 @@ function readState(saved: SearchStateEntry | null, inChain: boolean): ReconcileS
     stale: numberOf(saved.stale),
     of: numberOf(saved.of),
     repaired: numberOf(saved.repaired),
+    analysisFailures: numberOf(saved.analysisFailures),
     inChain: typeof saved.inChain === 'boolean' ? saved.inChain : inChain,
   };
 }
@@ -114,6 +118,7 @@ export async function runReconcile(deps: ReconcileDeps): Promise<JobOutcome> {
     stale: 0,
     of: 0,
     repaired: 0,
+    analysisFailures: 0,
     inChain: deps.inChain,
   };
   if (saved?.status !== 'running') {
@@ -197,13 +202,15 @@ function buildRecord(
   collection: SearchSourceCollection,
   row: SearchSourceRow,
   options: { analyzer: Analyzer; version: string; epoch: number },
+  failed?: () => void,
 ): MessageSearchRecord | ConversationSearchRecord | null {
   try {
     return collection === 'messages'
       ? buildMessageRecord(row, options)
       : buildConversationRecord(row, options);
   } catch {
-    /* A pack that throws on a word is a gap verification reports; no text is logged here. */
+    /* A pack that throws on a word leaves a gap no repair can fill; no text is logged here. */
+    failed?.();
     return null;
   }
 }
@@ -217,6 +224,8 @@ async function walkSources(
   save: (fields: Partial<ReconcileState>) => Promise<void>,
 ): Promise<JobOutcome> {
   let lastId = state.lastIds[phase];
+  const analyzerState = await methods.readSearchState(ANALYZER_KEY, JOB_STATE_READ);
+  let pinned = typeof analyzerState?.tenantId === 'string' ? analyzerState.tenantId : null;
   for (;;) {
     const stop = await control.check();
     if (stop) {
@@ -231,6 +240,12 @@ async function walkSources(
     if (rows.length === 0) {
       return 'done';
     }
+    /* Reconcile inserts missing records, so it holds the one-tenant pin as backfill does (R-04). */
+    pinned = await holdTenantPin(
+      methods,
+      rows.map(({ tenantId }) => tenantId),
+      pinned,
+    );
     const stamps = new Map(
       (
         await methods.readSearchRecordStamps(
@@ -276,7 +291,15 @@ async function walkSources(
           continue;
         }
         const stamp = stamps.get(row._id);
-        const record = buildRecord(collection, row, { analyzer, version, epoch: stamp?.e ?? 0 });
+        const record = buildRecord(
+          collection,
+          row,
+          { analyzer, version, epoch: stamp?.e ?? 0 },
+          /* Counted where no record exists, which is what verification finds missing. */
+          () => {
+            state.analysisFailures += stamp ? 0 : 1;
+          },
+        );
         if (record && stamp) {
           rewrites.push({ record, expect: { h: stamp.h, v: stamp.v } });
         } else if (record) {
@@ -310,6 +333,7 @@ async function walkSources(
       stale: state.stale,
       of: state.of,
       repaired: state.repaired,
+      analysisFailures: state.analysisFailures,
     });
     await control.wait();
   }
@@ -392,10 +416,19 @@ async function clearAttributionIfReanalyzed({ methods, version }: ReconcileDeps)
   if (analyzerState?.attributionUntilReanalyzed == null) {
     return;
   }
-  for (const collection of ['messages', 'conversations'] as const) {
-    if ((await methods.countSearchRecordsAtOtherVersion({ collection, version })) > 0) {
-      return;
+  try {
+    for (const collection of ['messages', 'conversations'] as const) {
+      if ((await methods.countSearchRecordsAtOtherVersion({ collection, version })) > 0) {
+        return;
+      }
     }
+  } catch {
+    /*
+     * The count scans a whole record collection and can time out on a large one. Failing
+     * reconcile for it would run the word list rebuild again and again, so the credit stays
+     * for the next run to clear.
+     */
+    return;
   }
   await methods.writeSearchState(ANALYZER_KEY, { attributionUntilReanalyzed: null });
 }

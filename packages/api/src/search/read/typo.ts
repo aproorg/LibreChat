@@ -1,5 +1,16 @@
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import type { Expansion, ExpansionDeps } from './tiers';
 import { endOfPrefix } from './tiers';
+
+/** Word list rows compared before the scan gives way: it runs on the process that serves chat. */
+const SCAN_SLICE_ROWS = 5_000;
+
+/**
+ * Words of one search that may be corrected, in titles and in messages alike. Each correction
+ * reads up to `typo.maxVocabRows` word list rows, and a query of many unknown words is noise,
+ * not a misspelling, so the words past this are matched as typed.
+ */
+export const MAX_TYPO_WORDS = 3;
 
 export interface TypoBudget {
   maxCorrections: number;
@@ -20,7 +31,8 @@ export function typoEdits(length: number): number {
 
 /**
  * Damerau-Levenshtein distance, stopping at `max + 1` once no cell of a row can come
- * in under it. Ported from `final/search.mjs`.
+ * in under it. Ported from the design's reference implementation (`final/search.mjs`, outside
+ * this repository).
  */
 export function editDistance(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) {
@@ -78,9 +90,19 @@ export async function expandTypos(
   if (rows.length >= budget.maxVocabRows) {
     realtext?.addVocabRowsTruncated();
   }
-  const near = rows
-    .map(({ token, df }) => ({ token, df, distance: editDistance(exact, token, edits) }))
-    .filter(({ distance }) => distance <= edits)
+  const within: Array<{ token: string; df: number; distance: number }> = [];
+  for (let start = 0; start < rows.length; start += SCAN_SLICE_ROWS) {
+    for (const { token, df } of rows.slice(start, start + SCAN_SLICE_ROWS)) {
+      const distance = editDistance(exact, token, edits);
+      if (distance <= edits) {
+        within.push({ token, df, distance });
+      }
+    }
+    if (start + SCAN_SLICE_ROWS < rows.length) {
+      await yieldToEventLoop();
+    }
+  }
+  const near = within
     .sort((a, b) => a.distance - b.distance || b.df - a.df)
     .slice(0, budget.maxCorrections);
   return {

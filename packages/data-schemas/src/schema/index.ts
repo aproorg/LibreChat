@@ -22,7 +22,7 @@ export { default as openidRefreshFlightSchema } from './openidRefreshFlight';
 export { default as refreshTokenBridgeSchema } from './refreshTokenBridge';
 export { default as roleSchema } from './role';
 export { default as sessionSchema } from './session';
-export { default as messageSearchSchema } from './messageSearch';
+export { default as messageSearchSchema, MAX_SEARCH_TOKENS } from './messageSearch';
 export { default as conversationSearchSchema } from './conversationSearch';
 export { default as searchVocabSchema } from './searchVocab';
 export { default as searchStateSchema } from './searchState';

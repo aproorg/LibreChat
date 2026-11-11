@@ -16,11 +16,14 @@ describe('search with the default configuration', () => {
   describe('storage', () => {
     let server: MongoMemoryServer;
     let database: mongoose.Mongoose;
+    let models: ReturnType<typeof createModels>;
 
     beforeAll(async () => {
       server = await MongoMemoryServer.create();
       database = new mongoose.Mongoose();
       await database.connect(server.getUri());
+      /* Here and not in the first test, so each test below can run alone. */
+      models = createModels(database);
     });
 
     afterAll(async () => {
@@ -29,7 +32,6 @@ describe('search with the default configuration', () => {
     });
 
     it('creates no search collection, with automatic creation on', async () => {
-      const models = createModels(database);
       createMethods(database);
       await Promise.all(Object.values(models).map((model) => model.init().catch(() => undefined)));
 

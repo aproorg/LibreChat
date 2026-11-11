@@ -347,8 +347,13 @@ describe('createSearchStatus', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('is false while packs load', async () => {
+  it('is true while packs load, once verification has passed', async () => {
+    /* The client asks once per app load, so false here would hide search for the session. */
     await verification({ status: 'passed', passedAt: new Date() });
+    expect(await (await status({}, false)).enabled()).toBe(true);
+  });
+
+  it('is false while packs load with no passed verification', async () => {
     expect(await (await status({}, false)).enabled()).toBe(false);
   });
 
@@ -387,6 +392,19 @@ describe('createSearchStatus', () => {
     now += 2_000;
     await created.enabled();
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one read between calls that arrive together', async () => {
+    await verification({ status: 'passed', passedAt: new Date() });
+    const read = jest.spyOn(harness.methods, 'readSearchState');
+    const created = await status();
+
+    expect(await Promise.all([created.enabled(), created.enabled(), created.enabled()])).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('is false on a failed read, with no raw text, and does not cache it', async () => {

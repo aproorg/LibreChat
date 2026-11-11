@@ -94,7 +94,7 @@ export const useConversationsInfiniteQuery = (
       isArchived ? QueryKeys.archivedConversations : QueryKeys.allConversations,
       { isArchived, sortBy, sortDirection, tags, search, projectId },
     ],
-    queryFn: async ({ pageParam, signal }) => {
+    queryFn: async (context) => {
       const page = await dataService.listConversations(
         {
           isArchived,
@@ -103,9 +103,12 @@ export const useConversationsInfiniteQuery = (
           tags,
           search,
           projectId,
-          cursor: pageParam?.toString(),
+          cursor: context.pageParam?.toString(),
         },
-        signal,
+        /* Only a search: it holds a slot on the server, so a superseded one should end. A
+         * plain list keeps finishing and caching after its view moves on, as before, so it
+         * must not even read `signal`: reading it is what makes React Query cancel. */
+        search ? context.signal : undefined,
       );
       /* A row's own `isArchived` decides what its menu offers, so a backend that predates
          that field in the list projection would make archived rows offer Archive and submit
@@ -203,8 +206,8 @@ export const useMessagesInfiniteQuery = (
       QueryKeys.messages,
       { sortBy, sortDirection, pageSize, conversationId, messageId, search },
     ],
-    queryFn: ({ pageParam, signal }) => {
-      const cursor: string | undefined = pageParam?.toString();
+    queryFn: (context) => {
+      const cursor: string | undefined = context.pageParam?.toString();
       return dataService.listMessages(
         {
           sortBy,
@@ -215,7 +218,8 @@ export const useMessagesInfiniteQuery = (
           search: cursor ? cursorSearchText(search) : search,
           cursor,
         },
-        signal,
+        /* As above: a plain message list never reads `signal`. */
+        search ? context.signal : undefined,
       );
     },
     getNextPageParam: (lastPage) => lastPage?.nextCursor ?? undefined,

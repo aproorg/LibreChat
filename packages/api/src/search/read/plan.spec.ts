@@ -5,6 +5,7 @@ import { deriveRanked, SEARCH_PAGE_SIZE } from './window';
 import { readSearchPlan, stageDriver } from './plan';
 import { analyzeQuery } from '../analyzer/query';
 import { buildTierJobs, RARE_DF } from './tiers';
+import { MAX_TYPO_WORDS } from './typo';
 
 const BUDGETS = {
   prefix: { maxCommonReads: 4, maxRareTokens: 200, maxVocabRows: 50_000 },
@@ -153,6 +154,27 @@ describe('read plan', () => {
     const read = await plan('freshword');
 
     expect(page(read).hits.map(({ messageId }) => messageId)).toEqual(['new']);
+  });
+
+  it('corrects at most three words of one search, and leaves the rest as typed', async () => {
+    await harness.seed({
+      messages: [sourceMessage({ text: 'plomkit grundar vistage holmara' })],
+    });
+    const ranges = jest.spyOn(harness.methods, 'readVocabRange');
+
+    const read = await plan('plomkat grundur vistago holmaro extra');
+
+    /* A correction reads the word list by first letter; the last word's prefix read is longer. */
+    expect(ranges.mock.calls.filter(([{ start }]) => start.length === 1)).toHaveLength(
+      MAX_TYPO_WORDS,
+    );
+    expect(read.plan.words.map(({ typos }) => typos !== undefined)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 
   it('runs common tokens as separate reads, and holds read concurrency', async () => {

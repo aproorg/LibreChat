@@ -22,7 +22,7 @@ git diff "$BASE"...HEAD | grep -E '^\+' \
 git ls-files | grep -E '(^|/)(vendor/search-language/|fold-table\.bin$|lemma-is/|stop-lemma\.json$|stop-extra\.json$|function-verbs\.json$)'
 ```
 
-Each `grep` must print nothing. Any line printed stops the PR until a person has read it, because a version number can match the IP pattern.
+Any line printed stops the PR until a person has read it, because a version number can match the IP pattern. Two kinds of line are expected and safe: loopback addresses (`127.0.0.1`) in tests, and this check's own pattern line when the diff touches this file. Anything else must be removed before the PR.
 
 ## Upgrade
 
@@ -32,7 +32,7 @@ Every tenant moves to DocumentDB 8.0 before search work reaches it (FR-031). Mei
 1. Confirm `MaxCapacity` is at least 3.
 2. Take a manual snapshot and record its identifier in the private tenant record.
 3. Upgrade a clone of the tenant first. Time the downtime, and check that the `$type` partial indexes in `codeEnvironment.ts` survive.
-4. On the clone, run `packages/data-schemas/misc/documentdb/*.documentdb.spec.ts` and the lighthouse lane with `LIGHTHOUSE_MONGO_URI`. Only point that option at clones, because the lane seeds a conversation.
+4. On the clone, do the [engine compatibility run](#engine-compatibility-run), then run the lighthouse lane with `LIGHTHOUSE_MONGO_URI`. Only point that option at clones, because the lane seeds a conversation.
 5. Announce a window as long as the clone's downtime, plus the data-loss window below.
 
 **During the upgrade**
@@ -75,20 +75,21 @@ Fills one tenant's search collections while Meilisearch keeps serving (FR-028, F
    node config/search-job.js status
    ```
 
-   Read the `distinct tenantId values` line. More than one value means the database holds more than one tenant: stop, because one writer serves one database.
+   Read the `distinct tenantId values` line. More than one value means the database holds more than one tenant: stop, because one writer serves one database. `not read` means that read timed out, or a chain is running: run `status` again before going on, since the line has to show values or `-`.
 
 **Steps**
 1. Set `search.data: true`, leave `search.backend: meilisearch`, and do a rolling restart. Each process loads the language packs after it listens. One process takes the lease, creates the four search collections and starts following changes.
-2. Run `node config/search-job.js status` and expect `lease held: true`. If it stays `false`, look for `[search] Language pack failed` in the server logs.
-3. Request the backfill, at a time when its load is acceptable:
+2. Run `node config/search-job.js status` and expect `lease held: true`. If it stays `false`, look for `[search] Background start failed`, `[search] Job heartbeat failed` or `[search] Language pack failed` in the server logs. Each carries the error's class and driver code.
+3. Check that the stream delivers changes, because a stream that opens and delivers nothing looks healthy: `sync: last saved` keeps moving on an idle stream. Send one chat message on the tenant, wait a few seconds and run `status` again. `last change` on the `sync:` line must show a time at or after the message. If it stays `-`, the database-level stream does not see collections enabled one by one on this engine: set `search.sync.watch: collections`, restart, and repeat this step. Do not request the backfill until it passes.
+4. Request the backfill, at a time when its load is acceptable:
 
    ```bash
    node config/search-job.js backfill
    ```
 
-   Or set `search.jobs.backfillOnStart: true` in step 1. The lease holder then requests it by itself after startup, once, if no chain exists.
-4. Watch it with `node config/search-job.js status`. The lease holder runs the chain in order: backfill, indexes, word list, reconcile, verify. The `chain step` line shows the step, each collection's line shows rows processed, rate and estimated finish, and the `next:` line names the one thing to do.
-5. It is done when status shows `chain step: finished` and `verify: passed`. Meilisearch still serves, and `/api/search/enable` still answers from Meilisearch.
+   Or set `search.jobs.backfillOnStart: true` in step 1. The lease holder then requests it by itself after startup, once, if no chain exists. Step 3 still applies: verification fails as `sync_not_started` when the stream cannot open, and with `mismatch` on a stream that opens and delivers nothing.
+5. Watch it with `node config/search-job.js status`. The lease holder runs the chain in order: backfill, indexes, word list, reconcile, verify. The `chain step` line shows the step, each collection's line shows rows processed, rate and estimated finish, and the `next:` line names the one thing to do.
+6. It is done when status shows `chain step: finished` and `verify: passed`. Meilisearch still serves, and `/api/search/enable` still answers from Meilisearch.
 
 A crash or deploy mid-way needs no action: the next lease holder resumes the chain from its saved position, and a record sync wrote is never overwritten. Requesting `backfill` while a chain runs writes nothing.
 
@@ -157,7 +158,7 @@ node config/search-job.js resume
    | SC-006: warm p95 above 500 ms, or the largest user's above 1 s | No abort. The alarm goes to the owner, who decides |
 
 5. On the sandbox trial only: seven days in, run `node config/search-job.js reconcile` and read its `missing`, `orphans`, `stale` and `of` counts in status for SC-010. They are counted before anything is repaired.
-6. At cutover plus 30 days with no abort, remove Meilisearch and its volume together, in the infrastructure repository, and roll out with `MEILI_HOST` and `MEILI_MASTER_KEY` unset. The app runs cleanly without them (SC-015). Before the first removal anywhere, Rollback (b) must have been timed once on a snapshot clone of the trial tenant's data.
+6. At cutover plus 30 days with no abort, remove Meilisearch and its volume together, in the infrastructure repository, and roll out with `MEILI_HOST` and `MEILI_MASTER_KEY` unset. `SEARCH=true` stays set: without it `/api/search/enable` answers false and the search box disappears, with no log line. The app runs cleanly without the two Meilisearch variables (SC-015). Before the first removal anywhere, Rollback (b) must have been timed once on a snapshot clone of the trial tenant's data.
 
 **Capacity floor** (FR-038). From the first backfill on, check each tenant weekly from metrics, in working hours. The floor stays at 0.5 DCU unless one of these fires over 7 days:
 
@@ -176,7 +177,9 @@ Then raise the floor to 1.5 DCU, and to 2 if it still fires. If it still fires a
 3. Record how long the restart takes to reach all processes (SC-017), and the written cause of the abort.
 4. Leave `search.data: true` unless the cause is the sync writer's own load. Sync then keeps the records current for a return.
 
-Each process notes the change at its next start and invalidates the old verification, so an earlier pass can't serve again (FR-037).
+Each process notes the change at its next start and invalidates the old verification, so an earlier pass can't serve again (FR-037). `status` then shows `invalidated` after `last passed`, and its `next:` line asks for reconcile and verify.
+
+Never roll back by deleting the `search` block while search data exists. A process with no block reads nothing at all, so it cannot note the change, and the old pass would serve again when the block returns. Set `backend: meilisearch`, or `data: false`, and keep the block.
 
 **(b) After Meilisearch has been removed**
 
@@ -215,14 +218,37 @@ The search data is derived from messages and conversations, and it falls under t
    node config/search-job.js drop --yes
    ```
 
-   `--yes` confirms it, since a one-off task has no terminal to ask in. It refuses while search data is on, while a process still holds the sync lease, and when the configuration it loads has no `search` block (set `search.data: false` rather than deleting the block, and check `CONFIG_PATH`). And it removes only the four search collections: `msearch`, `csearch`, `search_vocab` and `search_state`. Messages and conversations are untouched. Record the date in the private tenant record. Turning search data on again after a drop needs a new backfill.
+   `--yes` confirms it, since a one-off task has no terminal to ask in. It refuses while search data is on, while a process still holds the sync lease, for `syncTakeoverSeconds` after a sync writer last saved its position (wait that long and run it again), and when the configuration it loads has no `search` block (set `search.data: false` rather than deleting the block, and check `CONFIG_PATH`). And it removes only the four search collections: `msearch`, `csearch`, `search_vocab` and `search_state`. Messages and conversations are untouched. Record the date in the private tenant record. Turning search data on again after a drop needs a new backfill.
+
+## Engine compatibility run
+
+Used by the upgrade and by the release checklist. The suites write and drop collections, so they need a database of their own on the clone, never the tenant's database.
+
+1. Pick a database name used by nothing else on the clone, for example `librechat_search_compat`.
+2. Enable change streams for that database, or the stream checks only report that streams are off:
+
+   ```js
+   db.adminCommand({ modifyChangeStreams: 1, database: 'librechat_search_compat', collection: '', enable: true });
+   ```
+
+3. Run every suite in strict mode. Without `DOCUMENTDB_STRICT=true` a query the engine rejects is only printed, and the run still exits 0:
+
+   ```bash
+   cd packages/data-schemas
+   DOCUMENTDB_URI="mongodb://<user>:<password>@<clone host>:27017/librechat_search_compat?tls=true&retryWrites=false&authSource=admin&authMechanism=SCRAM-SHA-1&directConnection=true" \
+   DOCUMENTDB_TLS_CA_FILE="global-bundle.pem" \
+   DOCUMENTDB_STRICT=true \
+     npx jest --config misc/documentdb/jest.documentdb.config.mjs
+   ```
+
+The step passes only when every suite ran and passed. A skipped suite means `DOCUMENTDB_URI` was not set, and counts as not run. Any failure stops the step that called for this run.
 
 ## Release checklist
 
 For every release that reaches a tenant with search data on (FR-031, FR-034, FR-040).
 
 1. **Query plan.** On the release, run `explain` on the message window read against a clone or the sandbox tenant. It must use the `user_tokens_created` index, in index order, with no sort stage. A change here stops the release: the latency targets rest on this plan.
-2. **Engine compatibility.** On a clone, run `packages/data-schemas/misc/documentdb/*.documentdb.spec.ts` and the lighthouse lane with `LIGHTHOUSE_MONGO_URI` set to the clone. Only point that option at clones, because the lane seeds a conversation.
+2. **Engine compatibility.** On a clone, do the [engine compatibility run](#engine-compatibility-run), then run the lighthouse lane with `LIGHTHOUSE_MONGO_URI` set to the clone. Only point that option at clones, because the lane seeds a conversation.
 3. **Quality, on an analyzer or ranking change.** Before any later tenant's cutover, rerun SC-001 to SC-004 with the private data:
 
    ```bash
@@ -234,3 +260,4 @@ For every release that reaches a tenant with search data on (FR-031, FR-034, FR-
 5. **Meilisearch index settings.** If the release changes Meilisearch index settings, write a plan first. `indexSync` then resets every sync flag at process start, which updates every message and conversation while the sync writer is on. Schedule it outside working hours, watch sync lag against SC-009, and expect the lag alarm.
 6. **Upstream.** Before each cutover, check upstream's own search direction again and record it ([R-20](research.md#r-20-upstream-search-check)).
 7. **Public repository.** Run the public repository check at the top of this file.
+8. **The tenant's `search` block.** Read it against this release's [contracts/config.md](contracts/config.md) before the deploy. The block is strict, and a configuration that fails validation stops the process at startup, so a key this release no longer accepts turns a deploy into a crash loop. Removed so far: `backend: shadow`, everything under `shadow:` (move `shadow.largestUserId` to `largestUserId`), and a `rankWindow` below 25.

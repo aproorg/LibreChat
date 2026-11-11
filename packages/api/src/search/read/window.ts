@@ -1,4 +1,5 @@
 import { SearchError } from '@librechat/data-schemas';
+import { SEARCH_PAGE_SIZE } from 'librechat-data-provider';
 import type { SearchMethods } from '@librechat/data-schemas';
 import type { Analyzer } from '../analyzer/analyze';
 import type { SearchReadRunner } from './retry';
@@ -9,8 +10,8 @@ import { proximityCandidates, rankHits, wordTiers } from './rank';
 import { readProximity } from './proximity';
 import { planBatches } from './plan';
 
-/** `/search`'s page (FR-013). */
-export const SEARCH_PAGE_SIZE = 25;
+/** `/search`'s page (FR-013). Shared with the client, which reads a shorter page as thinned. */
+export { SEARCH_PAGE_SIZE };
 /** FR-015's staleness bound on the ranked window. */
 export const SHARED_READ_TTL_MS = 30_000;
 
@@ -215,6 +216,9 @@ export interface RankReads {
   run: SearchReadRunner;
   methods: Pick<SearchMethods, 'readRecordTokens' | 'readMessageTexts'>;
   analyzer: Pick<Analyzer, 'analyzeWord'>;
+  /** The search's signal and deadline, for the ranking work between its reads. */
+  signal?: AbortSignal;
+  deadline?: number;
 }
 
 /**
@@ -281,7 +285,7 @@ export async function derivePage(
     const hits = rankHits(rows, words, { lengthBucket: options.lengthBucket });
     return { hits: hits.slice(0, options.limit), tierReached, more };
   }
-  const { user, run, methods, analyzer } = reads;
+  const { user, run, methods, analyzer, signal, deadline } = reads;
   const records = await run((read_) =>
     methods.readRecordTokens({ user, ids: rows.map(({ _id }) => _id) }, read_),
   );
@@ -294,6 +298,8 @@ export async function derivePage(
     analyzer,
     run,
     methods,
+    signal,
+    deadline,
   });
   const hits = rankHits(rows, words, { ...ranking, proximity });
   return { hits: hits.slice(0, options.limit), tierReached, more };

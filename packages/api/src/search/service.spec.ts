@@ -247,6 +247,116 @@ describe('createSearchService', () => {
       },
     );
 
+    it('ranks identical multi-word requests in flight once, and under a slot of the cap', async () => {
+      await harness.seed({
+        messages: [
+          sourceMessage({ text: 'blorg kvartana', messageId: 'both' }),
+          sourceMessage({ text: 'blorg filler kvartana', messageId: 'far' }),
+        ],
+      });
+      const created = await service({ maxConcurrentSearches: 2 });
+      const texts = jest.spyOn(harness.methods, 'readMessageTexts');
+      const tokens = jest.spyOn(harness.methods, 'readRecordTokens');
+
+      const pages = await Promise.all(
+        Array.from({ length: 6 }, () => created.searchMessages(contextFor(), 'blorg kvartana')),
+      );
+
+      /* Six requests, one user, a cap of two: all answer, from one plan read and one ranking. */
+      expect(pages.every((page) => page?.hits.length === 2)).toBe(true);
+      expect(texts).toHaveBeenCalledTimes(1);
+      expect(tokens).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds a slot of the cap while it ranks several words', async () => {
+      await harness.seed({ messages: [sourceMessage({ text: 'blorg kvartana' })] });
+      const created = await service({ maxConcurrentSearches: 1 });
+      const realTokens = harness.methods.readRecordTokens;
+      let other: Promise<unknown> | null = null;
+      const tokens = jest
+        .spyOn(harness.methods, 'readRecordTokens')
+        .mockImplementation(async (...args) => {
+          other ??= created
+            .searchMessages(contextFor('user-b'), 'horse')
+            .catch((error: unknown) => error);
+          return realTokens(...args);
+        });
+
+      const found = await created.searchMessages(contextFor(), 'blorg kvartana');
+
+      expect(found?.hits).toHaveLength(1);
+      expect(tokens).toHaveBeenCalledTimes(1);
+      await expect(other).resolves.toMatchObject({ code: 'search_busy' });
+    });
+
+    it('ranks for itself when the search whose ranking it joined leaves', async () => {
+      await harness.seed({ messages: [sourceMessage({ text: 'blorg kvartana' })] });
+      const created = await service({ maxConcurrentSearches: 2 });
+      const leaving = new AbortController();
+      const tokens = jest
+        .spyOn(harness.methods, 'readRecordTokens')
+        /* The first ranking's read never answers; the next one is the real read. */
+        .mockImplementationOnce(() => new Promise(() => undefined));
+
+      const starter = created
+        .searchMessages(contextFor('user-a', leaving.signal), 'blorg kvartana')
+        .catch((error: unknown) => error);
+      for (let waited = 0; waited < 200 && tokens.mock.calls.length === 0; waited += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const joiner = created.searchMessages(contextFor('user-a'), 'blorg kvartana');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(tokens).toHaveBeenCalledTimes(1);
+
+      leaving.abort();
+
+      expect(await starter).toMatchObject({ code: 'search_busy' });
+      expect((await joiner)?.hits).toHaveLength(1);
+      expect(tokens).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets one user hold only their share of the cap, and leaves the rest to others', async () => {
+      await harness.seed({
+        messages: [
+          sourceMessage({ text: 'blorg', user: 'user-a' }),
+          sourceMessage({ text: 'blorg', user: 'user-b' }),
+        ],
+      });
+      /* A cap of two gives each user one slot. */
+      const created = await service({ maxConcurrentSearches: 2 });
+      const leaving = new AbortController();
+      const realWindow = harness.methods.readRecordWindow;
+      jest
+        .spyOn(harness.methods, 'readRecordWindow')
+        .mockImplementation((params, read) =>
+          params.user === 'user-a' ? new Promise(() => undefined) : realWindow(params, read),
+        );
+
+      const held = created
+        .searchMessages(contextFor('user-a', leaving.signal), 'blorg')
+        .catch((error: unknown) => error);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await expect(created.searchMessages(contextFor('user-a'), 'kvartana')).rejects.toMatchObject({
+        code: 'search_busy',
+      });
+      expect((await created.searchMessages(contextFor('user-b'), 'blorg'))?.hits).toHaveLength(1);
+
+      leaving.abort();
+      expect(await held).toMatchObject({ code: 'search_busy' });
+    });
+
+    it('ranks one word from the rows it read, holding no slot', async () => {
+      await harness.seed({ messages: [sourceMessage({ text: 'blorg' })] });
+      const created = await service({ maxConcurrentSearches: 1 });
+      const tokens = jest.spyOn(harness.methods, 'readRecordTokens');
+
+      const found = await created.searchMessages(contextFor(), 'blorg');
+
+      expect(found?.hits).toHaveLength(1);
+      expect(tokens).not.toHaveBeenCalled();
+    });
+
     it('fails as busy at the cap, at once', async () => {
       await harness.seed({ messages: [sourceMessage({ text: 'blorg' })] });
       const created = await service({ maxConcurrentSearches: 1 });
@@ -341,6 +451,39 @@ describe('createSearchService', () => {
 
       controller.abort();
       await expect(stuck).rejects.toMatchObject({ code: 'search_busy' });
+    });
+
+    it('bounds title reads by a gate of their own, per user, and leaves the search cap alone', async () => {
+      await harness.seed({
+        conversations: [sourceConversation({ title: 'blorg', user: 'user-b' })],
+        messages: [sourceMessage({ text: 'blorg', user: 'user-b' })],
+      });
+      /* A cap of one: the title gate then holds four, and one of them per user. */
+      const created = await service({ maxConcurrentSearches: 1 });
+      const leaving = new AbortController();
+      const realRecords = harness.methods.readConversationRecords;
+      jest
+        .spyOn(harness.methods, 'readConversationRecords')
+        .mockImplementation((params, read) =>
+          params.user === 'user-a' ? new Promise(() => undefined) : realRecords(params, read),
+        );
+
+      const held = created
+        .titleMatches(contextFor('user-a', leaving.signal), 'blorg')
+        .catch((error: unknown) => error);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await expect(created.titleMatches(contextFor('user-a'), 'kvartana')).rejects.toMatchObject({
+        code: 'search_busy',
+      });
+      expect(
+        (await created.titleMatches(contextFor('user-b'), 'blorg'))?.conversationIds,
+      ).toHaveLength(1);
+      /* A held title read takes no slot of the search cap. */
+      expect((await created.searchMessages(contextFor('user-b'), 'blorg'))?.hits).toHaveLength(1);
+
+      leaving.abort();
+      expect(await held).toMatchObject({ code: 'search_busy' });
     });
 
     it('answers a reason for only stop words', async () => {
@@ -484,6 +627,28 @@ describe('createSearchService', () => {
       expect(await search('tenant-b')).toBeGreaterThan(afterFirst);
     });
 
+    it('never shares a word list expansion between users', async () => {
+      const { methods } = harness;
+      const readVocabRange = jest.fn(methods.readVocabRange);
+      const created = createSearchService({
+        config: createSearchConfigSnapshot({ search: searchConfig() }),
+        methods: { ...methods, readVocabRange },
+        metrics: harness.metrics,
+        logger: harness.logger,
+        cursorSecret: 'secret',
+        resolvePacks: () => ({ ok: true, packs: harness.packs }),
+      });
+      await created.loadPacks();
+
+      /* A word the word list does not hold is expanded by prefix before the first read. */
+      await created.searchMessages(contextFor('user-a'), 'blor');
+      const afterFirst = readVocabRange.mock.calls.length;
+      expect(afterFirst).toBeGreaterThan(0);
+
+      await created.searchMessages(contextFor('user-b'), 'blor');
+      expect(readVocabRange.mock.calls.length).toBeGreaterThan(afterFirst);
+    });
+
     it('reports a served read as no reads of its own', async () => {
       await harness.seed({
         messages: [sourceMessage({ text: 'blorg' })],
@@ -534,6 +699,9 @@ describe('createSearchService', () => {
         now: () => now,
       });
 
+      expect(created.noteRequest('user-a').coldAfterIdle).toBe(true);
+      /* The same search's other surface starts a moment later and waits on the same cold read. */
+      now += 40;
       expect(created.noteRequest('user-a').coldAfterIdle).toBe(true);
       now += 60_000;
       expect(created.noteRequest('user-a').coldAfterIdle).toBe(false);

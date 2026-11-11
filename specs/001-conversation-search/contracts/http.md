@@ -9,7 +9,7 @@ Applies when `backend: search`. On `meilisearch`, a cursor with the `s1.` prefix
 | Field | Type | Notes |
 |---|---|---|
 | `messages` | array | Same fields the client renders today; private fields stripped; ranked order kept |
-| `nextCursor` | string or null | Non-null whenever more matches may exist, even when `messages` is short or empty after filtering |
+| `nextCursor` | string or null | Non-null whenever more matches may exist, even when `messages` is short or empty after filtering. One exception: a plan too large for the cursor's fixed slot (R-06) yields `null`, so that search has no load-more |
 | `reason` | `only_stop_words`, optional | With `messages: []` |
 
 **Request**: `cursor` is opaque and encrypted ([R-06](../research.md#r-06-paging-model)). `pageSize` is ignored: the page is 25 (FR-013). `user` comes from the session only. Every other parameter behaves as today.
@@ -29,10 +29,12 @@ Bare boolean, as today, with the status read cached ([R-15](../research.md#r-15-
 | Backend | True when |
 |---|---|
 | `SEARCH` off | Never |
-| `meilisearch` | Meilisearch healthy, and `search.meiliResyncPending` is unset or, per model, nothing is pending indexing or cleanup and unprocessed documents are within `MEILI_SYNC_THRESHOLD` |
-| `search` | `search.data` on, this process's packs loaded, and `verification.status` is `passed` with `passedAt` later than `invalidatedAt` |
+| `meilisearch` | `MEILI_HOST` and `MEILI_MASTER_KEY` both set, Meilisearch healthy, and `search.meiliResyncPending` is unset or, per model, nothing is pending indexing or cleanup and unprocessed documents are within `MEILI_SYNC_THRESHOLD` |
+| `search` | `search.data` on, no pack failed to load in this process, and `verification.status` is `passed` with `passedAt` later than `invalidatedAt` |
 
-Misconfiguration (`backend: search` with `data` off): `search` reports false and logs a configuration error. A pack that failed to load makes `search` report false in that process, and alarms.
+One change from before this feature: with `MEILI_HOST` set and no `MEILI_MASTER_KEY`, the answer was true when Meilisearch was healthy, and is now false. Search could not work in that state, because indexing needs both, so this hides a search box that returned nothing.
+
+Misconfiguration (`backend: search` with `data` off): `search` reports false and logs a configuration error. A pack that failed to load makes `search` report false in that process, and alarms. While packs are still loading it reports true, because the client asks once per app load and keeps the answer; a search in those seconds answers `search_busy`.
 
 ## GET /api/search/meta (new)
 

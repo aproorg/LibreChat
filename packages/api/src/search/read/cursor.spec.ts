@@ -297,6 +297,14 @@ describe('search cursor', () => {
     ).toThrow(invalid);
   });
 
+  it('accepts U+FFFD for a surrogate half the cut left, which is what the client sends', () => {
+    const pasted = `${'a'.repeat(CURSOR_QUERY_CHARS - 1)}\u{1F600}tail`;
+    const encoded = codec.encode(cursor(), { user: USER, query: pasted }) as string;
+    const sent = `${'a'.repeat(CURSOR_QUERY_CHARS - 1)}\uFFFD`;
+
+    expect(() => codec.decode(encoded, { user: USER, query: sent })).not.toThrow();
+  });
+
   describe('size', () => {
     /** Incompressible, as real word-list tokens nearly are once deflated together. */
     const token = (seed: number, length = 24) =>

@@ -12,12 +12,12 @@ search:
   languageDataDir: ''        # required when `is` is enabled; R-02
   largestUserId: ''          # set in tenant config; only a boolean reaches logs
   sidebarLimit: 1000         # today's value
-  rankWindow: 200            # max 200; bounds cursor size (R-06)
+  rankWindow: 200            # 25 to 200; the maximum bounds cursor size (R-06), the minimum is one page
   readConcurrency: 2
-  maxConcurrentSearches: 4
+  maxConcurrentSearches: 4   # one user holds at most half; title reads have their own gate at 4x (R-12)
   queryWordLimit: 10         # max 32; the words ride in the cursor (R-06)
   searchTimeoutMs: 10000
-  syncTakeoverSeconds: 30
+  syncTakeoverSeconds: 30    # a waiting process checks every third of this, so takeover takes up to 4/3 of it
   vocabFlushSeconds: 300
   reconcileDays: 30
   sharedReadMaxBytes: 67108864
@@ -28,7 +28,7 @@ search:
     batchSize: 200
     batchDelayMs: 1000
     vocabCopyBatchSize: 5000 # word list rows per batch in a rebuild's copy pass; max 50000
-    backfillOnStart: false   # the lease holder requests a backfill after startup if no chain has finished
+    backfillOnStart: false   # the lease holder requests a backfill after startup if no chain exists yet
   sync:
     watch: database          # database | collections: R-05's fallback opens one stream per source collection
     dropUpdatedText: true    # R-09's $project on update events; off if the engine rejects the stage

@@ -19,7 +19,7 @@ Structured `logger` events under `search.*`, per [R-14](../research.md#r-14-metr
 | `search.backfill` | `collection`, `rate`, `processed`, `status`, `pausedReason?` | FR-028, watching a first run |
 | `search.realtext` | `tokensPerMessage`, `tierShare`, `prefixFanout`, `atCap`, `noLetterQueries`, `stopOnlyQueries`, `typoSkippedWordExists`, `vocabRowsTruncated` | §10's real text list, plus how often a budget cut a word list read |
 
-`isLargestUser` compares the caller to `search.largestUserId`, so the log line holds no ID. `coldAfterIdle` is true for the first search in this process after 30 minutes with none. On a multi-task tenant one process can be cold while the cluster is not, so the runbook keeps only samples where capacity was at the floor.
+`isLargestUser` compares the caller to `search.largestUserId`, so the log line holds no ID. `coldAfterIdle` is true for the first search in this process after 30 minutes with none, and for a request that starts within 5 seconds of it: one search fires `/search` and the sidebar together, and both wait on the same cold read. Each surface takes the note when its request starts. On a multi-task tenant one process can be cold while the cluster is not, so the runbook keeps only samples where capacity was at the floor.
 
 ## Source per measure
 

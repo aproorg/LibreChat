@@ -11,6 +11,7 @@ describe('dropSearchData', () => {
   let harness: SearchHarness;
   const NOW = Date.parse('2026-06-01T12:00:00Z');
   const now = () => NOW;
+  const OFF = { data: false, syncTakeoverSeconds: 30 };
 
   const collections = async () =>
     (await harness.database.connection.db!.listCollections().toArray()).map(({ name }) => name);
@@ -37,7 +38,7 @@ describe('dropSearchData', () => {
     await harness.methods.writeSearchState('verification', { status: 'passed' });
     await harness.methods.incrementSearchVocab({ counts: [['word', 1]], run: null });
 
-    const result = await dropSearchData({ methods: harness.methods, config: { data: false }, now });
+    const result = await dropSearchData({ methods: harness.methods, config: OFF, now });
 
     expect(result.ok && [...result.value.dropped].sort()).toEqual(SEARCH_COLLECTIONS);
     expect((await collections()).sort()).toEqual(['conversations', 'messages', 'search_unrelated']);
@@ -52,7 +53,7 @@ describe('dropSearchData', () => {
 
     const result = await dropSearchData({
       methods: withMethods(harness, { readSearchState, dropSearchCollections }),
-      config: { data: true },
+      config: { ...OFF, data: true },
       now,
     });
 
@@ -65,14 +66,15 @@ describe('dropSearchData', () => {
   it('refuses while a process holds the lease, and goes ahead once it has run out', async () => {
     await harness.methods.writeSearchState('lease', { leaseUntil: new Date(NOW + 1) });
 
-    expect(
-      await dropSearchData({ methods: harness.methods, config: { data: false }, now }),
-    ).toEqual({ ok: false, error: { code: 'search_lease_held' } });
+    expect(await dropSearchData({ methods: harness.methods, config: OFF, now })).toEqual({
+      ok: false,
+      error: { code: 'search_lease_held' },
+    });
     expect(await searchCollections()).toEqual(SEARCH_COLLECTIONS);
 
     const later = await dropSearchData({
       methods: harness.methods,
-      config: { data: false },
+      config: OFF,
       now: () => NOW + 1,
     });
 
@@ -80,12 +82,33 @@ describe('dropSearchData', () => {
     expect(await searchCollections()).toEqual([]);
   });
 
+  it('refuses while a sync writer saved its position within the takeover time', async () => {
+    /* A lease given up at shutdown looks run out, while another process may be about to take it. */
+    await harness.methods.writeSearchState('lease', { leaseUntil: new Date(0) });
+    await harness.methods.writeSearchState('stream', { savedAt: new Date(NOW - 29_000) });
+
+    expect(await dropSearchData({ methods: harness.methods, config: OFF, now })).toEqual({
+      ok: false,
+      error: { code: 'search_sync_recent' },
+    });
+    expect(await searchCollections()).toEqual(SEARCH_COLLECTIONS);
+
+    const later = await dropSearchData({
+      methods: harness.methods,
+      config: OFF,
+      now: () => NOW + 2_000,
+    });
+    expect(later.ok).toBe(true);
+    expect(await searchCollections()).toEqual([]);
+  });
+
   it('is safe to repeat, and creates nothing where search was never on', async () => {
     await harness.database.connection.db!.dropDatabase();
 
-    expect(
-      await dropSearchData({ methods: harness.methods, config: { data: false }, now }),
-    ).toEqual({ ok: true, value: { dropped: [] } });
+    expect(await dropSearchData({ methods: harness.methods, config: OFF, now })).toEqual({
+      ok: true,
+      value: { dropped: [] },
+    });
     expect(await collections()).toEqual([]);
   });
 
@@ -102,9 +125,10 @@ describe('dropSearchData', () => {
       },
     });
 
-    await dropSearchData({ methods, config: { data: false }, now });
+    await dropSearchData({ methods, config: OFF, now });
 
-    expect(seen).toEqual([SYSTEM_TENANT_ID, SYSTEM_TENANT_ID]);
+    /* The lease read, the sync position read, and the drop. */
+    expect(seen).toEqual([SYSTEM_TENANT_ID, SYSTEM_TENANT_ID, SYSTEM_TENANT_ID]);
   });
 
   it('lets a failed drop reach the caller rather than report success', async () => {
@@ -112,8 +136,6 @@ describe('dropSearchData', () => {
       dropSearchCollections: () => Promise.reject(new Error('drop failed')),
     });
 
-    await expect(dropSearchData({ methods, config: { data: false }, now })).rejects.toThrow(
-      'drop failed',
-    );
+    await expect(dropSearchData({ methods, config: OFF, now })).rejects.toThrow('drop failed');
   });
 });

@@ -3194,10 +3194,14 @@ export const searchConfigSchema = z
     /** Most messages the sidebar reads for one search. */
     sidebarLimit: searchLimit(1000),
     /** Rows ranked per read window. The cap bounds the size of a paging cursor. */
-    rankWindow: z.number().int().min(1).max(200).default(200),
+    /* At least a page: below it, load-more degenerates into thousands of tiny windows. */
+    rankWindow: z.number().int().min(25).max(200).default(200),
     /** Most database reads one search runs at once. */
     readConcurrency: searchLimit(2),
-    /** Most searches a process serves at once. Above it, a search fails as busy at once. */
+    /**
+     * Most searches a process serves at once. Above it, a search fails as busy at once.
+     * One user holds at most half of it, and at least one.
+     */
     maxConcurrentSearches: searchLimit(4),
     /** Most query words used, counted after stop-word removal. At most 32: the words ride in load-more's cursor. */
     queryWordLimit: z.number().int().min(1).max(32).default(10),
@@ -3230,8 +3234,9 @@ export const searchConfigSchema = z
          */
         vocabCopyBatchSize: z.number().int().min(1).max(50000).default(5000),
         /**
-         * The lease holder requests a backfill after startup if no chain has finished, so a
-         * deploy can start it. Off, a backfill starts only when an operator requests one.
+         * The lease holder requests a backfill after startup if no chain exists yet, so a
+         * deploy can start it. An unfinished chain resumes and a finished one stays finished.
+         * Off, a backfill starts only when an operator requests one.
          */
         backfillOnStart: z.boolean().default(false),
       })

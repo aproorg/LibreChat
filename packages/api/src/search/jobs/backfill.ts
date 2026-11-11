@@ -9,14 +9,15 @@ import type { JobControl, JobOutcome } from './control';
 import type { Analyzer } from '../analyzer/analyze';
 import type { SearchMetrics } from '../metrics';
 import {
+  ANALYZER_KEY,
   BACKFILL_KEYS,
   giveWay,
   JOB_STATE_READ,
-  objectIdFloor,
   SOURCE_COLLECTIONS,
 } from './control';
 import { belongsInSearch, buildConversationRecord, buildMessageRecord } from '../sync/record';
 import { removeRecordsOfGoneSources } from './check';
+import { holdTenantPin } from '../sync/tenant';
 
 export type BackfillMethods = Pick<
   SearchMethods,
@@ -32,12 +33,6 @@ export type BackfillMethods = Pick<
 const REPORT_EVERY_MS = 60_000;
 /** Weight of the latest batch in the reported rate, so it follows the current pace. */
 const RATE_WEIGHT = 0.3;
-/**
- * How far behind the walk's end its finishing position sits. IDs are made by app processes,
- * so a row saved just after the last read can sort below it. Older rows have all landed.
- */
-const SETTLE_MS = 60_000;
-
 export interface BackfillDeps {
   methods: BackfillMethods;
   analyzer: Analyzer;
@@ -85,6 +80,8 @@ async function walkCollection(
   let rate = 0;
   let batchStart = now();
   let reportedAt = 0;
+  const analyzerState = await methods.readSearchState(ANALYZER_KEY, JOB_STATE_READ);
+  let pinned = typeof analyzerState?.tenantId === 'string' ? analyzerState.tenantId : null;
 
   const report = (status: 'running' | 'paused' | 'finished' | 'failed') => {
     metrics.backfill({
@@ -124,6 +121,12 @@ async function walkCollection(
       if (rows.length === 0) {
         break;
       }
+      /* Before any of these rows is indexed: backfill reads every row, as the writer does (R-04). */
+      pinned = await holdTenantPin(
+        methods,
+        rows.map(({ tenantId }) => tenantId),
+        pinned,
+      );
 
       const records: Array<MessageSearchRecord | ConversationSearchRecord> = [];
       for (const row of rows) {
@@ -185,7 +188,6 @@ async function walkCollection(
     await methods.writeSearchState(key, {
       status: 'finished',
       finishedAt: new Date(now()),
-      finishedAtId: finishingPosition(lastId, now()),
       rate: 0,
     });
     report('finished');
@@ -198,10 +200,4 @@ async function walkCollection(
     }
     throw error;
   }
-}
-
-/** Where verification stops while no writer runs: nothing past here was promised a record. */
-function finishingPosition(lastId: string | undefined, at: number): string {
-  const settled = objectIdFloor(at - SETTLE_MS);
-  return lastId != null && lastId < settled ? lastId : settled;
 }

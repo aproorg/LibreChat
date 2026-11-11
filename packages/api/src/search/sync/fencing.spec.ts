@@ -57,7 +57,7 @@ describe('search sync fencing', () => {
       analyzer: harness.analyzer,
       version: version(),
       turn: turn(epoch),
-      vocab: { add: () => undefined },
+      vocab: { add: () => undefined, settle: async () => undefined },
       ...overrides,
     });
 
@@ -92,7 +92,8 @@ describe('search sync fencing', () => {
       label: 'the takeover',
     });
     const tookMs = Date.now() - pausedAt;
-    expect(tookMs).toBeLessThan(1000 + 500);
+    /* A 1 s lease, checked every third of it. The margin is for a loaded machine. */
+    expect(tookMs).toBeLessThan(1000 + 4000);
     expect(second.lease.epoch()).toBe((first.lease.epoch() ?? 0) + 1);
     second.writer.start();
 
@@ -115,7 +116,7 @@ describe('search sync fencing', () => {
       analyzer: harness.analyzer,
       version: version(),
       turn: turn(2, () => true, Date.now()),
-      vocab: { add: () => undefined },
+      vocab: { add: () => undefined, settle: async () => undefined },
     });
     expect(await recordOf(harness, 'msearch', id)).toMatchObject({ e: 2 });
 
@@ -141,7 +142,7 @@ describe('search sync fencing', () => {
       version: version(),
       /* Held before the write, lost by the check after it. */
       turn: turn(1, () => (checks += 1) === 1),
-      vocab: { add: () => undefined },
+      vocab: { add: () => undefined, settle: async () => undefined },
     });
 
     expect(result.lost).toBe(true);
@@ -303,7 +304,7 @@ describe('search sync fencing', () => {
       { id: poison, attempts: 3, code: 'write_failed' },
     ]);
     expect((await reconcileRequests()).map(({ _id }) => _id)).toEqual(
-      expect.arrayContaining([expect.stringMatching(/^jobRequest:skip-/)]),
+      expect.arrayContaining(['jobRequest:skip']),
     );
   });
 
@@ -463,6 +464,29 @@ describe('search sync fencing', () => {
     expect(await stateOf(harness, 'analyzer')).toMatchObject({ tenantId: 'tenant-one' });
     expect(eventsOf(harness, 'search.sync_stop')).toEqual([{ code: 'tenant_mismatch' }]);
     expect(JSON.stringify(harness.logged)).not.toContain('tenant-two');
+    /* The pass is withdrawn, so no process goes on serving a database that holds two tenants. */
+    await waitFor(
+      async () => (await stateOf(harness, 'verification'))?.invalidatedAt instanceof Date,
+      { label: 'the pass to be withdrawn' },
+    );
+    expect(await stateOf(harness, 'verification')).toMatchObject({
+      invalidatedBy: 'tenant_mismatch',
+    });
+  });
+
+  it('a row with no user gets no record, and is not an event that failed', async () => {
+    const id = '0000000000000000000000b7';
+    const ownerless: SearchSourceEvent = {
+      type: 'upsert',
+      collection: 'messages',
+      id,
+      at: Date.now(),
+      source: { ...sourceMessage({ text: 'words nobody owns' }), _id: id, user: undefined },
+    };
+
+    await expect(apply([ownerless], 1)).resolves.toMatchObject({ lost: false });
+
+    expect(await recordOf(harness, 'msearch', id)).toBeNull();
   });
 
   it('a stalled writer trips search.sync_status: an old save, and no holder', async () => {

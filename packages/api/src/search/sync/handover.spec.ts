@@ -10,11 +10,17 @@ import {
   synced,
 } from './__tests__/helpers/sync';
 import {
+  createRunner,
+  settle,
+  stateOf,
+  storeSources,
+  writerSaved,
+} from '../jobs/__tests__/helpers/jobs';
+import {
   createSearchHarness,
   sourceConversation,
   sourceMessage,
 } from '../__tests__/helpers/harness';
-import { createRunner, settle, stateOf, storeSources } from '../jobs/__tests__/helpers/jobs';
 import { runSearchJobCommand } from '../jobs/script';
 
 /**
@@ -55,19 +61,18 @@ describe('the writer arriving on a backfilled tenant', () => {
   });
 
   it('backfill finished, writes while no writer ran, writer starts, verification passes over every source', async () => {
-    /* 1. The first backfill, with no writer: the chain finishes and verification passes. */
+    /* 1. The first backfill, as the build before the writer left it: a pass and no stream state. */
     const early = [sourceMessage({ text: 'kerfi early' }), sourceMessage({ text: 'kerfi edited' })];
     await storeSources(harness, 'messages', [...early, sourceMessage({ text: 'kerfi deleted' })]);
     await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
     const backfillOnly = createRunner(harness);
+    await writerSaved(harness);
     await request('backfill');
     await settle(backfillOnly, 4);
     await backfillOnly.stop();
+    await harness.methods.deleteSearchState('stream');
     expect(await stateOf(harness, 'chain')).toMatchObject({ finishedAt: expect.any(Date) });
-    expect(await stateOf(harness, 'verification')).toMatchObject({
-      status: 'passed',
-      mode: 'backfill',
-    });
+    expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed' });
 
     /* 2. Chat goes on with no writer: new messages, an edit, a delete, a turn to temporary. */
     const added = await Promise.all(['one', 'two', 'three'].map((n) => writeWhileNoWriter(n)));
@@ -115,17 +120,11 @@ describe('the writer arriving on a backfilled tenant', () => {
     await synced(harness);
     expect(await recordOf(harness, 'msearch', live)).toMatchObject({ e: proc.lease.epoch() });
 
-    /* 6. Verification now checks every source, with no backfill bound, and passes. */
+    /* 6. Verification checks every source and passes. */
     await request('verify');
     await settle(proc.runner, 4);
     const verification = await stateOf(harness, 'verification');
-    expect(verification).toMatchObject({
-      status: 'passed',
-      mode: 'writer',
-      missing: 0,
-      orphans: 0,
-      changedSinceBackfill: 0,
-    });
+    expect(verification).toMatchObject({ status: 'passed', missing: 0, orphans: 0 });
     /* Messages: three backfilled less one deleted, four written with no writer, one live. One conversation. */
     expect(verification?.checked).toBe(8);
   });
@@ -133,9 +132,11 @@ describe('the writer arriving on a backfilled tenant', () => {
   it('a verification before the reconcile catches up fails, and the mismatch loop mends it', async () => {
     await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
     const backfillOnly = createRunner(harness);
+    await writerSaved(harness);
     await request('backfill');
     await settle(backfillOnly, 4);
     await backfillOnly.stop();
+    await harness.methods.deleteSearchState('stream');
     const missed = await writeWhileNoWriter('missed');
     /* The gap's reconcile request is dropped, as if an operator had cleared it. */
     proc = createSyncProcess(harness);
@@ -147,11 +148,7 @@ describe('the writer arriving on a backfilled tenant', () => {
 
     await request('verify');
     await settle(proc.runner, 1);
-    expect(await stateOf(harness, 'verification')).toMatchObject({
-      status: 'failed',
-      mode: 'writer',
-      missing: 1,
-    });
+    expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'failed', missing: 1 });
 
     await settle(proc.runner, 4);
     expect(await recordOf(harness, 'msearch', missed)).not.toBeNull();

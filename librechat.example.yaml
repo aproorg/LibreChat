@@ -1256,9 +1256,9 @@ endpoints:
 #   languages: [is, en]        # Enabled language packs
 #   languageDataDir: ''        # Directory of language data delivered outside this repository; required when `is` is enabled
 #   sidebarLimit: 1000         # Most messages the sidebar reads for one search
-#   rankWindow: 200            # Rows ranked per read window (max 200)
+#   rankWindow: 200            # Rows ranked per read window (25 to 200)
 #   readConcurrency: 2         # Most database reads one search runs at once
-#   maxConcurrentSearches: 4   # Most searches a process serves at once
+#   maxConcurrentSearches: 4   # Most searches a process serves at once; one user holds at most half
 #   queryWordLimit: 10         # Most query words used, after stop-word removal
 #   searchTimeoutMs: 10000     # Time allowed for one search
 #   syncTakeoverSeconds: 30    # Seconds before another process takes over from a silent sync writer
@@ -1272,7 +1272,7 @@ endpoints:
 #     batchSize: 200           # Documents read per batch in backfill and repair jobs
 #     batchDelayMs: 1000       # Pause between batches
 #     vocabCopyBatchSize: 5000 # Word list rows settled per batch at the end of a rebuild (max 50000)
-#     backfillOnStart: false   # Request a backfill after startup if no chain has finished, so a deploy can start it
+#     backfillOnStart: false   # Request a backfill after startup if no chain exists yet, so a deploy can start it
 #   sync:
 #     watch: database          # database | collections: one change stream, or one per source collection
 #     dropUpdatedText: true    # Drop content and text from update events, so a large message edit fits

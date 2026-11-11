@@ -7,7 +7,7 @@ import type { SearchReadRunner } from './retry';
 import type { TypoBudget } from './typo';
 import { buildTierJobs, expandPrefix, RARE_DF, READ_TIERS } from './tiers';
 import { PLAN_BUDGET_BYTES, PLAN_SLOT_BYTES, planBytes } from './frozen';
-import { expandTypos } from './typo';
+import { expandTypos, MAX_TYPO_WORDS } from './typo';
 
 /** A read the plan ran. Jobs sharing a `batch` ran together. */
 export interface PlanJob extends TierJob {
@@ -208,7 +208,8 @@ export function planBatches(jobs: readonly PlanJob[]): number[][] {
 }
 
 /**
- * Ported from `final/search.mjs`: document frequencies in one read, then tiers in
+ * Ported from the design's reference implementation (`final/search.mjs`, outside this
+ * repository): document frequencies in one read, then tiers in
  * order, stopping once the page can fill. All words are required first, and trailing
  * words drop while the page cannot fill. Rows stay grouped by job, so each surface can
  * replay the stop rule for its own size from the one read (R-08).
@@ -257,11 +258,14 @@ export async function readSearchPlan(options: ReadPlanOptions): Promise<PlanRead
       realtext?.addVocabRowsTruncated();
     }
   };
+  let corrected = 0;
   const typosFor = async (index: number) => {
     const word = planned[index];
-    if (word.typos) {
+    /* Past the cap a word stays uncorrected, so it matches as typed here and in the walk. */
+    if (word.typos || corrected >= MAX_TYPO_WORDS) {
       return;
     }
+    corrected += 1;
     const expansion = await expansions.typos(word.exact);
     learn(expansion);
     word.typos = fitTypos(planned, index, expansion, df);

@@ -120,6 +120,20 @@ describe('analyzeQuery', () => {
     expect(result.words.map(({ raw }) => raw)).toEqual(['aaax', 'bbbx', 'cccx']);
   });
 
+  it('analyzes only the words it will use, however long the query', async () => {
+    const analyzer = await build();
+    const lemmas = jest.spyOn(analyzer.packs[0], 'lemmas');
+    const query = Array.from({ length: 500 }, (_, index) => `word${index}x`).join(' ');
+
+    const result = analyzeQuery(analyzer, `the ${query}`, { queryWordLimit: 3 });
+
+    expect(result.words.map(({ raw }) => raw)).toEqual(['word0x', 'word1x', 'word2x']);
+    expect(result.dropped).toEqual(['the']);
+    /* Three words go through the packs, not five hundred. */
+    expect(new Set(lemmas.mock.calls.map(([word]) => word)).size).toBeLessThanOrEqual(3);
+    lemmas.mockRestore();
+  });
+
   it('ignores a word over 48 characters', async () => {
     const analyzer = await build();
 

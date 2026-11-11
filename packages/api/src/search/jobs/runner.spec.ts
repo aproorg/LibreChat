@@ -7,6 +7,7 @@ import {
   stateOf,
   storeSources,
   withMethods,
+  writerSaved,
 } from './__tests__/helpers/jobs';
 import {
   createSearchHarness,
@@ -41,6 +42,7 @@ describe('search job runner', () => {
 
   beforeEach(async () => {
     await harness.reset();
+    await writerSaved(harness);
   });
 
   describe('the lease', () => {
@@ -575,6 +577,44 @@ describe('search job runner', () => {
       expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 1 });
     });
 
+    it('a backfill request waits for a verify that is running, which still reads the old backfill state', async () => {
+      await seed();
+      const gate = { closed: false, open: () => undefined as void };
+      const methods = withMethods(harness, {
+        readSearchSources: async (params) => {
+          if (gate.closed) {
+            gate.closed = false;
+            await new Promise<void>((resolve) => {
+              gate.open = resolve;
+            });
+          }
+          return harness.methods.readSearchSources(params);
+        },
+      });
+      const runner = createRunner(harness, { methods });
+      await request('backfill');
+      await settle(runner);
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+      const firstChain = (await chain())?.requestId;
+
+      gate.closed = true;
+      await request('verify');
+      await runner.tick();
+      await request('backfill');
+      await runner.tick();
+
+      /* Held: a new chain here would delete the state the running verify is about to read. */
+      expect((await chain())?.requestId).toBe(firstChain);
+      expect(await stateOf(harness, BACKFILL_KEYS.messages)).toMatchObject({ status: 'finished' });
+
+      gate.open();
+      await settle(runner, 6);
+      expect((await chain())?.requestId).not.toBe(firstChain);
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+      expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed' });
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+    });
+
     it('waits while a chain is unfinished', async () => {
       await seed();
       const runner = createRunner(harness);
@@ -762,6 +802,43 @@ describe('search job runner', () => {
       await settle(createRunner(harness), 3);
 
       expect(await stateOf(harness, 'verification')).toMatchObject({ status: 'passed', rounds: 2 });
+    });
+
+    it('keeps the request for skipped events when it is written again while its reconcile runs', async () => {
+      await finishChain();
+      const skip = (at: number) =>
+        harness.methods.writeSearchState('jobRequest:skip', {
+          job: 'reconcile',
+          requestedAt: new Date(at),
+        });
+      await skip(Date.now());
+      await expireLease(harness);
+      let rewritten = false;
+      const runner = createRunner(harness, {
+        methods: withMethods(harness, {
+          /* The writer skips another event, for a row this walk may already have passed. */
+          readSearchSources: async (...args) => {
+            if (!rewritten && (await reconcileState())?.status === 'running') {
+              rewritten = true;
+              await skip(Date.now() + 50);
+            }
+            return harness.methods.readSearchSources(...args);
+          },
+        }),
+      });
+
+      await settle(runner, 1);
+
+      expect(rewritten).toBe(true);
+      expect((await harness.methods.listSearchJobRequests()).map(({ _id }) => _id)).toEqual([
+        'jobRequest:skip',
+      ]);
+
+      /* The next run starts after that request, answers it, and removes it. */
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await settle(runner, 2);
+      expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+      await runner.stop();
     });
 
     it('a request newer than a resumed reconcile is answered only by a fresh run', async () => {

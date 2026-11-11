@@ -5,7 +5,7 @@ import {
   sourceMessage,
   searchConfig,
 } from '../__tests__/helpers/harness';
-import { recordCount, settle, stateOf, storeSources } from './__tests__/helpers/jobs';
+import { recordCount, settle, stateOf, storeSources, writerSaved } from './__tests__/helpers/jobs';
 import { readSearchJobStatus, runSearchJobCommand } from './script';
 import { bindSearch, startSearchBackground } from '../start';
 
@@ -75,6 +75,8 @@ describe('backfill chain, end to end', () => {
     const jobs = binding.jobs()!;
     expect(jobs).not.toBeNull();
     expect(await binding.enabled()).toBe(false);
+    /* No replica set here, so the real writer cannot open its stream: state what a healthy one saves. */
+    await writerSaved(harness);
 
     const code = await runSearchJobCommand({
       argv: ['backfill'],

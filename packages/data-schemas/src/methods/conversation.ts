@@ -48,10 +48,10 @@ import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/
 import { isAgentFadingTier, isAgentFadingTierEntries } from '~/utils/fading';
 import { isCompactionSemanticIndexProjection } from '~/types/compaction';
 import { withoutMeiliIndexing } from '~/models/plugins/mongoMeili';
+import { isSearchError, SearchError } from '~/utils/searchError';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { decrementTagCounts } from './conversationTag';
-import { isSearchError } from '~/utils/searchError';
 import logger from '~/config/winston';
 
 const ACTOR_CHECKPOINT_FIELDS = [
@@ -2991,7 +2991,12 @@ export function createConversationMethods(
       try {
         /* `null` from the port means Meilisearch serves, and today's code below runs unchanged. */
         const portMatches = searchContext
-          ? await (deps?.getSearchPort?.() ?? null)?.conversationMatches(searchContext, search)
+          ? await Promise.resolve(
+              (deps?.getSearchPort?.() ?? null)?.conversationMatches(searchContext, search),
+            ).catch((portError: unknown) => {
+              /* Whatever the port throws is a failed search, and its text never reaches the log below. */
+              throw isSearchError(portError) ? portError : new SearchError('search_failed');
+            })
           : null;
         if (portMatches) {
           searchAdditions = {

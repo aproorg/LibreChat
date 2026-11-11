@@ -125,13 +125,20 @@ describe('getConvosByCursor search port', () => {
     ).rejects.toMatchObject({ name: 'SearchError', code: 'search_busy' });
   });
 
-  it('still rewraps any other error, as today', async () => {
+  it('turns any other error from the port into a coded failure, so its text is never logged', async () => {
     answer = async () => {
       throw new Error('raw detail');
     };
     await expect(
       methods.getConvosByCursor(USER, { search: 'word', searchContext: context }),
-    ).rejects.toThrow('Error during meiliSearch');
+    ).rejects.toMatchObject({ name: 'SearchError', code: 'search_failed' });
+  });
+
+  it('still rewraps a Meilisearch error, as today', async () => {
+    meiliSearch.mockRejectedValue(new Error('raw detail'));
+    await expect(methods.getConvosByCursor(USER, { search: 'word' })).rejects.toThrow(
+      'Error during meiliSearch',
+    );
   });
 
   it('runs today code on a null answer, and adds no field', async () => {

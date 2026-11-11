@@ -8,6 +8,7 @@ import {
   JOB_STATE_READ,
   LEASE_KEY,
   RECONCILE_KEY,
+  requestJob,
   SOURCE_COLLECTIONS,
   STREAM_KEY,
   VERIFICATION_KEY,
@@ -35,6 +36,9 @@ const DROP_REFUSALS: Readonly<Record<DropRefusalCode, string>> = {
   search_lease_held:
     'Nothing dropped: a process still holds the sync lease, so it runs with search data on. ' +
     'Restart every process with search.data false, wait for the lease to run out, then run drop again.',
+  search_sync_recent:
+    'Nothing dropped: a sync writer saved its position within the takeover time, so a process may still run with search data on. ' +
+    'Wait until every process has restarted with search.data false, then run drop again.',
 };
 /** A rate older than this came from a process that stopped, so it predicts nothing. */
 const RATE_STALE_MS = 5 * 60_000;
@@ -70,6 +74,8 @@ export interface SearchJobStatus {
   reconcile: Record<string, unknown> | null;
   /** When the sync writer last saved its position, or `null` if no writer has run. */
   syncSavedAt: Date | null;
+  /** When the last change the stream delivered happened, or `null` if it has delivered none. */
+  syncLastChangeAt: Date | null;
   gapAt: Date | null;
   leaseHeld: boolean;
   pendingRequests: string[];
@@ -155,6 +161,7 @@ export async function readSearchJobStatus(
     wordList,
     reconcile,
     syncSavedAt: dateOf(stream?.savedAt),
+    syncLastChangeAt: dateOf(stream?.lastEventAt),
     gapAt: dateOf(stream?.gapAt),
     leaseHeld: (dateOf(lease?.leaseUntil)?.getTime() ?? 0) > now,
     pendingRequests: requests.map(({ job }) => String(job)),
@@ -189,19 +196,20 @@ export function formatSearchJobStatus(status: SearchJobStatus): string[] {
   const missingIds = Array.isArray(verification?.missingIds) ? verification.missingIds : [];
   lines.push(
     `word list: ${show(wordList?.status)}  phase ${show(wordList?.phase)}  walked ${show(wordList?.walked)}  last update ${show(wordList?.walkedAt)}`,
-    `sync: last saved ${show(status.syncSavedAt)}  last gap ${show(status.gapAt)}`,
+    `sync: last saved ${show(status.syncSavedAt)}  last change ${show(status.syncLastChangeAt)}  last gap ${show(status.gapAt)}`,
     `reconcile: ${show(reconcile?.status)}  pass ${show(reconcile?.pass)}  phase ${show(reconcile?.phase)}` +
       `  missing ${show(reconcile?.missing)}  orphans ${show(reconcile?.orphans)}  stale ${show(reconcile?.stale)}` +
-      `  of ${show(reconcile?.of)}  repaired ${show(reconcile?.repaired)}  finished ${show(reconcile?.finishedAt)}`,
+      `  of ${show(reconcile?.of)}  repaired ${show(reconcile?.repaired)}` +
+      `  analysis failures ${show(reconcile?.analysisFailures)}  finished ${show(reconcile?.finishedAt)}`,
     `verify: ${show(verification?.status)}${verification?.running === true ? ' (walk running)' : ''}  checked ${show(verification?.checked)}  reason ${show(verification?.reason)}` +
       `  mismatched users ${show(verification?.mismatchedUsers)}` +
       `  missing ${show(verification?.missing)}  orphans ${show(verification?.orphans)}` +
-      `  changed since backfill ${show(verification?.changedSinceBackfill)}` +
+      `  expired, awaiting deletion ${show(verification?.expired)}` +
       `  analysis failures ${show(verification?.analysisFailures)}` +
       `  other analyzer version ${show(verification?.otherVersion)}` +
       `  failed attempts ${show(verification?.failures)}` +
-      `  round ${show(verification?.rounds)}  mode ${show(verification?.mode)}` +
-      `  last passed ${show(verification?.passedAt)}`,
+      `  round ${show(verification?.rounds)}` +
+      `  last passed ${show(verification?.passedAt)}  invalidated ${show(verification?.invalidatedAt)}`,
     ...(missingIds.length > 0
       ? [`sample of source IDs with no record: ${missingIds.join(', ')}`]
       : []),
@@ -223,7 +231,10 @@ function nextAction(status: SearchJobStatus): string {
     return 'run resume to carry on.';
   }
   if ((running || pendingRequests.length > 0) && !leaseHeld) {
-    return 'no process holds the lease: check the server is up and search.data is true, and look for "[search] Language pack failed" in its logs.';
+    return 'no process holds the lease: check the server is up and search.data is true, and look for "[search] Background start failed", "[search] Job heartbeat failed" or "[search] Language pack failed" in its logs.';
+  }
+  if (isTenantStop(status)) {
+    return 'this database holds more than one tenant, and one writer and one word list serve one: turn search.data off here. Backfill, reconcile and verify will not get past this.';
   }
   if (running && chain.failures > 0) {
     return 'it retries by itself. Look for "[search] Job failed" in the server logs.';
@@ -233,6 +244,9 @@ function nextAction(status: SearchJobStatus): string {
   }
   if (pendingRequests.length > 0) {
     return 'nothing. The lease holder picks up the request on its next heartbeat.';
+  }
+  if (verification?.status === 'failed' && verification.reason === 'sync_not_started') {
+    return 'the sync writer has never saved a position, so nothing written from now on would be searchable: check that change streams are enabled on both source collections and look for "[search] Sync failed" in the server logs. The writer retries by itself, up to five minutes apart: wait until "sync: last saved" shows a time, then run verify.';
   }
   if (verification?.status === 'failed' && verification.reason === 'analysis_failed') {
     return 'a language pack threw on some rows: fix the pack, then run backfill, which re-reads every row.';
@@ -246,7 +260,43 @@ function nextAction(status: SearchJobStatus): string {
   if (verification?.status === 'failed') {
     return 'run backfill to fill the gaps, then check again. Rows a language pack threw on need a fixed pack first.';
   }
+  if (isInvalidated(verification)) {
+    return 'the last pass was invalidated, by a rollback or by search data going off: run reconcile, then verify, before the new search serves again.';
+  }
   return 'nothing. The chain has finished.';
+}
+
+/**
+ * A second tenant's rows were met (R-04): by the sync writer, which then withdrew the pass, or
+ * by a backfill or reconcile walk, which fails on them at every attempt.
+ */
+function isTenantStop({ chain, reconcile, verification }: SearchJobStatus): boolean {
+  const failing = (code: unknown, failures: unknown) =>
+    code === 'TenantMismatch' && typeof failures === 'number' && failures > 0;
+  if (failing(chain.lastFailureCode, chain.failures)) {
+    return true;
+  }
+  if (failing(reconcile?.lastFailureCode, reconcile?.failures)) {
+    return true;
+  }
+  const passedAt = dateOf(verification?.passedAt);
+  const invalidatedAt = dateOf(verification?.invalidatedAt);
+  return (
+    verification?.invalidatedBy === 'tenant_mismatch' &&
+    invalidatedAt !== null &&
+    (passedAt === null || passedAt.getTime() <= invalidatedAt.getTime())
+  );
+}
+
+/** A pass that `/api/search/enable` no longer accepts: not later than the last invalidation. */
+function isInvalidated(verification: Record<string, unknown> | null): boolean {
+  const passedAt = dateOf(verification?.passedAt);
+  const invalidatedAt = dateOf(verification?.invalidatedAt);
+  return (
+    verification?.status === 'passed' &&
+    invalidatedAt !== null &&
+    (passedAt === null || passedAt.getTime() <= invalidatedAt.getTime())
+  );
 }
 
 /**
@@ -302,10 +352,7 @@ export async function runSearchJobCommand({
     return 0;
   }
   const id = randomId();
-  await methods.writeSearchState(`jobRequest:${id}`, {
-    job: command,
-    requestedAt: new Date(now()),
-  });
+  await requestJob(methods, id, command, now());
   print(`Requested ${command} (${id}). The lease holder picks it up on its next heartbeat.`);
   if ((dateOf(lease?.leaseUntil)?.getTime() ?? 0) <= now()) {
     print('No process holds the lease right now, so this waits until one does. Check the server.');

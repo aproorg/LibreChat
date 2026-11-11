@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ContentTypes } from 'librechat-data-provider';
 import type { SearchHarness } from '../__tests__/helpers/harness';
 import {
   freeControl,
@@ -7,6 +8,7 @@ import {
   stateOf,
   storeSources,
   withMethods,
+  writerSaved,
 } from './__tests__/helpers/jobs';
 import {
   createSearchHarness,
@@ -14,9 +16,10 @@ import {
   sourceMessage,
 } from '../__tests__/helpers/harness';
 import { computeAnalyzerVersion } from '../analyzer/version';
-import { BACKFILL_KEYS, objectIdFloor } from './control';
+import { buildMessageRecord } from '../sync/record';
 import { runVocabRebuild } from './vocabRebuild';
 import { runReconcile } from './reconcile';
+import { BACKFILL_KEYS } from './control';
 import { runBackfill } from './backfill';
 import { runVerify } from './verify';
 
@@ -54,6 +57,7 @@ describe('search jobs', () => {
 
   beforeEach(async () => {
     await harness.reset();
+    await writerSaved(harness);
   });
 
   describe('backfill', () => {
@@ -81,7 +85,6 @@ describe('search jobs', () => {
       expect(await recordCount(harness, 'csearch')).toBe(1);
       const finished = await stateOf(harness, BACKFILL_KEYS.messages);
       expect(finished).toMatchObject({ status: 'finished', processed: 6, total: 6 });
-      expect(finished?.finishedAtId).toEqual(expect.any(String));
     });
 
     it('writes only to search collections, and leaves sources as they were', async () => {
@@ -192,6 +195,23 @@ describe('search jobs', () => {
       await runBackfill(backfillDeps(freeControl(), changing));
 
       expect((await records('msearch')).map(({ _id }) => String(_id))).toEqual([String(kept._id)]);
+    });
+
+    it('stops at a second tenant, before any of its rows is indexed', async () => {
+      await storeSources(harness, 'messages', [
+        sourceMessage({ text: 'kerfi', tenantId: 'tenant-one' }),
+        sourceMessage({ text: 'kerfi' }),
+        sourceMessage({ text: 'kerfi', tenantId: 'tenant-two' }),
+        sourceMessage({ text: 'kerfi', tenantId: 'tenant-two' }),
+      ]);
+
+      await expect(runBackfill(backfillDeps())).rejects.toMatchObject({ name: 'TenantMismatch' });
+
+      /* A batch is two rows: the first batch is written, the second holds the other tenant. */
+      const written = await records('msearch');
+      expect(written.map(({ tenantId }) => tenantId).filter(Boolean)).toEqual(['tenant-one']);
+      expect(await stateOf(harness, 'analyzer')).toMatchObject({ tenantId: 'tenant-one' });
+      expect(JSON.stringify(harness.logged)).not.toContain('tenant-two');
     });
 
     it('stops at a pause, saying so, and carries on from there', async () => {
@@ -318,18 +338,6 @@ describe('search jobs', () => {
       expect(JSON.stringify(record).toLowerCase()).not.toContain('sentinel');
       const state = await stateOf(harness, BACKFILL_KEYS.messages);
       expect(JSON.stringify(state).toLowerCase()).not.toContain('sentinel');
-    });
-
-    it('keeps a finishing position behind rows that may still be landing', async () => {
-      const at = Date.parse('2026-06-01T00:00:00Z');
-      const recent = `${Math.floor(at / 1000).toString(16)}0000000000000001`;
-      await storeSources(harness, 'messages', [{ ...sourceMessage({ text: 'new' }), _id: recent }]);
-
-      await runBackfill({ ...backfillDeps(), now: () => at });
-
-      expect((await stateOf(harness, BACKFILL_KEYS.messages))?.finishedAtId).toBe(
-        objectIdFloor(at - 60_000),
-      );
     });
   });
 
@@ -607,7 +615,7 @@ describe('search jobs', () => {
         .db!.collection(name)
         .deleteOne({ _id: new mongoose.Types.ObjectId(String(_id)) });
 
-    it('passes when every source up to backfill has a record', async () => {
+    it('passes when every source has a record', async () => {
       await load();
 
       expect(await verify()).toBe('done');
@@ -662,25 +670,53 @@ describe('search jobs', () => {
       expect(await verification()).toMatchObject({ status: 'failed', missing: 1 });
     });
 
-    it('ignores messages created after backfill, because no writer indexes them yet', async () => {
+    it('fails as sync_not_started when no sync writer has saved a position', async () => {
       await load();
-      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi', _id: objectId() })]);
+      await harness.methods.writeSearchState('stream', { savedAt: null, syncedTo: null });
+      let clock = Date.now();
 
-      await verify();
+      await runVerify({
+        methods: harness.methods,
+        control: freeControl(),
+        metrics: harness.metrics,
+        version: computeAnalyzerVersion(harness.packs),
+        round: 1,
+        now: () => (clock += 20_000),
+      });
 
-      expect(await verification()).toMatchObject({ status: 'passed', missing: 0 });
+      /* Every record is right today, and none would follow: this must not read as a pass. */
+      expect(await verification()).toMatchObject({
+        status: 'failed',
+        reason: 'sync_not_started',
+        missing: 0,
+      });
+      expect((await verification())?.passedAt).toBeUndefined();
     });
 
-    it('does not fail on a record whose source was deleted after backfill', async () => {
-      const gone = sourceMessage({ text: 'kerfi' });
-      await load([gone, sourceMessage({ text: 'kerfi' })]);
+    it('reports a record whose source has expired and awaits its delete, without failing', async () => {
+      const expiring = sourceMessage({
+        text: 'kerfi',
+        isTemporary: false,
+        expiredAt: new Date(Date.now() + 60_000),
+      });
+      await load([expiring, sourceMessage({ text: 'kerfi' })]);
+      expect(await recordCount(harness, 'msearch')).toBe(2);
+      /* The moment passes with no write, so no change event tells the writer. */
       await harness.database.connection
         .db!.collection('messages')
-        .deleteOne({ _id: new mongoose.Types.ObjectId(String(gone._id)) });
+        .updateOne(
+          { _id: new mongoose.Types.ObjectId(String(expiring._id)) },
+          { $set: { expiredAt: new Date(Date.now() - 1000) } },
+        );
 
       await verify();
 
-      expect(await verification()).toMatchObject({ status: 'passed', orphans: 1, missing: 0 });
+      expect(await verification()).toMatchObject({
+        status: 'passed',
+        expired: 1,
+        orphans: 0,
+        missing: 0,
+      });
     });
 
     it('does not count a stored subagent row that rightly has no record', async () => {
@@ -693,25 +729,6 @@ describe('search jobs', () => {
 
       expect(await recordCount(harness, 'msearch')).toBe(1);
       expect(await verification()).toMatchObject({ status: 'passed', missing: 0, orphans: 0 });
-    });
-
-    it('does not fail on a message that finished after backfill read it', async () => {
-      const streaming = sourceMessage({ text: 'kerfi', unfinished: true });
-      await load([streaming]);
-      await harness.database.connection
-        .db!.collection('messages')
-        .updateOne(
-          { _id: new mongoose.Types.ObjectId(String(streaming._id)) },
-          { $set: { unfinished: false, updatedAt: new Date(Date.now() + 1000) } },
-        );
-
-      await verify();
-
-      expect(await verification()).toMatchObject({
-        status: 'passed',
-        missing: 0,
-        changedSinceBackfill: 1,
-      });
     });
 
     it('rechecks a suspect, so a record that landed during the walk is no gap', async () => {
@@ -889,6 +906,100 @@ describe('search jobs', () => {
       await msearch().updateOne({ _id: oid(rows[3]._id) }, { $set: { v: 'older' } });
       return rows;
     };
+
+    it('stops at a second tenant, before it repairs a row for it', async () => {
+      await storeSources(harness, 'messages', [
+        sourceMessage({ text: 'kerfi', tenantId: 'tenant-one' }),
+      ]);
+      await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+      await storeSources(harness, 'messages', [
+        sourceMessage({ text: 'kerfi', tenantId: 'tenant-two' }),
+      ]);
+
+      await expect(reconcile()).rejects.toMatchObject({ name: 'TenantMismatch' });
+
+      const written = await records('msearch');
+      expect(written.map(({ tenantId }) => tenantId)).toEqual(['tenant-one']);
+      expect(JSON.stringify(harness.logged)).not.toContain('tenant-two');
+    });
+
+    it('counts a source a pack throws on, so verification names it and the loop has nothing to run on', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi fine' })]);
+      await storeSources(harness, 'conversations', [sourceConversation({ title: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+      /* Written after backfill: the sync writer skipped it, so it has no record. */
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi poison' })]);
+      const picky = {
+        ...harness.analyzer,
+        analyzeMessage: (text: string) => {
+          if (text.includes('poison')) {
+            throw new Error('pack threw');
+          }
+          return harness.analyzer.analyzeMessage(text);
+        },
+      };
+
+      await verify();
+      expect(await verification()).toMatchObject({ status: 'failed', reason: 'mismatch' });
+
+      expect(
+        await runReconcile({
+          methods: harness.methods,
+          analyzer: picky,
+          version: version(),
+          control: freeControl(),
+          metrics: harness.metrics,
+          inChain: false,
+        }),
+      ).toBe('done');
+      expect(await reconcileState()).toMatchObject({
+        status: 'finished',
+        analysisFailures: 1,
+        repaired: 0,
+      });
+
+      await verify();
+      expect(await verification()).toMatchObject({
+        status: 'failed',
+        reason: 'analysis_failed',
+        missing: 1,
+        analysisFailures: 1,
+      });
+      expect(await recordCount(harness, 'msearch')).toBe(1);
+    });
+
+    it('builds the same record from its projected read as from the whole document the stream delivers', async () => {
+      await storeSources(harness, 'messages', [
+        sourceMessage({
+          text: 'fieldword',
+          content: [
+            { type: ContentTypes.THINK, think: 'thinkword' },
+            { type: ContentTypes.TEXT, text: 'stringword' },
+            { type: ContentTypes.TEXT, text: { value: 'valueword' } },
+            { type: ContentTypes.STEER, steer: 'steerword' },
+            { type: ContentTypes.TOOL_CALL, tool_call: { name: 'x', output: 'toolword' } },
+          ],
+        }),
+      ]);
+      const [projected] = await harness.methods.readSearchSources({
+        collection: 'messages',
+        limit: 10,
+        withText: true,
+      });
+      const whole = await harness.database.connection.db!.collection('messages').findOne({});
+      const options = { analyzer: harness.analyzer, version: version() };
+
+      const walked = buildMessageRecord(projected, options);
+      const streamed = buildMessageRecord({ ...whole, _id: String(whole?._id) }, options);
+
+      expect(walked?.tokens).toEqual(
+        expect.arrayContaining(['thinkword', 'stringword', 'valueword', 'steerword']),
+      );
+      expect(walked?.tokens).not.toContain('toolword');
+      expect(walked?.tokens).toEqual(streamed?.tokens);
+      expect(walked?.h).toBe(streamed?.h);
+    });
 
     it('counts and logs before it repairs, then repairs every kind of drift', async () => {
       const rows = await drift();
@@ -1107,6 +1218,26 @@ describe('search jobs', () => {
       });
     });
 
+    it('finishes when the older-version count fails, and leaves the attribution for the next run', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
+      await runBackfill(backfillDeps());
+      await harness.methods.writeSearchState('analyzer', {
+        attributionUntilReanalyzed: [{ id: 'gone', attribution: { text: 't', url: 'u' } }],
+      });
+      const failing = withMethods(harness, {
+        countSearchRecordsAtOtherVersion: async () => {
+          throw new Error('operation exceeded time limit');
+        },
+      });
+
+      await reconcile({ methods: failing });
+
+      expect(await reconcileState()).toMatchObject({ status: 'finished' });
+      expect(await stateOf(harness, 'analyzer')).toMatchObject({
+        attributionUntilReanalyzed: [expect.objectContaining({ id: 'gone' })],
+      });
+    });
+
     it('in the chain, skips the word list only when it repaired nothing', async () => {
       await storeSources(harness, 'messages', [sourceMessage({ text: 'kerfi' })]);
       await runBackfill(backfillDeps());
@@ -1142,7 +1273,7 @@ describe('search jobs', () => {
       );
     };
 
-    it('checks sources past the backfill position, and fails on one with no record', async () => {
+    it('checks sources written after backfill, and fails on one with no record', async () => {
       await load([sourceMessage({ text: 'kerfi' })]);
       await syncedFar();
       await storeSources(harness, 'messages', [
@@ -1151,7 +1282,7 @@ describe('search jobs', () => {
 
       await verify();
 
-      expect(await verification()).toMatchObject({ status: 'failed', mode: 'writer', missing: 1 });
+      expect(await verification()).toMatchObject({ status: 'failed', missing: 1 });
     });
 
     it('ignores an import inside the lag window, by source ID age', async () => {
@@ -1163,7 +1294,7 @@ describe('search jobs', () => {
 
       await verify();
 
-      expect(await verification()).toMatchObject({ status: 'passed', mode: 'writer', checked: 1 });
+      expect(await verification()).toMatchObject({ status: 'passed', checked: 1 });
     });
 
     it('fails on an orphan, which no writer leaves behind', async () => {

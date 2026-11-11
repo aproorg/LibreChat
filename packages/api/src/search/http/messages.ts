@@ -3,8 +3,8 @@ import type { SearchableMessage, SearchContext } from '@librechat/data-schemas';
 import type { MessageSearchHits, SearchService, SearchServiceMethods } from '../service';
 import type { SearchMetrics, SearchRequestEvent } from '../metrics';
 import type { SearchHttpResponse } from './errors';
-import { getSafeErrorMetadata } from '~/utils/errors';
 import { searchErrorResponse } from './errors';
+import { safeFailure } from '../failure';
 
 /** `getSearchableMessages` and `getSearchHitConversations`, counted in `search.request`. */
 const HYDRATION_READS = 2;
@@ -100,7 +100,7 @@ export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): Search
       };
     } catch (error) {
       if (!isSearchError(error)) {
-        logger?.warn('[search] Message search failed', getSafeErrorMetadata(error));
+        logger?.warn('[search] Message search failed', safeFailure(error));
       }
       const response = searchErrorResponse(error);
       emit(ctx.signal.aborted ? 'aborted' : response.body.code);

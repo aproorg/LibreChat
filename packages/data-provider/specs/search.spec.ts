@@ -72,7 +72,6 @@ describe('search config schema', () => {
 
   it.each([
     'sidebarLimit',
-    'rankWindow',
     'readConcurrency',
     'maxConcurrentSearches',
     'queryWordLimit',
@@ -114,6 +113,9 @@ describe('search config schema', () => {
   it('caps rankWindow at 200, which bounds cursor size', () => {
     expect(searchConfigSchema.safeParse({ rankWindow: 200 }).success).toBe(true);
     expect(searchConfigSchema.safeParse({ rankWindow: 201 }).success).toBe(false);
+    /* Below one page, load-more degenerates into thousands of tiny windows. */
+    expect(searchConfigSchema.safeParse({ rankWindow: 25 }).success).toBe(true);
+    expect(searchConfigSchema.safeParse({ rankWindow: 24 }).success).toBe(false);
   });
 
   it('keeps languages a plain string array, checked later against registered packs', () => {

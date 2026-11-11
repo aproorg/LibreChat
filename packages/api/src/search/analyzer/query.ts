@@ -61,12 +61,21 @@ export function analyzeQuery(
   query: string,
   { queryWordLimit, realtext }: AnalyzeQueryOptions,
 ): AnalyzedQuery {
-  const all = words(query).map((word) => queryWord(analyzer, word));
-  if (all.length === 0) {
+  /* `words` already gives each word in NFC and lowercase, which is the form stop lists hold. */
+  const split = words(query);
+  if (split.length === 0) {
     return { status: 'no_words', words: [], dropped: [] };
   }
-  const dropped = all.filter(({ stop }) => stop).map(({ raw }) => raw);
-  const usable = all.filter(({ stop }) => !stop);
+  const dropped = split.filter((word) => analyzer.stopWords.has(word));
+  /*
+   * Only the words that will be used are analyzed. A query has no length limit on two of its
+   * routes, and analysis runs every pack on a word, so a pasted page must not cost thousands
+   * of dictionary lookups to keep ten words.
+   */
+  const usable = split
+    .filter((word) => !analyzer.stopWords.has(word))
+    .slice(0, queryWordLimit)
+    .map((word) => queryWord(analyzer, word));
   if (usable.length === 0) {
     realtext?.addStopOnlyQuery();
     return { status: 'only_stop_words', words: [], dropped };
@@ -78,5 +87,5 @@ export function analyzeQuery(
   ) {
     realtext?.addNoLetterQuery();
   }
-  return { status: 'ok', words: usable.slice(0, queryWordLimit), dropped };
+  return { status: 'ok', words: usable, dropped };
 }

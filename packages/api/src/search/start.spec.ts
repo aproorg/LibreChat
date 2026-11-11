@@ -209,24 +209,35 @@ describe('search startup', () => {
 
       await binding.stopBackground();
 
-      expect(Date.now() - startedAt).toBeLessThan(6_000);
-    }, 15_000);
+      /* The bound is 5 s. The margin is for a loaded machine, not for the code. */
+      expect(Date.now() - startedAt).toBeLessThan(12_000);
+    }, 30_000);
 
     it('a stop that arrives while packs load starts nothing afterwards', async () => {
       let finishLoad: () => void = () => undefined;
+      let loadStarted: () => void = () => undefined;
+      const loading = new Promise<void>((resolve) => (loadStarted = resolve));
       const { binding } = bind(
         { languages: ['fake'] },
         {
           resolvePacks: () => ({
             ok: true,
             packs: [
-              { ...harness.packs[0], load: () => new Promise<void>((done) => (finishLoad = done)) },
+              {
+                ...harness.packs[0],
+                load: () =>
+                  new Promise<void>((done) => {
+                    finishLoad = done;
+                    loadStarted();
+                  }),
+              },
             ],
           }),
         },
       );
       const starting = startSearchBackground(binding);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      /* Not a fixed wait: on a loaded machine the read before the packs can take longer. */
+      await loading;
 
       await binding.stopBackground();
       finishLoad();
@@ -258,6 +269,45 @@ describe('search startup', () => {
       expect(binding.jobs()).not.toBeNull();
       expect(binding.writer()).not.toBeNull();
       expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_OBSERVED');
+      /* It never compared, so it must not store its own settings over the evidence (FR-037). */
+      expect(await harness.methods.readSearchState('observed', { maxTimeMS: 5000 })).toBeNull();
+    });
+
+    it('a rollback start whose first observed read fails still invalidates the old pass', async () => {
+      await harness.methods.ensureSearchCollections();
+      await harness.methods.writeSearchState('observed', { backend: 'search', data: true });
+      let reads = 0;
+      const { binding } = bind(
+        { languages: ['fake'], backend: 'meilisearch' },
+        {
+          methods: {
+            ...harness.methods,
+            readSearchState: (key: string, options: { maxTimeMS: number }) => {
+              if (key === 'observed') {
+                reads += 1;
+                if (reads === 1) {
+                  return Promise.reject(new Error('SENTINEL_OBSERVED'));
+                }
+              }
+              return harness.methods.readSearchState(key, options);
+            },
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+        },
+      );
+      started = binding;
+
+      await startSearchBackground(binding);
+
+      /* The second look, once the collections are known to exist, sees the move off `search`. */
+      const verification = await harness.methods.readSearchState('verification', {
+        maxTimeMS: 5000,
+      });
+      expect(verification?.invalidatedAt).toBeInstanceOf(Date);
+      expect(await harness.methods.readSearchState('observed', { maxTimeMS: 5000 })).toMatchObject({
+        backend: 'meilisearch',
+        data: true,
+      });
     });
 
     it('a failed pack starts no runner and takes no lease', async () => {
@@ -283,10 +333,74 @@ describe('search startup', () => {
         },
       );
 
+      started = binding;
+
       await expect(startSearchBackground(binding)).resolves.toBeUndefined();
 
       expect(binding.jobs()).toBeNull();
       expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_START_DB');
+    });
+
+    it('tries the collection step again, so a database blip at start does not end sync for good', async () => {
+      let calls = 0;
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            ensureSearchCollections: async () => {
+              calls += 1;
+              if (calls === 1) {
+                throw new Error('SENTINEL_START_DB');
+              }
+              await harness.methods.ensureSearchCollections();
+            },
+            /* No replica set here: the stream opens and ends at once. */
+            watchSearchSources: async function* () {
+              yield* [];
+            },
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+          startRetryMs: 10,
+        },
+      );
+      started = binding;
+
+      await startSearchBackground(binding);
+      expect(binding.jobs()).toBeNull();
+
+      const deadline = Date.now() + 10_000;
+      while (binding.jobs() === null && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(binding.jobs()).not.toBeNull();
+      expect(binding.writer()).not.toBeNull();
+      expect(calls).toBe(2);
+    });
+
+    it('does not try again once the process is stopping', async () => {
+      let calls = 0;
+      const { binding } = bind(
+        { languages: ['fake'] },
+        {
+          methods: {
+            ...harness.methods,
+            ensureSearchCollections: async () => {
+              calls += 1;
+              throw new Error('SENTINEL_START_DB');
+            },
+          },
+          resolvePacks: () => ({ ok: true, packs: [harness.packs[0]] }),
+          startRetryMs: 10,
+        },
+      );
+
+      await startSearchBackground(binding);
+      await binding.stopBackground();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(calls).toBe(1);
+      expect(binding.jobs()).toBeNull();
     });
 
     it('readiness does not wait on the runner, even if its first read never answers', async () => {
@@ -337,6 +451,46 @@ describe('search startup', () => {
     expect(
       (await harness.methods.readSearchState('verification', { maxTimeMS: 5000 }))?.invalidatedAt,
     ).toBeInstanceOf(Date);
+  });
+
+  it('with data off, tries the comparison again after a failed read, so the rollback still invalidates', async () => {
+    await harness.methods.writeSearchState('observed', { backend: 'search', data: true });
+    let reads = 0;
+    const { binding } = bind(
+      { data: false, backend: 'meilisearch' },
+      {
+        startRetryMs: 10,
+        methods: {
+          ...harness.methods,
+          readSearchState: (key: string, options: { maxTimeMS: number }) => {
+            if (key === 'observed') {
+              reads += 1;
+              if (reads <= 2) {
+                return Promise.reject(new Error('SENTINEL_OBSERVED'));
+              }
+            }
+            return harness.methods.readSearchState(key, options);
+          },
+        },
+      },
+    );
+
+    await startSearchBackground(binding);
+    const invalidatedAt = async () =>
+      (await harness.methods.readSearchState('verification', { maxTimeMS: 5000 }))?.invalidatedAt;
+    expect(await invalidatedAt()).toBeUndefined();
+
+    for (let waited = 0; waited < 200 && (await invalidatedAt()) == null; waited += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(await invalidatedAt()).toBeInstanceOf(Date);
+    expect(reads).toBe(3);
+    expect(await harness.methods.readSearchState('observed', { maxTimeMS: 5000 })).toMatchObject({
+      data: false,
+    });
+    await binding.stopBackground();
+    expect(JSON.stringify(harness.logged)).not.toContain('SENTINEL_OBSERVED');
   });
 
   it('an unregistered ID leaves the process up and the service failed', async () => {

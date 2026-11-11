@@ -1,10 +1,7 @@
 import axios from 'axios';
-import { SEARCH_ERROR_CODES } from 'librechat-data-provider';
+import { SEARCH_ERROR_CODES, SEARCH_CURSOR_QUERY_CHARS } from 'librechat-data-provider';
 import type { InfiniteData, Query } from '@tanstack/react-query';
 import type { SearchErrorCode } from 'librechat-data-provider';
-
-/** A request carrying a cursor sends only this much of the query, which is what the server hashes. */
-const CURSOR_SEARCH_LENGTH = 256;
 
 /** React Query's own default, kept so a search that may retry does so exactly as before. */
 const MAX_SEARCH_RETRIES = 3;
@@ -40,9 +37,10 @@ export function retrySearch(failureCount: number, error: unknown): boolean {
   return failureCount < MAX_SEARCH_RETRIES && shouldRetrySearch(error);
 }
 
-/** A `refetchOnWindowFocus` option for paged search: refetching more than one page re-reads
- *  every page under a new anchor and reorders the list, so only a single page refetches. */
-export function refetchSinglePageOnFocus<TPage>(
+/** A `refetchOnWindowFocus`, `refetchOnMount` and `refetchOnReconnect` option for paged search:
+ *  refetching more than one page re-reads every page under a new anchor and reorders the list,
+ *  so only a single page refetches. */
+export function refetchSinglePage<TPage>(
   query: Query<TPage, unknown, InfiniteData<TPage>>,
 ): boolean {
   return (query.state.data?.pages.length ?? 0) <= 1;
@@ -50,5 +48,12 @@ export function refetchSinglePageOnFocus<TPage>(
 
 /** The search text sent with a cursor, bounded so the request line stays within a proxy's limit. */
 export function cursorSearchText(search: string | undefined): string | undefined {
-  return search?.normalize('NFC').slice(0, CURSOR_SEARCH_LENGTH);
+  const text = search?.normalize('NFC').slice(0, SEARCH_CURSOR_QUERY_CHARS);
+  if (text == null || text.length < SEARCH_CURSOR_QUERY_CHARS) {
+    return text;
+  }
+  /* The cut can split a surrogate pair, and a lone half cannot be encoded into a URL. The
+   * server hashes that half as U+FFFD, so sending U+FFFD keeps the cursor valid. */
+  const last = text.charCodeAt(text.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? `${text.slice(0, -1)}\uFFFD` : text;
 }

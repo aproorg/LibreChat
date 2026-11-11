@@ -5,8 +5,8 @@ import {
   sourceConversation,
   sourceMessage,
 } from '../__tests__/helpers/harness';
+import { createRunner, settle, stateOf, storeSources, writerSaved } from './__tests__/helpers/jobs';
 import { createSyncProcess, oid, sources, synced } from '../sync/__tests__/helpers/sync';
-import { createRunner, settle, stateOf, storeSources } from './__tests__/helpers/jobs';
 import { runSearchJobCommand } from './script';
 
 /** Its own file, because the strict flag is read once per process. */
@@ -39,6 +39,7 @@ describe('search jobs under TENANT_ISOLATION_STRICT', () => {
       sourceConversation({ title: 'kerfi', tenantId: 'tenant-one' }),
     ]);
     const runner = createRunner(harness);
+    await writerSaved(harness);
 
     await runSearchJobCommand({
       argv: ['backfill'],

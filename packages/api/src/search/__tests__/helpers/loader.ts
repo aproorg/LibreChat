@@ -1,4 +1,5 @@
 import { createGunzip } from 'node:zlib';
+import { access } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { ConversationSearchRecord, MessageSearchRecord } from '@librechat/data-schemas';
@@ -78,7 +79,9 @@ async function insertInBatches(
   return total;
 }
 
+/** A missing file fails here: a read stream's error does not cross `pipe` to the line reader. */
 async function* vocabFromFile(path: string): AsyncGenerator<object> {
+  await access(path);
   const file = createReadStream(path);
   const input: Readable = path.endsWith('.gz') ? file.pipe(createGunzip()) : file;
   for await (const line of createInterface({ input })) {

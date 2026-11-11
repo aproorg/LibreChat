@@ -153,6 +153,24 @@ describe('createConversationSearch', () => {
     expect(outcomes[0].surface).toBe('conversations');
   });
 
+  it('logs the sidebar request of a first-after-idle search as cold', async () => {
+    const { service, conversations } = await searchFor();
+    const noted = jest.spyOn(service, 'noteRequest');
+    /* The messages route notes its request when it starts, a moment before the sidebar's. */
+    expect(service.noteRequest('user-a').coldAfterIdle).toBe(true);
+
+    const context = conversations.context(req, res);
+    expect(noted).toHaveBeenCalledTimes(2);
+    conversations.completed(context, { conversations: [] });
+
+    /* Noted once, at the start: the end of the request must not move the idle clock. */
+    expect(noted).toHaveBeenCalledTimes(2);
+    const event = harness.logged.find(({ event: name }) => name === 'search.request');
+    expect(event?.meta).toEqual(
+      expect.objectContaining({ surface: 'conversations', coldAfterIdle: true }),
+    );
+  });
+
   it('maps a SearchError to its code, and emits it', async () => {
     const { conversations } = await searchFor();
     const context = conversations.context(req, res)!;

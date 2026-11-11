@@ -53,15 +53,15 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 | `_id` | Fields | Purpose |
 |---|---|---|
 | `lease` | `holder`, `epoch`, `leaseUntil` | One writer per database |
-| `stream` | `resumeToken`, `epoch`, `savedAt`, `gapAt?` | Where sync resumes |
-| `backfill:messages`, `backfill:conversations` | `lastId`, `status`, `pause`, `pausedReason?`, `startedAt`, `processed`, `total`, `skipped`, `analysisFailures`, `rate`, `rateAt`, `finishedAt?`, `finishedAtId?` | Crash resume, pause flag, progress. `finishedAtId` bounds verification while no writer runs |
-| `reconcile` | `pass`, `phase`, `lastId` per phase, `status`, `missing`, `orphans`, `stale`, `finishedAt?` | Reports before repair |
-| `verification` | `status` (`pending`, `passed`, `failed`), `reason?`, `snapshotAt`, `passedAt`, `invalidatedAt`, `mismatchedUsers`, `rounds`, `checked`, `missing`, `missingIds` (a sample), `orphans`, `changedSinceBackfill`, `analysisFailures`, `otherVersion`, `running`, `failures?`, `lastFailureAt?`, `lastFailureCode?`, `finishedAt` | Readiness (FR-019, FR-037) |
+| `stream` | `resumeToken`, `epoch`, `savedAt`, `syncedTo?`, `lastEventAt?`, `gapAt?` | Where sync resumes. `syncedTo` is the time every earlier change is known applied, which verification waits on. `lastEventAt` is when the last delivered change happened |
+| `backfill:messages`, `backfill:conversations` | `lastId`, `status`, `pause`, `pausedReason?`, `startedAt`, `processed`, `total`, `skipped`, `analysisFailures`, `rate`, `rateAt`, `finishedAt?` | Crash resume, pause flag, progress |
+| `reconcile` | `pass`, `phase`, `lastIds` (one per phase), `status`, `startedAt`, `missing`, `orphans`, `stale`, `of`, `repaired`, `analysisFailures`, `inChain`, `failures?`, `lastFailureAt?`, `lastFailureCode?`, `finishedAt?` | Reports before repair. The runner compares a request's time with `startedAt` to tell whether this run answers it |
+| `verification` | `status` (`pending`, `passed`, `failed`), `reason?`, `snapshotAt`, `passedAt`, `invalidatedAt`, `invalidatedBy?` (`config`, `tenant_mismatch`), `mismatchedUsers`, `rounds`, `checked`, `missing`, `missingIds` (a sample), `orphans`, `expired`, `analysisFailures`, `otherVersion`, `running`, `gaveUp`, `failures?`, `lastFailureAt?`, `lastFailureCode?`, `finishedAt` | Readiness (FR-019, FR-037) |
 | `analyzer` | `version`, `packs` with attribution text and URL, `attributionUntilReanalyzed`, `tenantId` | Token changes (FR-026), FR-043 after a disable, tenant pin |
 | `chain` | `requestId`, `step`, `startedAt`, `finishedAt?`, `failures?`, `lastFailureAt?`, `lastFailureCode?` | Backfill chain position, resumed by each new lease holder. Automatic reconcile waits for `finishedAt` |
-| `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |
+| `observed` | `backend`, `data`, `observedAt` | Last config seen, compared at each process start (R-11) |
 | `vocab` | `run`, `phase`, `lastId`, `walked`, `walkedAt`, `status`, `startedAt`, `finishedAt?` | Rebuild run number and resume position |
-| `jobRequest:<id>` | `job`, `requestedAt` | Written by `config/search-job.js` |
+| `jobRequest:<id>` | `job`, `requestedAt`, `verifyRound?`, `reconciledAt?` | Written by `config/search-job.js`, and by the writer and runner for a gap, a token change and the mismatch loop, which keeps its round here |
 ## Language pack
 
 In code, not storage: [contracts/language-pack.md](contracts/language-pack.md).

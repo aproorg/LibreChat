@@ -1,12 +1,12 @@
 import { runAsSystem } from '@librechat/data-schemas';
 import type { SearchMethods } from '@librechat/data-schemas';
 import type { SearchConfigSnapshot } from '../config';
-import { JOB_STATE_READ, LEASE_KEY } from './control';
+import { JOB_STATE_READ, LEASE_KEY, STREAM_KEY } from './control';
 
 export type DropSearchMethods = Pick<SearchMethods, 'readSearchState' | 'dropSearchCollections'>;
 
 /** Why nothing was dropped. Each has its own line in `config/search-job.js`. */
-export type DropRefusalCode = 'search_data_on' | 'search_lease_held';
+export type DropRefusalCode = 'search_data_on' | 'search_lease_held' | 'search_sync_recent';
 
 export type DropSearchResult =
   | { ok: true; value: { dropped: string[] } }
@@ -20,6 +20,10 @@ export type DropSearchResult =
  * It refuses while search data is on: by this configuration, and by a live lease, which
  * means some process still runs with the old configuration and would write the collections
  * back. A lease runs out `syncTakeoverSeconds` after its holder stops.
+ *
+ * A lease its holder gave up at shutdown looks run out at once, while another process with
+ * search data on may be about to take it. So it also refuses while a sync writer saved its
+ * position within the takeover time: a writer saves every few seconds, even when idle.
  */
 export function dropSearchData({
   methods,
@@ -27,7 +31,7 @@ export function dropSearchData({
   now = Date.now,
 }: {
   methods: DropSearchMethods;
-  config: Pick<SearchConfigSnapshot, 'data'>;
+  config: Pick<SearchConfigSnapshot, 'data' | 'syncTakeoverSeconds'>;
   now?: () => number;
 }): Promise<DropSearchResult> {
   return runAsSystem(async (): Promise<DropSearchResult> => {
@@ -38,6 +42,11 @@ export function dropSearchData({
     const leaseUntil = lease?.leaseUntil instanceof Date ? lease.leaseUntil.getTime() : 0;
     if (leaseUntil > now()) {
       return { ok: false, error: { code: 'search_lease_held' } };
+    }
+    const stream = await methods.readSearchState(STREAM_KEY, JOB_STATE_READ);
+    const savedAt = stream?.savedAt instanceof Date ? stream.savedAt.getTime() : 0;
+    if (now() - savedAt < config.syncTakeoverSeconds * 1000) {
+      return { ok: false, error: { code: 'search_sync_recent' } };
     }
     return { ok: true, value: { dropped: await methods.dropSearchCollections() } };
   });

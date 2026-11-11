@@ -1,14 +1,18 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { createGunzip } from 'node:zlib';
 import type { Readable } from 'node:stream';
 import type { SearchSource } from '~/search/sync/extract';
 
-/** Lines of a `.ndjson` or `.ndjson.gz` file. */
+/**
+ * Lines of a `.ndjson` or `.ndjson.gz` file. A missing file fails here: a read stream's
+ * error does not cross `pipe`, so the line reader would wait until the test timed out.
+ */
 export async function* readNdjson<T>(path: string): AsyncGenerator<T> {
+  await access(path);
   const file = createReadStream(path);
   const input: Readable = path.endsWith('.gz') ? file.pipe(createGunzip()) : file;
   for await (const line of createInterface({ input })) {

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import type { SearchMethods, SearchStreamBatch } from './search';
 import type { SearchPort } from '~/types/search';
-import type { SearchMethods } from './search';
 import { createSearchMethods } from './search';
 import { createMethods } from './index';
 import { createModels } from '~/models';
@@ -374,6 +374,29 @@ describe('search reads', () => {
       expect(rows.map(({ _id }) => _id)).not.toContain(String(theirs));
       expect(finds('msearch')).toHaveLength(2);
       expect(finds('msearch')[0]).toMatchObject({ singleBatch: true, maxTimeMS: 5000 });
+      /* The second chunk gets what is left of the same budget, never a fresh one. */
+      expect(finds('msearch')[1].maxTimeMS).toBeLessThanOrEqual(5000);
+    });
+
+    it('stops before a later chunk once the time for the whole read is gone', async () => {
+      const mine: string[] = [];
+      for (let index = 0; index < 51; index += 1) {
+        const { insertedId } = await insertRecord(USER, 'word', `m${index}`, new Date());
+        mine.push(String(insertedId));
+      }
+      const find = jest.spyOn(database.models.MessageSearch, 'find').mockImplementationOnce(
+        () =>
+          ({
+            lean: () => new Promise((resolve) => setTimeout(() => resolve([]), 60)),
+          }) as never,
+      );
+
+      await expect(
+        methods.readRecordTokens({ user: USER, ids: mine }, { maxTimeMS: 30 }),
+      ).rejects.toMatchObject({ code: 'search_busy' });
+
+      expect(find).toHaveBeenCalledTimes(1);
+      find.mockRestore();
     });
   });
 
@@ -792,6 +815,23 @@ describe('search job methods', () => {
       );
     const objectId = (id: string) => new mongoose.Types.ObjectId(id);
 
+    it('a walk never enters a row whose _id is not an ObjectId', async () => {
+      await store([
+        { _id: 'ext-1', messageId: 'outside' },
+        { _id: objectId(ID_A), messageId: 'a' },
+        { _id: objectId(ID_B), messageId: 'b' },
+      ]);
+
+      const first = await methods.readSearchSources({ collection: 'messages', limit: 1 });
+      expect(first.map(({ _id }) => _id)).toEqual([ID_A]);
+      const rest = await methods.readSearchSources({
+        collection: 'messages',
+        afterId: first[0]._id,
+        limit: 5,
+      });
+      expect(rest.map(({ _id }) => _id)).toEqual([ID_B]);
+    });
+
     it('a state read sees the select:false subagent field and holds no text', async () => {
       await store([
         {
@@ -950,5 +990,112 @@ describe('search job methods', () => {
         expect(names).not.toContain(name);
       }
     });
+  });
+});
+
+describe('watchSearchSources batches', () => {
+  let server: MongoMemoryServer;
+  let database: mongoose.Mongoose;
+  let methods: SearchMethods;
+  let abort: AbortController;
+
+  const change = (at: Date | null) => {
+    const _id = new mongoose.Types.ObjectId();
+    return {
+      operationType: 'insert',
+      ns: { coll: 'messages' },
+      documentKey: { _id },
+      fullDocument: { _id, messageId: String(_id) },
+      ...(at ? { wallTime: at } : {}),
+    };
+  };
+
+  /** A change stream whose `tryNext` is scripted, so batching is tested without a server. */
+  const streamOf = (tryNext: () => Promise<unknown>) =>
+    jest.spyOn(database.connection.db!, 'watch').mockReturnValue({
+      tryNext,
+      close: async () => undefined,
+      resumeToken: { _data: 'token' },
+    } as never);
+
+  const firstBatch = async (): Promise<SearchStreamBatch> => {
+    const batches = methods.watchSearchSources({ resumeToken: null, signal: abort.signal });
+    const { value } = await batches.next();
+    abort.abort();
+    await batches.return(undefined);
+    if (!value) {
+      throw new Error('The stream ended before its first batch');
+    }
+    return value;
+  };
+
+  beforeAll(async () => {
+    server = await MongoMemoryServer.create();
+    database = new mongoose.Mongoose();
+    await database.connect(server.getUri());
+    createModels(database);
+    methods = createSearchMethods(database);
+  });
+
+  afterAll(async () => {
+    await database.disconnect();
+    await server.stop();
+  });
+
+  beforeEach(() => {
+    abort = new AbortController();
+  });
+
+  it('closes a batch under steady traffic, and promises catch-up to its last change', async () => {
+    const times: Date[] = [];
+    streamOf(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      times.push(new Date(Date.UTC(2026, 0, 1) + times.length * 1000));
+      return change(times[times.length - 1]);
+    });
+
+    const batch = await firstBatch();
+
+    /* A change every 10 ms never leaves a quiet moment, and 500 of them would take 5 s. */
+    expect(batch.events.length).toBeGreaterThan(0);
+    expect(batch.events.length).toBeLessThan(500);
+    expect(batch.caughtUpTo).toBe(times[batch.events.length - 1].getTime());
+    expect(batch.position).toEqual({ scope: 'database', tokens: { database: { _data: 'token' } } });
+  });
+
+  it('ignores a change to a row whose _id is not an ObjectId', async () => {
+    const pending = [
+      { ...change(new Date(Date.UTC(2026, 0, 1))), documentKey: { _id: 'ext-1' } },
+      change(new Date(Date.UTC(2026, 0, 1))),
+    ];
+    streamOf(async () => pending.shift() ?? null);
+
+    const batch = await firstBatch();
+
+    expect(batch.events.map(({ type }) => type)).toEqual(['ignored', 'upsert']);
+  });
+
+  it('promises nothing from such a batch when its changes carry no server time', async () => {
+    streamOf(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return change(null);
+    });
+
+    const batch = await firstBatch();
+
+    expect(batch.events.length).toBeGreaterThan(0);
+    expect(batch.caughtUpTo).toBeNull();
+  });
+
+  it('promises catch-up to the start of the read once the server has nothing more', async () => {
+    const before = Date.now();
+    const pending = [change(new Date(Date.UTC(2026, 0, 1)))];
+    streamOf(async () => pending.shift() ?? null);
+
+    const batch = await firstBatch();
+
+    expect(batch.events).toHaveLength(1);
+    expect(batch.caughtUpTo).toBeGreaterThanOrEqual(before);
+    expect(batch.caughtUpTo).toBeLessThanOrEqual(Date.now());
   });
 });

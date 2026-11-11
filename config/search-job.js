@@ -21,6 +21,9 @@ const methods = require('~/models');
   });
   silentExit(code);
 })().catch((error) => {
-  console.error('Search job command failed:', error?.message);
+  /* A class and a code only: the message of a connection error names the cluster. */
+  const name = /^[A-Za-z]{1,40}$/.test(error?.name ?? '') ? error.name : 'Error';
+  const code = ['string', 'number'].includes(typeof error?.code) ? ` (${error.code})` : '';
+  console.error(`Search job command failed: ${name}${code}`);
   silentExit(1);
 });

@@ -16,10 +16,6 @@ const FACTORIES = new Map<string, (deps: SearchPackDeps) => LanguagePack>([
   [EN_PACK_ID, () => createEnPack()],
 ]);
 
-export function isRegisteredSearchPack(id: string): boolean {
-  return FACTORIES.has(id);
-}
-
 /**
  * Builds the enabled packs without loading them. An unregistered ID is an answer,
  * not a throw: the service reports a pack failure and startup carries on.

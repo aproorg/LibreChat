@@ -6,10 +6,12 @@ import type {
   SearchSourceEvent,
 } from '@librechat/data-schemas';
 import type { Analyzer } from '../analyzer/analyze';
+import type { PreparedRecord } from './record';
 import type { VocabCounter } from './vocab';
-import { buildConversationRecord, buildMessageRecord } from './record';
+import { giveWay, SOURCE_COLLECTIONS } from '../jobs/control';
 import { removeRecordsOfGoneSources } from '../jobs/check';
-import { SOURCE_COLLECTIONS } from '../jobs/control';
+import { finishRecord, prepareRecord } from './record';
+import { UnusableSourceError } from './extract';
 
 export type ApplyMethods = Pick<
   SearchMethods,
@@ -74,7 +76,7 @@ export interface ApplyDeps {
   analyzer: Analyzer;
   version: string;
   turn: ApplyTurn;
-  vocab: Pick<VocabCounter, 'add'>;
+  vocab: Pick<VocabCounter, 'add' | 'settle'>;
 }
 
 export interface ApplyResult {
@@ -86,7 +88,7 @@ export interface ApplyResult {
   lost: boolean;
 }
 
-type Change = Exclude<SearchSourceEvent, { type: 'meili' } | { type: 'gap' }>;
+type Change = Exclude<SearchSourceEvent, { type: 'meili' } | { type: 'gap' } | { type: 'ignored' }>;
 
 /**
  * Meilisearch's bookkeeping writes drop first, or one could hide the edit it followed. Then
@@ -96,7 +98,7 @@ type Change = Exclude<SearchSourceEvent, { type: 'meili' } | { type: 'gap' }>;
 export function lastChanges(events: readonly SearchSourceEvent[]): Change[] {
   const last = new Map<string, Change>();
   for (const event of events) {
-    if (event.type === 'meili' || event.type === 'gap') {
+    if (event.type === 'meili' || event.type === 'gap' || event.type === 'ignored') {
       continue;
     }
     const key = `${event.collection}:${event.id}`;
@@ -106,20 +108,29 @@ export function lastChanges(events: readonly SearchSourceEvent[]): Change[] {
   return [...last.values()];
 }
 
-function build(
+/** Everything about a row's record but its tokens, so no analysis runs here. */
+function prepare(
   collection: SearchSourceCollection,
   change: Extract<Change, { type: 'upsert' }>,
-  options: { analyzer: Analyzer; version: string; epoch: number },
-): MessageSearchRecord | ConversationSearchRecord | null {
+): PreparedRecord | null {
   try {
-    return collection === 'messages'
-      ? buildMessageRecord(change.source, options)
-      : buildConversationRecord(change.source, options);
+    return prepareRecord(collection, change.source);
   } catch (error) {
     /* A row missing `user` or a date can never have a record: the same as a non-indexable one. */
-    if (error instanceof TypeError && /^Search source has no usable/.test(error.message)) {
+    if (error instanceof UnusableSourceError) {
       return null;
     }
+    throw new SyncApplyError('analyze_failed');
+  }
+}
+
+function analyze(
+  prepared: PreparedRecord,
+  options: { analyzer: Analyzer; version: string; epoch: number },
+): MessageSearchRecord | ConversationSearchRecord {
+  try {
+    return finishRecord(prepared, options);
+  } catch {
     throw new SyncApplyError('analyze_failed');
   }
 }
@@ -146,16 +157,12 @@ export async function applyChanges(
     if (mine.length === 0) {
       continue;
     }
-    const records: Array<{ record: MessageSearchRecord | ConversationSearchRecord; at: number }> =
-      [];
+    const prepared: Array<{ record: PreparedRecord; at: number }> = [];
     const deletes: string[] = [];
     for (const change of mine) {
-      const record =
-        change.type === 'upsert'
-          ? build(collection, change, { analyzer, version, epoch: turn.epoch })
-          : null;
+      const record = change.type === 'upsert' ? prepare(collection, change) : null;
       if (record) {
-        records.push({ record, at: change.at });
+        prepared.push({ record, at: change.at });
       } else {
         deletes.push(change.id);
       }
@@ -166,29 +173,36 @@ export async function applyChanges(
         await step('read_failed', () =>
           methods.readSearchRecordStamps(
             collection,
-            records.map(({ record }) => record._id),
+            prepared.map(({ record }) => record.fields._id),
           ),
         )
       ).map((stamp) => [stamp._id, stamp]),
     );
     const writes: Array<MessageSearchRecord | ConversationSearchRecord> = [];
     const counted: Array<readonly string[]> = [];
-    for (const { record, at } of records) {
-      const stamp = stamps.get(record._id);
+    for (const { record, at } of prepared) {
+      const stamp = stamps.get(record.fields._id);
       if (stamp && stamp.e > turn.epoch) {
         result.unchanged += 1;
         continue;
       }
-      const same = stamp != null && stamp.h === record.h && stamp.v === record.v;
+      const same = stamp != null && stamp.h === record.fields.h && stamp.v === version;
       const replaying = at < turn.replayBefore && stamp != null && stamp.e < turn.epoch;
       if (same && !replaying) {
         result.unchanged += 1;
         continue;
       }
-      writes.push(record);
+      /*
+       * Only now, for a row that needs a write: a metadata-only update, or a Meilisearch
+       * reset touching every message, costs no analysis. Each row then gives way, so a
+       * large batch cannot hold the event loop of a process that also serves chat.
+       */
+      const built = analyze(record, { analyzer, version, epoch: turn.epoch });
+      writes.push(built);
       if (!same) {
-        counted.push(record.tokens);
+        counted.push(built.tokens);
       }
+      await giveWay();
     }
 
     if (!turn.holds()) {
@@ -203,7 +217,10 @@ export async function applyChanges(
     result.deleted += await step('write_failed', () =>
       methods.deleteSearchRecords(collection, deletes, { atMostEpoch: turn.epoch }),
     );
-    counted.forEach((tokens) => vocab.add(tokens));
+    for (const tokens of counted) {
+      vocab.add(tokens);
+      await vocab.settle();
+    }
 
     if (!turn.holds()) {
       /* A paused writer's upsert can bring back a record its successor deleted (R-09). */
@@ -219,27 +236,4 @@ export async function applyChanges(
     }
   }
   return result;
-}
-
-/** The tenant pin (R-04): `mismatch` when a second non-null `tenantId` appears. */
-export function checkTenant(
-  changes: readonly Change[],
-  pinned: string | null,
-): { ok: true; pin: string | null } | { ok: false } {
-  let pin = pinned;
-  for (const change of changes) {
-    if (change.type !== 'upsert') {
-      continue;
-    }
-    const tenantId = change.source.tenantId;
-    if (typeof tenantId !== 'string' || tenantId.length === 0) {
-      continue;
-    }
-    if (pin === null) {
-      pin = tenantId;
-    } else if (pin !== tenantId) {
-      return { ok: false };
-    }
-  }
-  return { ok: true, pin };
 }

@@ -1,7 +1,7 @@
 import { isSearchError, SearchError } from '@librechat/data-schemas';
 import type { SearchReadOptions } from '@librechat/data-schemas';
 import type { SearchMetrics, SearchSurface } from '../metrics';
-import { getSafeErrorMetadata } from '~/utils/errors';
+import { safeFailure } from '../failure';
 
 const CURSOR_LIMIT_CODE = 2;
 const CURSOR_LIMIT_TEXT = 'Cannot open a new cursor';
@@ -21,14 +21,20 @@ export function createReadGate(limit: number): ReadGate {
   return {
     async run<T>(read: () => Promise<T>): Promise<T> {
       if (active >= limit) {
+        /* The slot is handed over, still counted, so a read arriving meanwhile cannot take it too. */
         await new Promise<void>((resolve) => waiting.push(resolve));
+      } else {
+        active += 1;
       }
-      active += 1;
       try {
         return await read();
       } finally {
-        active -= 1;
-        waiting.shift()?.();
+        const next = waiting.shift();
+        if (next) {
+          next();
+        } else {
+          active -= 1;
+        }
       }
     },
   };
@@ -129,7 +135,9 @@ export function createReadRunner(options: ReadRunnerOptions): SearchReadRunner {
         if (errorCode(error) === EXCEEDED_TIME_LIMIT_CODE) {
           throw new SearchError('search_busy');
         }
-        logger.warn('[search] Read failed', getSafeErrorMetadata(error));
+        /* The driver's code and code name are stable and say which failure this was: an
+         * unsupported option, a missing index and a network error all read as `Error`. */
+        logger.warn('[search] Read failed', { ...safeFailure(error), surface });
         throw new SearchError('search_failed');
       }
     }

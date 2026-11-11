@@ -66,7 +66,8 @@ export const endOfPrefix = (prefix: string): string => {
 };
 
 /**
- * Words starting with the last query word, ported from `final/search.mjs`. The range
+ * Words starting with the last query word, ported from the design's reference
+ * implementation (`final/search.mjs`, kept outside this repository). The range
  * read is bounded, so "most frequent first" holds within the first rows by spelling;
  * a tail past the budget is not expanded, and is counted (R-10).
  */

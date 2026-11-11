@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type FC } from
 import { useAtomValue } from 'jotai';
 import throttle from 'lodash/throttle';
 import { useRecoilValue } from 'recoil';
+import { SEARCH_PAGE_SIZE } from 'librechat-data-provider';
 import { Spinner, useToastContext } from '@librechat/client';
 import { List, CellMeasurer, CellMeasurerCache } from 'react-virtualized';
 import type { SearchErrorCode, TMessage } from 'librechat-data-provider';
@@ -10,7 +11,7 @@ import {
   retrySearch,
   getSearchErrorCode,
   useMessagesInfiniteQuery,
-  refetchSinglePageOnFocus,
+  refetchSinglePage,
 } from '~/data-provider';
 import { SearchErrorState, SearchStopWordHint, SearchLoadMore } from '~/components/Search';
 import { useElementSize, useLocalize, useAuthContext } from '~/hooks';
@@ -30,9 +31,6 @@ type MeasuredCellParent = {
  *  overlay instead of sitting underneath it. */
 const FOOTER_HEIGHT = 64;
 
-/** The server's page size for search. A page below it was thinned by filtering. */
-const SEARCH_PAGE_SIZE = 25;
-
 /** How many thinned pages in a row are followed automatically before the user is asked. */
 const MAX_AUTO_FETCHES = 3;
 
@@ -44,6 +42,8 @@ type AutoFetchState = {
   count: number;
   /** The page count the last fetch started from, so one page never triggers two. */
   pages: number;
+  /** The user has pressed the button for this query, so it stays where their focus is. */
+  byUser: boolean;
 };
 
 /** Virtualized row wrapper that reports its measured height back to the cache.
@@ -129,7 +129,9 @@ export default function Search() {
       staleTime: 30000,
       cacheTime: 300000,
       retry: retrySearch,
-      refetchOnWindowFocus: refetchSinglePageOnFocus,
+      refetchOnWindowFocus: refetchSinglePage,
+      refetchOnMount: refetchSinglePage,
+      refetchOnReconnect: refetchSinglePage,
     },
   );
 
@@ -184,9 +186,15 @@ export default function Search() {
       : undefined;
   }, [isError, error, isLaterPageError]);
 
-  const [autoFetch, setAutoFetch] = useState<AutoFetchState>({ query: '', count: 0, pages: 0 });
+  const [autoFetch, setAutoFetch] = useState<AutoFetchState>({
+    query: '',
+    count: 0,
+    pages: 0,
+    byUser: false,
+  });
   const autoFetchCount = autoFetch.query === searchQuery ? autoFetch.count : 0;
   const autoFetchPages = autoFetch.query === searchQuery ? autoFetch.pages : 0;
+  const isPagerHeld = autoFetch.query === searchQuery && autoFetch.byUser;
 
   /** A page thinned by filtering may hold too little to scroll, and scrolling is the only
    *  thing that pages this list, so the next page is fetched for the user, a few times. */
@@ -204,13 +212,19 @@ export default function Search() {
     if (!isAutoFetchPending || isFetchingNextPage || autoFetchPages === pageCount) {
       return;
     }
-    setAutoFetch({ query: searchQuery, count: autoFetchCount + 1, pages: pageCount });
+    setAutoFetch({
+      query: searchQuery,
+      count: autoFetchCount + 1,
+      pages: pageCount,
+      byUser: isPagerHeld,
+    });
     void fetchNextPage();
   }, [
     isAutoFetchPending,
     isFetchingNextPage,
     autoFetchPages,
     autoFetchCount,
+    isPagerHeld,
     pageCount,
     searchQuery,
     fetchNextPage,
@@ -219,7 +233,7 @@ export default function Search() {
   /** A user's own request for more, or for the failed page again, earns a new run of
    *  automatic fetches after it. */
   const handleLoadMore = useCallback(() => {
-    setAutoFetch({ query: searchQuery, count: 0, pages: pageCount });
+    setAutoFetch({ query: searchQuery, count: 0, pages: pageCount, byUser: true });
     void fetchNextPage();
   }, [searchQuery, pageCount, fetchNextPage]);
 
@@ -230,7 +244,7 @@ export default function Search() {
   /** Dropping the cached pages first makes this a new search from its first page, where a
    *  plain refetch would walk every loaded page again. */
   const handleRestart = useCallback(() => {
-    setAutoFetch({ query: searchQuery, count: 0, pages: 0 });
+    setAutoFetch({ query: searchQuery, count: 0, pages: 0, byUser: false });
     remove();
     void refetch();
   }, [searchQuery, remove, refetch]);
@@ -429,12 +443,20 @@ export default function Search() {
     pager = <SearchErrorState code={errorCode} onRestart={handleRestart} />;
   } else if (isLaterPageError) {
     pager = (
-      <SearchLoadMore isError isBusy={errorCode === 'search_busy'} onLoadMore={handleLoadMore} />
+      <SearchLoadMore
+        isError
+        isBusy={errorCode === 'search_busy'}
+        isLoading={isFetchingNextPage}
+        onLoadMore={handleLoadMore}
+      />
     );
-  } else if (hasNextPage === true && !showingStale && !isFetchingNextPage && !isAutoFetchPending) {
+  } else if (hasNextPage === true && !showingStale && (!isAutoFetchPending || isPagerHeld)) {
+    /** Stays mounted while its own page loads, and through the automatic fetches a press
+     *  earns after a short page, so keyboard focus is still on it afterwards. */
     pager = (
       <SearchLoadMore
         onLoadMore={handleLoadMore}
+        isLoading={isFetchingNextPage || isAutoFetchPending}
         hint={hasResults ? undefined : localize('com_ui_search_more_available')}
       />
     );
@@ -512,7 +534,7 @@ export default function Search() {
       {pager != null && (
         <div className="relative z-10 flex shrink-0 justify-center px-4 py-3">{pager}</div>
       )}
-      {isFetchingNextPage && (
+      {isFetchingNextPage && pager == null && (
         <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex justify-center py-4">
           <Spinner className="text-text-primary" />
         </div>

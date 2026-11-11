@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_SEARCH_TOKENS } from '@librechat/data-schemas';
 import type { LanguagePack } from '../languages/pack';
 import { FOLD_RULE_VERSION } from './fold';
 import { MAX_WORD_LENGTH } from './words';
@@ -11,7 +12,7 @@ export interface AnalyzerCaps {
 
 export const ANALYZER_CAPS: Readonly<AnalyzerCaps> = {
   wordLength: MAX_WORD_LENGTH,
-  docTokens: 3000,
+  docTokens: MAX_SEARCH_TOKENS,
 };
 
 export interface AnalyzerVersionOptions {

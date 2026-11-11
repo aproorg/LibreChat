@@ -131,6 +131,29 @@ describe('createReadRunner', () => {
     expect(runnerLogger.warn).toHaveBeenCalledTimes(1);
   });
 
+  it('logs the driver’s code and code name with a failed read, and never its message', async () => {
+    const sentinel = 'SENTINEL_RAW_DRIVER_TEXT';
+    await runner()(async () => {
+      throw Object.assign(new Error(sentinel), { code: 2, codeName: 'BadValue' });
+    }).catch(() => undefined);
+
+    expect(runnerLogger.warn).toHaveBeenCalledWith(
+      '[search] Read failed',
+      expect.objectContaining({ code: 2, codeName: 'BadValue', surface: 'messages' }),
+    );
+    expect(JSON.stringify(runnerLogger.warn.mock.calls)).not.toContain(sentinel);
+  });
+
+  it('keeps a system code, and drops a code name that is not a plain name', async () => {
+    await runner()(async () => {
+      throw Object.assign(new Error('x'), { code: 'ECONNRESET', codeName: 'not a name: text' });
+    }).catch(() => undefined);
+
+    const [, meta] = runnerLogger.warn.mock.calls[0] as [string, Record<string, unknown>];
+    expect(meta).not.toHaveProperty('codeName');
+    expect(meta).toMatchObject({ code: 'ECONNRESET' });
+  });
+
   it('passes a SearchError through untouched', async () => {
     await expect(
       runner()(async () => {
@@ -163,5 +186,46 @@ describe('createReadRunner', () => {
     controller.abort();
     await expect(stuck).rejects.toMatchObject({ code: 'search_busy' });
     await expect(runner({ gate })(async () => 'next')).resolves.toBe('next');
+  });
+});
+
+describe('createReadGate', () => {
+  const held = () => {
+    let release = () => {};
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  };
+
+  it('never runs more than its limit when a read arrives as another one finishes', async () => {
+    for (let depth = 0; depth <= 12; depth += 1) {
+      const gate = createReadGate(1);
+      let active = 0;
+      let peak = 0;
+      const read = (until: Promise<void>) =>
+        gate.run(async () => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await until;
+          active -= 1;
+        });
+      const [first, waiter, late] = [held(), held(), held()];
+      const running = [read(first.promise), read(waiter.promise)];
+
+      first.release();
+      /* The slot is free for a few microtasks before the waiter runs: the late read arrives then. */
+      for (let tick = 0; tick < depth; tick += 1) {
+        await Promise.resolve();
+      }
+      running.push(read(late.promise));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect({ depth, peak }).toEqual({ depth, peak: 1 });
+      waiter.release();
+      late.release();
+      await Promise.all(running);
+      expect(active).toBe(0);
+    }
   });
 });

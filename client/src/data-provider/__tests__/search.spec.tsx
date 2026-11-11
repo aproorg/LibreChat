@@ -10,7 +10,7 @@ import {
   cursorSearchText,
   shouldRetrySearch,
   getSearchErrorCode,
-  refetchSinglePageOnFocus,
+  refetchSinglePage,
 } from '../search';
 import { useConversationsInfiniteQuery, useMessagesInfiniteQuery } from '../queries';
 import { useGetSearchMetaQuery } from '../Misc/queries';
@@ -103,6 +103,14 @@ describe('cursorSearchText', () => {
     expect(sent).toBe('é'.repeat(256));
     expect(cursorSearchText('short')).toBe('short');
     expect(cursorSearchText(undefined)).toBeUndefined();
+  });
+
+  it('replaces a surrogate half left by the cut, so the text still encodes into a URL', () => {
+    const sent = cursorSearchText(`${'a'.repeat(255)}\u{1F600}tail`);
+    expect(sent).toBe(`${'a'.repeat(255)}\uFFFD`);
+    expect(() => encodeURIComponent(sent ?? '')).not.toThrow();
+    /* A pair that fits whole is left alone. */
+    expect(cursorSearchText(`${'a'.repeat(254)}\u{1F600}tail`)).toBe(`${'a'.repeat(254)}\u{1F600}`);
   });
 });
 
@@ -207,7 +215,7 @@ describe('useMessagesInfiniteQuery', () => {
       () =>
         useMessagesInfiniteQuery(
           { search: 'harbor' },
-          { staleTime: 0, refetchOnWindowFocus: refetchSinglePageOnFocus },
+          { staleTime: 0, refetchOnWindowFocus: refetchSinglePage },
         ),
       { wrapper },
     );
@@ -232,6 +240,31 @@ describe('useMessagesInfiniteQuery', () => {
       focusManager.setFocused(true);
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(listMessages).toHaveBeenCalledTimes(callsWithTwoPages);
+  });
+
+  it('does not refetch several loaded pages when the view mounts again', async () => {
+    const listMessages = jest.spyOn(request, 'get').mockImplementation(twoPages);
+    const options = { staleTime: 0, refetchOnMount: refetchSinglePage };
+    const first = renderHook(() => useMessagesInfiniteQuery({ search: 'harbor' }, options), {
+      wrapper,
+    });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(first.result.current.data?.pages).toHaveLength(1);
+    await act(async () => {
+      await first.result.current.fetchNextPage();
+    });
+    await waitFor(() => expect(first.result.current.data?.pages).toHaveLength(2));
+    const callsWithTwoPages = listMessages.mock.calls.length;
+    first.unmount();
+
+    const again = renderHook(() => useMessagesInfiniteQuery({ search: 'harbor' }, options), {
+      wrapper,
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(again.result.current.data?.pages).toHaveLength(2);
     expect(listMessages).toHaveBeenCalledTimes(callsWithTwoPages);
   });
 
@@ -281,6 +314,62 @@ describe('useConversationsInfiniteQuery', () => {
     });
     expect(options.signal.aborted).toBe(true);
     release({ conversations: [], nextCursor: null });
+  });
+});
+
+describe('a plain list, with no search', () => {
+  /** The base behaviour: a fetch whose view left still finishes and is cached. */
+  const held = <T,>() => {
+    let release: (page: T) => void = () => undefined;
+    const get = jest.spyOn(request, 'get').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve as (page: T) => void;
+        }),
+    );
+    return { get, release: (page: T) => release(page) };
+  };
+
+  it('conversations: passes no signal, and still caches a page that lands after its view left', async () => {
+    const { get, release } = held<ConversationListResponse>();
+
+    const { unmount } = renderHook(() => useConversationsInfiniteQuery({}), { wrapper });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    const [, options] = get.mock.calls[0] as [string, { signal?: AbortSignal } | undefined];
+    expect(options?.signal).toBeUndefined();
+
+    unmount();
+    await act(async () => {
+      release({ conversations: [], nextCursor: null });
+    });
+
+    await waitFor(() => {
+      const [[, cached]] = queryClient.getQueriesData<{ pages: unknown[] }>([
+        QueryKeys.allConversations,
+      ]);
+      expect(cached?.pages).toHaveLength(1);
+    });
+  });
+
+  it('messages: passes no signal, and still caches a page that lands after its view left', async () => {
+    const { get, release } = held<MessagesListResponse>();
+
+    const { unmount } = renderHook(() => useMessagesInfiniteQuery({ conversationId: 'c1' }), {
+      wrapper,
+    });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    const [, options] = get.mock.calls[0] as [string, { signal?: AbortSignal } | undefined];
+    expect(options?.signal).toBeUndefined();
+
+    unmount();
+    await act(async () => {
+      release(messagesPage(['m1']));
+    });
+
+    await waitFor(() => {
+      const [[, cached]] = queryClient.getQueriesData<{ pages: unknown[] }>([QueryKeys.messages]);
+      expect(cached?.pages).toHaveLength(1);
+    });
   });
 });
 

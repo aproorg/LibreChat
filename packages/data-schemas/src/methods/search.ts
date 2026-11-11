@@ -46,8 +46,21 @@ const JOB_READ_MAX_TIME_MS = 60_000;
 const STREAM_STATE_KEY = 'stream';
 const STREAM_MAX_AWAIT_MS = 1000;
 const STREAM_KEY_DATABASE = 'database';
+/**
+ * Where a walk over a source collection starts. The app only writes ObjectId `_id`s, and a
+ * comparison matches one type only, so a row put there from outside with another kind of
+ * `_id` never enters a walk. Such a row cannot have a record, and its `_id` would fail to
+ * cast on the next page and stop the job for good.
+ */
+const FIRST_SOURCE_ID = '000000000000000000000000';
 /** Events per batch, which bounds the writer's one record read per batch. */
 const STREAM_BATCH_MAX = 500;
+/**
+ * A stream's part of a batch closes this long after its first event. Without it a batch
+ * ends only at the cap or after a full quiet `maxAwaitTimeMS`, so steady traffic would hold
+ * every event for a minute or more (SC-009). It also bounds what a replay reads into memory.
+ */
+const STREAM_BATCH_SPAN_MS = 500;
 /**
  * Removes the two fields that can carry a whole message from an update event, so an edit to
  * a message near 16 MB does not push the event past the limit along with its full document.
@@ -142,7 +155,8 @@ function writePosition(
   return { scope, tokens };
 }
 
-function changeTime(change: ChangeStreamDocument): number {
+/** When the server says the change happened, or `null` where the event carries no time. */
+function serverTime(change: ChangeStreamDocument): number | null {
   const { wallTime, clusterTime } = change as {
     wallTime?: Date;
     clusterTime?: { getHighBitsUnsigned(): number };
@@ -150,8 +164,10 @@ function changeTime(change: ChangeStreamDocument): number {
   if (wallTime instanceof Date) {
     return wallTime.getTime();
   }
-  return clusterTime ? clusterTime.getHighBitsUnsigned() * 1000 : Date.now();
+  return clusterTime ? clusterTime.getHighBitsUnsigned() * 1000 : null;
 }
+
+const changeTime = (change: ChangeStreamDocument): number => serverTime(change) ?? Date.now();
 
 /** Only IDs, types and the full document leave here, so no driver object reaches the writer. */
 function toSourceEvent(
@@ -169,6 +185,10 @@ function toSourceEvent(
   const collection = ns?.coll != null ? names[ns.coll] : undefined;
   if (!collection || documentKey?._id == null) {
     return { type: 'gap', at };
+  }
+  /* As `FIRST_SOURCE_ID` says: no record can follow such a row, and its `_id` would not cast. */
+  if ((documentKey._id as { _bsontype?: unknown })._bsontype !== 'ObjectId') {
+    return { type: 'ignored', at };
   }
   const id = String(documentKey._id);
   if (change.operationType === 'delete') {
@@ -327,6 +347,8 @@ export type SearchSourceEvent =
   | { type: 'delete'; collection: SearchSourceCollection; id: string; at: number }
   /** Meilisearch's own bookkeeping write: `_meiliIndex: true` and nothing a record holds. */
   | { type: 'meili'; collection: SearchSourceCollection; id: string; at: number }
+  /** A change to a row that can never have a record: its `_id` is not an ObjectId. */
+  | { type: 'ignored'; at: number }
   /** The stream cannot account for what happened, such as an invalidate or a dropped collection. */
   | { type: 'gap'; at: number };
 
@@ -336,8 +358,10 @@ export interface SearchStreamBatch {
   /** Resuming here replays nothing in this batch. */
   position: SearchStreamPosition | null;
   /**
-   * Every change committed before this moment is in this batch or an earlier one. `null` when a
-   * stream stopped at the batch cap with changes still waiting, so nothing new is promised.
+   * Every change committed before this moment is in this batch or an earlier one. For a stream
+   * the server had emptied that is when the read began; for one that stopped with changes still
+   * waiting it is the time of the last change read, which under steady traffic is the only
+   * proof there is. `null` when such a stream's events carry no server time.
    */
   caughtUpTo: number | null;
 }
@@ -563,6 +587,26 @@ function dateRange(range: SearchWindowRange | undefined) {
 }
 
 /**
+ * A read made of several queries shares one time budget. Each query gets what is left of it,
+ * so the later ones cannot outlive the search that asked for them (FR-017).
+ */
+function sharedBudget(options: SearchReadOptions): () => SearchReadOptions {
+  let until: number | null = null;
+  return () => {
+    if (until === null) {
+      /* The first query runs as the caller asked: the budget starts with it. */
+      until = Date.now() + options.maxTimeMS;
+      return options;
+    }
+    const maxTimeMS = until - Date.now();
+    if (options.signal?.aborted || maxTimeMS <= 0) {
+      throw new SearchError('search_busy');
+    }
+    return { ...options, maxTimeMS };
+  };
+}
+
+/**
  * A `singleBatch` read of whole messages stops at 16 MB and says nothing, so what it
  * left out reads again. A round that adds nothing means the rest is really absent.
  */
@@ -702,12 +746,13 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   ): Promise<SearchRecordTokens[]> {
     assertUser(user);
     const found: SearchRecordTokens[] = [];
+    const remaining = sharedBudget(options);
     for (let start = 0; start < ids.length; start += RECORD_TOKENS_CHUNK) {
       const chunk = ids.slice(start, start + RECORD_TOKENS_CHUNK);
       const rows = await mongoose.models.MessageSearch.find(
         { user, _id: { $in: chunk } },
         'tokens',
-        singleBatch(chunk.length, options),
+        singleBatch(chunk.length, remaining()),
       ).lean<Array<{ _id: unknown; tokens: string[] }>>();
       for (const { _id, tokens } of rows) {
         found.push({ _id: String(_id), tokens });
@@ -740,11 +785,12 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     options: SearchReadOptions,
   ): Promise<SearchMessageText[]> {
     assertUser(user);
+    const remaining = sharedBudget(options);
     return readEveryMessage(messageIds, (ids) =>
       mongoose.models.Message.find(
         { user, messageId: { $in: ids } },
         MESSAGE_TEXT_FIELDS,
-        singleBatch(ids.length, options),
+        singleBatch(ids.length, remaining()),
       ).lean<SearchMessageText[]>(),
     );
   }
@@ -756,6 +802,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   ): Promise<SearchableMessage[]> {
     assertUser(user);
     const { Message } = mongoose.models;
+    const remaining = sharedBudget(options);
     return readEveryMessage(messageIds, (ids) =>
       Message.find(
         {
@@ -766,7 +813,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
           ],
         },
         CLIENT_MESSAGE_SELECT,
-        singleBatch(ids.length, options),
+        singleBatch(ids.length, remaining()),
       ).lean<SearchableMessage[]>(),
     );
   }
@@ -897,7 +944,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     return runAsSystem(async () =>
       sourceRows(
         await mongoose.models[SOURCE_MODELS[kind]]
-          .find(idRange(afterId, upToId), fields, jobRead(limit))
+          .find(idRange(afterId ?? FIRST_SOURCE_ID, upToId), fields, jobRead(limit))
           .sort({ _id: 1 })
           .lean<Array<Record<string, unknown>>>(),
       ),
@@ -1110,28 +1157,35 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
         const events: SearchSourceEvent[] = [];
         /* Before the first poll, so a later stream's wait cannot overstate an earlier one. */
         const startedAt = Date.now();
-        let drained = true;
+        let caughtUpTo: number | null = startedAt;
         for (const { stream } of streams) {
-          /* Until the server has nothing more, so a bulk import arrives in full batches. */
-          let emptied = false;
+          /*
+           * Until the server has nothing more, the cap, or the span since this stream's first
+           * event: a bulk import still arrives in large batches, and steady traffic is not
+           * held back waiting for a quiet moment.
+           */
+          let reachedTo: number | null = startedAt;
+          let firstAt: number | null = null;
           for (let count = 0; count < STREAM_BATCH_MAX && !signal.aborted; count += 1) {
             const change = await nextChange(stream, signal);
             if (change === null) {
-              emptied = true;
+              reachedTo = startedAt;
               break;
             }
             events.push(toSourceEvent(change, names));
+            reachedTo = serverTime(change);
+            firstAt ??= Date.now();
+            if (Date.now() - firstAt >= STREAM_BATCH_SPAN_MS) {
+              break;
+            }
           }
-          drained &&= emptied;
+          caughtUpTo =
+            caughtUpTo === null || reachedTo === null ? null : Math.min(caughtUpTo, reachedTo);
         }
         if (signal.aborted) {
           return;
         }
-        yield {
-          events,
-          position: writePosition(streams, scope),
-          caughtUpTo: drained ? startedAt : null,
-        };
+        yield { events, position: writePosition(streams, scope), caughtUpTo };
       }
     } finally {
       signal.removeEventListener('abort', close);

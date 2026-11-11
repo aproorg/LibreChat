@@ -224,33 +224,4 @@ describe('analyzer', () => {
       expect(lemmas).not.toHaveBeenCalled();
     });
   });
-
-  describe('batches', () => {
-    it('analyzes each text in order', async () => {
-      const { fake, en } = await loaded();
-      const analyzer = createAnalyzer({ packs: [fake, en], cacheWords: 100 });
-
-      await expect(analyzer.analyzeBatch(['blorgum', 'running'])).resolves.toEqual([
-        ['blorgum', 'blorg'],
-        ['running', 'run'],
-      ]);
-    });
-
-    it('lets a timer scheduled before a large batch fire before the batch ends', async () => {
-      const { fake, en } = await loaded();
-      const analyzer = createAnalyzer({ packs: [fake, en], cacheWords: 100 });
-      const texts = Array.from({ length: 2000 }, (_, i) => `blorgum running w${i}x`);
-      let fired = false;
-      setTimeout(() => {
-        fired = true;
-      }, 0);
-      let firedDuringBatch = false;
-
-      await analyzer.analyzeBatch(texts).then(() => {
-        firedDuringBatch = fired;
-      });
-
-      expect(firedDuringBatch).toBe(true);
-    });
-  });
 });

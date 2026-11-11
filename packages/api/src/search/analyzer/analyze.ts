@@ -1,4 +1,3 @@
-import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import type { LanguagePack } from '../languages/pack';
 import type { SearchRealtext } from '../metrics';
 import { ANALYZER_CAPS } from './version';
@@ -8,9 +7,6 @@ import { fold } from './fold';
 export const PART_MARKER = '~';
 export const MAX_DOC_TOKENS: number = ANALYZER_CAPS.docTokens;
 
-/** Batches give way this often, so a long batch cannot hold back other work. */
-const BATCH_SLICE_MS = 10;
-const BATCH_SLICE_TEXTS = 100;
 const ALL_DIGITS = /^\p{N}+$/u;
 
 export interface AnalyzerOptions {
@@ -30,8 +26,6 @@ export interface Analyzer {
   docTokens(text: string): string[];
   /** `docTokens` for a message body, counted in `search.realtext`. */
   analyzeMessage(text: string): string[];
-  /** `analyzeMessage` over many texts, giving way to the event loop between slices. */
-  analyzeBatch(texts: readonly string[]): Promise<string[][]>;
   cacheSize(): number;
 }
 
@@ -136,29 +130,12 @@ export function createAnalyzer({ packs, cacheWords, realtext }: AnalyzerOptions)
     return tokens;
   }
 
-  async function analyzeBatch(texts: readonly string[]): Promise<string[][]> {
-    const results: string[][] = [];
-    let sliceStart = performance.now();
-    for (const text of texts) {
-      results.push(analyzeMessage(text));
-      if (
-        results.length % BATCH_SLICE_TEXTS === 0 ||
-        performance.now() - sliceStart >= BATCH_SLICE_MS
-      ) {
-        await yieldToEventLoop();
-        sliceStart = performance.now();
-      }
-    }
-    return results;
-  }
-
   return {
     packs,
     stopWords,
     analyzeWord,
     docTokens,
     analyzeMessage,
-    analyzeBatch,
     cacheSize: () => cache.size,
   };
 }

@@ -3,7 +3,10 @@ import type { summarizeMeasure } from './measure';
 
 type Summary = ReturnType<typeof summarizeMeasure>;
 
-/** A category's floor from SC-003, where the spec states one. */
+/**
+ * A category's floor from SC-003: the reference's own row, as queries passing on the first
+ * page and in the top 200. The `precision` category has no floor: the reference passes none.
+ */
 interface CategoryFloor {
   category: string;
   page?: number;
@@ -39,9 +42,23 @@ export const QUALITY_GATES: Readonly<Record<ConditionName, ConditionGate>> = {
     expectedOnPage: 92,
     precision: 0.98,
     categories: [
-      { category: 'inflection', page: 9 },
-      { category: 'compound', at200: 7 },
-      { category: 'no-accents', page: 11 },
+      { category: 'inflection', page: 9, at200: 12 },
+      { category: 'compound', page: 4, at200: 7 },
+      { category: 'no-accents', page: 11, at200: 11 },
+      { category: 'typo', page: 7, at200: 7 },
+      { category: 'prefix', page: 5, at200: 6 },
+      { category: 'mixed', page: 3, at200: 3 },
+      { category: 'english', page: 2, at200: 5 },
+      { category: 'multi-word', page: 2, at200: 2 },
+      { category: 'fields', page: 3, at200: 3 },
+      { category: 'isolation', page: 1, at200: 1 },
+      { category: 'stop-trap', page: 5, at200: 5 },
+      { category: 'unknown-compound', page: 2, at200: 2 },
+      { category: 'nfd', page: 2, at200: 2 },
+      { category: 'english-stem', page: 1, at200: 4 },
+      { category: 'code', page: 2, at200: 2 },
+      { category: 'tail-form', page: 2, at200: 2 },
+      { category: 'natural', page: 2, at200: 2 },
     ],
   },
   H: { page: 32, at200: 47, precision: 0.9, categories: [] },

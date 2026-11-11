@@ -437,17 +437,26 @@ describe('Search route on the new search backend', () => {
       expect(fetchNextPage).toHaveBeenCalledTimes(2);
     });
 
-    it('hides the button while the next page is loading', () => {
+    it('keeps the button mounted and busy while its page loads, so focus stays on it', async () => {
+      const fetchNextPage = jest.fn();
+      const page = { pages: [{ messages: rows(25), nextCursor: 'cursor-1' }] };
+      mockUseQuery.mockReturnValue(queryResult({ data: page, hasNextPage: true, fetchNextPage }));
+      const { rerender } = render(<Search />);
+      const user = userEvent.setup();
+      await user.tab();
+      const button = screen.getByTestId('search-load-more');
+      expect(button).toHaveFocus();
+
       mockUseQuery.mockReturnValue(
-        queryResult({
-          data: { pages: [{ messages: rows(25), nextCursor: 'cursor-1' }] },
-          hasNextPage: true,
-          isFetchingNextPage: true,
-        }),
+        queryResult({ data: page, hasNextPage: true, isFetchingNextPage: true, fetchNextPage }),
       );
-      render(<Search />);
-      expect(screen.queryByTestId('search-load-more')).not.toBeInTheDocument();
-      expect(screen.getByTestId('spinner')).toBeInTheDocument();
+      rerender(<Search />);
+
+      expect(screen.getByTestId('search-load-more')).toBe(button);
+      expect(button).toHaveFocus();
+      expect(button).toHaveAttribute('aria-busy', 'true');
+      await user.keyboard('{Enter}');
+      expect(fetchNextPage).not.toHaveBeenCalled();
     });
 
     it('fetches after a short page three times, then shows the button', async () => {
@@ -492,6 +501,52 @@ describe('Search route on the new search backend', () => {
       expect(fetchNextPage).toHaveBeenCalledTimes(4);
       mockUseQuery.mockReturnValue(shortPages(5));
       rerender(<Search />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(5);
+    });
+
+    it('keeps the button, and focus, through the fetches that follow a press on a short page', async () => {
+      const fetchNextPage = jest.fn();
+      const shortPages = (count: number, isFetchingNextPage = false) =>
+        queryResult({
+          data: {
+            pages: Array.from({ length: count }, (_, i) => ({
+              messages: rows(2, `p${i}-`),
+              nextCursor: `cursor-${i + 1}`,
+            })),
+          },
+          hasNextPage: true,
+          isFetchingNextPage,
+          fetchNextPage,
+        });
+      mockUseQuery.mockReturnValue(shortPages(1));
+      const { rerender } = render(<Search />);
+      for (const count of [2, 3, 4]) {
+        mockUseQuery.mockReturnValue(shortPages(count));
+        rerender(<Search />);
+      }
+      expect(fetchNextPage).toHaveBeenCalledTimes(3);
+
+      const user = userEvent.setup();
+      await user.tab();
+      const button = screen.getByTestId('search-load-more');
+      expect(button).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(fetchNextPage).toHaveBeenCalledTimes(4);
+
+      /** While the page the user asked for loads. */
+      mockUseQuery.mockReturnValue(shortPages(4, true));
+      rerender(<Search />);
+      expect(screen.getByTestId('search-load-more')).toBe(button);
+      expect(button).toHaveFocus();
+      expect(button).toHaveAttribute('aria-busy', 'true');
+
+      /** It lands short as well, so an automatic fetch follows, and the button is still there. */
+      mockUseQuery.mockReturnValue(shortPages(5));
+      rerender(<Search />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(5);
+      expect(screen.getByTestId('search-load-more')).toBe(button);
+      expect(button).toHaveFocus();
+      await user.keyboard('{Enter}');
       expect(fetchNextPage).toHaveBeenCalledTimes(5);
     });
 

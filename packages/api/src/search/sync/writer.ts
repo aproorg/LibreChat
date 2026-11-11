@@ -15,10 +15,12 @@ import {
   LEASE_KEY,
   requestJob,
   STREAM_KEY,
+  VERIFICATION_KEY,
 } from '../jobs/control';
-import { applyChanges, checkTenant, lastChanges, SyncApplyError } from './apply';
+import { applyChanges, lastChanges, SyncApplyError } from './apply';
+import { safeFailure, safeFailureCode } from '../failure';
+import { holdTenantPin, TenantMismatch } from './tenant';
 import { isGapUncovered, runSyncStream } from './stream';
-import { getSafeErrorMetadata } from '~/utils/errors';
 import { createVocabCounter } from './vocab';
 
 export type SearchWriterMethods = ApplyMethods &
@@ -60,7 +62,8 @@ export interface SearchWriterDeps {
   maxAwaitTimeMS?: number;
 }
 
-class TenantMismatch extends Error {}
+/** The one request ID for skipped events. */
+const SKIP_REQUEST = 'skip';
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -74,15 +77,9 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', done, { once: true });
   });
 
-/** Safe metadata only: an error class and a numeric code or stable string code. */
-function failureCode(error: unknown): string {
-  if (error instanceof SyncApplyError) {
-    return error.code;
-  }
-  const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown };
-  const label = typeof name === 'string' && /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error';
-  return typeof code === 'number' ? `${label}:${code}` : label;
-}
+/** A batch's own stable code, or the error's class and numeric code. */
+const failureCode = (error: unknown): string =>
+  error instanceof SyncApplyError ? error.code : safeFailureCode(error);
 
 /**
  * The sync writer (R-09, T113). Every process with search data on runs one; only the lease
@@ -128,19 +125,23 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
     const applyBatch = async (batch: SearchStreamBatch): Promise<'ok' | 'stop'> => {
       const changes = lastChanges(batch.events);
       if (changes.length === 0) {
+        /* Not a reason to forget failures: an empty batch proves nothing about record writes. */
         return 'ok';
       }
-      const tenant = checkTenant(changes, pinned);
-      if (!tenant.ok) {
-        throw new TenantMismatch();
-      }
-      if (tenant.pin !== pinned) {
-        await methods.writeSearchState(ANALYZER_KEY, { tenantId: tenant.pin });
-        pinned = tenant.pin;
-      }
+      pinned = await holdTenantPin(
+        methods,
+        changes.map((change) => (change.type === 'upsert' ? change.source.tenantId : undefined)),
+        pinned,
+      );
       const result = await applyWithRetry(changes, signal, (subset) =>
         applyChanges(subset, { ...applyDeps, turn: applyTurn }),
       );
+      /*
+       * Reset here and not when the turn ends: a healthy turn lasts as long as the lease, so
+       * the count would only grow over the process's life and a later blip would wait minutes.
+       * Only after changes were applied, so writes that keep failing still back off.
+       */
+      failures = 0;
       return result === 'lost' ? 'stop' : 'ok';
     };
 
@@ -198,29 +199,36 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
         }
         continue;
       }
-      const poison = single.error instanceof SyncApplyError && single.error.poison;
-      if (!poison) {
+      const failure = single.error;
+      if (!(failure instanceof SyncApplyError) || !failure.poison) {
         /*
          * The database is failing, not the event: end the turn, so the batch is read again
          * from the saved position after a backoff, and nothing is lost.
          */
-        throw single.error;
+        throw failure;
       }
-      const code = single.error instanceof SyncApplyError ? single.error.code : 'unknown';
+      const { code } = failure;
       metrics.syncSkip({ id: change.id, attempts: MAX_ATTEMPTS, code });
-      skipped = true;
+      /* A row a pack throws on gets no record from reconcile either, so it asks for none. */
+      skipped ||= code !== 'analyze_failed';
     }
     if (skipped && isGapUncovered(await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ))) {
-      /* Reconcile retries what was skipped, rather than leaving it to the monthly timer. */
-      await requestJob(methods, `skip-${now()}`, 'reconcile', now());
+      /*
+       * Reconcile retries what was skipped, rather than leaving it to the monthly timer. One
+       * request under one ID however many events are skipped: each reconcile is two full
+       * walks and a word list rebuild, and a request per batch would run them back to back.
+       */
+      await requestJob(methods, SKIP_REQUEST, 'reconcile', now());
     }
     return 'ok';
   }
 
   /**
-   * FR-026 at writer start. The first start, or one before any chain finished or any record
-   * exists, writes the baseline and queues nothing, since reconcile then would be an
-   * unrequested full backfill. Otherwise a version change queues reconcile.
+   * FR-026 at writer start. The first start, or one before any record exists or while the
+   * chain's own walks still cover every row, writes the baseline and queues nothing, since
+   * reconcile then would be an unrequested full backfill. Otherwise a version change queues
+   * reconcile: once a chain has finished, or while it is at its reconcile or verify step,
+   * whose walks have already passed rows that still hold the older version.
    */
   async function checkAnalyzer(ready: NonNullable<ReturnType<SearchService['jobAnalyzer']>>) {
     const previous = await methods.readSearchState(ANALYZER_KEY, JOB_STATE_READ);
@@ -245,14 +253,15 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
     }
 
     const changed = typeof previous?.version === 'string' && previous.version !== ready.version;
-    if (changed && (await chainFinished()) && (await anyRecord())) {
+    if (
+      changed &&
+      isGapUncovered(await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ)) &&
+      (await anyRecord())
+    ) {
       await requestJob(methods, `analyzer-${ready.version}`, 'reconcile', now());
     }
     await methods.writeSearchState(ANALYZER_KEY, fields);
   }
-
-  const chainFinished = async () =>
-    (await methods.readSearchState(CHAIN_KEY, JOB_STATE_READ))?.finishedAt != null;
 
   const anyRecord = async () => {
     for (const collection of ['messages', 'conversations'] as const) {
@@ -287,6 +296,16 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
           stopped = true;
           metrics.syncStop({ code: 'tenant_mismatch' });
           logger.warn('[search] Sync stopped: a second tenant appeared in this database', {});
+          /*
+           * One writer and one word list serve one tenant (R-04). Search must not go on
+           * serving a database that holds two, so the pass is withdrawn for every process.
+           */
+          await methods
+            .writeSearchState(VERIFICATION_KEY, {
+              invalidatedAt: new Date(now()),
+              invalidatedBy: 'tenant_mismatch',
+            })
+            .catch(() => undefined);
           break;
         }
         if (stopped) {
@@ -294,7 +313,7 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
         }
         failures += 1;
         logger.warn('[search] Sync failed', {
-          ...getSafeErrorMetadata(error),
+          ...safeFailure(error),
           code: failureCode(error),
         });
         await sleep(
@@ -314,7 +333,7 @@ export function createSearchWriter(deps: SearchWriterDeps): SearchWriter {
         return;
       }
       loop = run().catch((error: unknown) => {
-        logger.warn('[search] Sync writer stopped', getSafeErrorMetadata(error));
+        logger.warn('[search] Sync writer stopped', safeFailure(error));
       });
     },
     async stop() {
@@ -381,7 +400,7 @@ export function startSyncStatus({
         isHolder: isHolder(),
       } as Parameters<SearchMetrics['syncStatus']>[0]);
     } catch (error) {
-      logger.warn('[search] Sync status read failed', getSafeErrorMetadata(error));
+      logger.warn('[search] Sync status read failed', safeFailure(error));
     }
   }
   const timer = setInterval(() => void emit(), everyMs);

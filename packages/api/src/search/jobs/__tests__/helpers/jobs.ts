@@ -42,6 +42,17 @@ export const recordCount = (harness: SearchHarness, name: 'msearch' | 'csearch')
 export const stateOf = (harness: SearchHarness, key: string) =>
   harness.methods.readSearchState(key, { maxTimeMS: 5000 });
 
+/**
+ * The stream state a healthy sync writer keeps. Verification fails without a saved position,
+ * and these tests run the job runner with no writer beside it, so they state it: saved now,
+ * and caught up far enough ahead that no recheck waits.
+ */
+export const writerSaved = (harness: SearchHarness) =>
+  harness.methods.writeSearchState('stream', {
+    savedAt: new Date(),
+    syncedTo: new Date(Date.now() + 3_600_000),
+  });
+
 /** Lets another holder take over at once, as the lease running out would. */
 export const expireLease = (harness: SearchHarness) =>
   harness.methods.writeSearchState('lease', { leaseUntil: new Date(0) });

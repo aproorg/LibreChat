@@ -3,6 +3,7 @@ import type { SearchMethods } from '@librechat/data-schemas';
 import type { QueryWord } from '../analyzer/query';
 import type { SearchReadRunner } from './retry';
 import type { PlanExpansions } from './plan';
+import { MAX_TYPO_WORDS } from './typo';
 
 export interface TitleMatchOptions {
   user: string;
@@ -30,11 +31,21 @@ export async function readTitleMatches(options: TitleMatchOptions): Promise<stri
   );
   const known = new Set(frequencies.filter(({ df }) => df > 0).map(({ token }) => token));
   const last = words.length - 1;
+  const lastPrefix = last < 0 ? [] : (await expansions.prefix(words[last].exact)).tokens;
+  const unmatched = sets
+    .map((tokens, index) => ({ tokens, index }))
+    .filter(
+      ({ tokens, index }) =>
+        (index !== last || lastPrefix.length === 0) && !tokens.some((token) => known.has(token)),
+    )
+    .slice(0, MAX_TYPO_WORDS)
+    .map(({ index }) => index);
   const allOf = await Promise.all(
     sets.map(async (tokens, index) => {
-      const prefix = index === last ? (await expansions.prefix(words[index].exact)).tokens : [];
-      const unmatched = prefix.length === 0 && !tokens.some((token) => known.has(token));
-      const typos = unmatched ? (await expansions.typos(words[index].exact)).tokens : [];
+      const prefix = index === last ? lastPrefix : [];
+      const typos = unmatched.includes(index)
+        ? (await expansions.typos(words[index].exact)).tokens
+        : [];
       return [...tokens, ...prefix, ...typos];
     }),
   );

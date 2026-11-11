@@ -86,16 +86,16 @@ packages/data-schemas/src/
 packages/data-schemas/misc/documentdb/search.documentdb.spec.ts            # new
 
 packages/api/src/search/             # all new
-├── index.ts, config.ts, metrics.ts
+├── index.ts, config.ts, metrics.ts, meili.ts, failure.ts
 ├── service.ts                       # createSearchService: backend routing, limiter, shared read
 ├── start.ts                         # startup path: service, port, packs, writer, runner
 ├── analyzer/{fold,words,analyze,query,version}.ts
 ├── languages/{pack,registry}.ts
 ├── languages/en/index.ts
 ├── languages/is/{index,foldTable,NOTICE.md}
-├── read/{plan,tiers,typo,rank,proximity,cursor,page,window,titles,retry,limiter}.ts
-├── sync/{lease,stream,apply,extract,record,vocab,writer,observed}.ts
-├── jobs/{runner,backfill,reconcile,vocabRebuild,verify,drop}.ts
+├── read/{plan,tiers,typo,rank,proximity,cursor,frozen,page,window,titles,retry,limiter}.ts
+├── sync/{lease,stream,apply,extract,record,vocab,writer,observed,tenant}.ts
+├── jobs/{runner,control,check,backfill,reconcile,vocabRebuild,verify,drop,script}.ts
 └── http/{context,messages,conversations,shares,status,errors}.ts
 packages/api/misc/search-quality/    # new, outside public CI: runner only; queries, corpus and pack data come by path
 e2e/playwright.config.lighthouse.ts  # LIGHTHOUSE_MONGO_URI option, for FR-031's clone run
@@ -149,7 +149,7 @@ Stages 3 to 7 hold the application code. Stages 0, 2, 8 and 10, and stage 7's tr
 | FR-001 to FR-007, FR-046 | `analyzer/`, `languages/`; [contracts/language-pack.md](contracts/language-pack.md) |
 | FR-008 to FR-013, FR-016 | `read/`, `methods/search.ts`; `read/titles.ts` for title and tag search |
 | FR-014, FR-015, FR-017 | `http/messages.ts`, `read/window.ts`, `read/limiter.ts` |
-| FR-018, FR-020 | `errors.ts`, `http/errors.ts`, `read/retry.ts`, `metrics.ts` |
+| FR-018, FR-020 | `failure.ts`, `http/errors.ts`, `read/retry.ts`, `metrics.ts` |
 | FR-019, FR-030 | `http/status.ts`, `service.ts`; config snapshot per [R-19](research.md#r-19-config-channel) |
 | FR-021, FR-022, FR-029 | schemas, `sync/extract.ts`, `isIndexableSource`, `getSearchableMessages` |
 | FR-023 to FR-025 | `sync/` |

@@ -1,12 +1,12 @@
 import { isSearchError } from '@librechat/data-schemas';
 import type { SearchContext } from '@librechat/data-schemas';
+import type { SearchReadStats, SearchRequestNotes, SearchService } from '../service';
 import type { SearchContextRequest, SearchContextResponse } from './context';
-import type { SearchReadStats, SearchService } from '../service';
 import type { SearchMetrics, SearchOutcome } from '../metrics';
 import type { SearchHttpResponse } from './errors';
-import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchContext } from './context';
 import { searchErrorResponse } from './errors';
+import { safeFailure } from '../failure';
 
 export interface ConversationSearch {
   /** A context when the new backend serves. Otherwise `undefined`, so today's path runs. */
@@ -32,18 +32,28 @@ export function createConversationSearch({
   metrics: Pick<SearchMetrics, 'request'>;
   logger: { warn(message: string, meta: object): unknown };
 }): ConversationSearch {
+  /* Taken when the request starts, as the messages route does, so both surfaces of one
+   * search agree on whether it was cold. */
+  const notes = new WeakMap<SearchContext, SearchRequestNotes>();
   const emit = (ctx: SearchContext, outcome: SearchOutcome, stats?: SearchReadStats) =>
     metrics.request({
       surface: 'conversations',
       backend: 'search',
       ms: Date.now() - ctx.startedAt,
-      ...service.noteRequest(ctx.user),
+      ...notes.get(ctx),
       ...stats,
       outcome,
     });
 
   return {
-    context: (req, res) => (service.isServing() ? createSearchContext(req, res) : undefined),
+    context(req, res) {
+      if (!service.isServing()) {
+        return undefined;
+      }
+      const ctx = createSearchContext(req, res);
+      notes.set(ctx, service.noteRequest(ctx.user));
+      return ctx;
+    },
     completed(ctx, { conversations, partial }) {
       if (ctx) {
         const found: SearchOutcome = conversations.length ? 'ok' : 'empty';
@@ -55,7 +65,7 @@ export function createConversationSearch({
         return null;
       }
       if (!isSearchError(error)) {
-        logger.warn('[search] Conversation list failed', getSafeErrorMetadata(error));
+        logger.warn('[search] Conversation list failed', safeFailure(error));
       }
       const response = searchErrorResponse(error);
       emit(ctx, ctx.signal.aborted ? 'aborted' : response.body.code);

@@ -302,6 +302,75 @@ describe('search-job script', () => {
         },
         'run backfill to fill the gaps',
       ],
+      [
+        'a pass invalidated by a rollback',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW - 1000),
+            invalidatedAt: new Date(NOW),
+          },
+        },
+        'run reconcile, then verify',
+      ],
+      [
+        'a backfill that met a second tenant',
+        {
+          chain: { step: 'backfill', failures: 2, lastFailureCode: 'TenantMismatch' },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        'holds more than one tenant',
+      ],
+      [
+        'a chain that got past an earlier failure of that kind',
+        {
+          chain: { step: 'vocab', failures: 0, lastFailureCode: 'TenantMismatch' },
+          lease: { leaseUntil: new Date(NOW + 1000) },
+        },
+        'The chain is working on vocab',
+      ],
+      [
+        'a reconcile that met a second tenant',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          reconcile: { status: 'running', failures: 1, lastFailureCode: 'TenantMismatch' },
+        },
+        'holds more than one tenant',
+      ],
+      [
+        'a sync writer stopped by a second tenant',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW - 1000),
+            invalidatedAt: new Date(NOW),
+            invalidatedBy: 'tenant_mismatch',
+          },
+        },
+        'Backfill, reconcile and verify will not get past this',
+      ],
+      [
+        'a sync writer that never saved a position',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: { status: 'failed', reason: 'sync_not_started' },
+        },
+        'wait until "sync: last saved" shows a time, then run verify',
+      ],
+      [
+        'a pass later than its invalidation',
+        {
+          chain: { step: 'verify', finishedAt: new Date(NOW) },
+          verification: {
+            status: 'passed',
+            passedAt: new Date(NOW),
+            invalidatedAt: new Date(NOW - 1000),
+          },
+        },
+        'nothing. The chain has finished.',
+      ],
     ])('names the next action: %s', async (_name, state, expected) => {
       for (const [key, fields] of Object.entries(state)) {
         await harness.methods.writeSearchState(key, fields as Record<string, unknown>);

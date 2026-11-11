@@ -50,6 +50,8 @@ export async function runSyncStream(deps: SyncStreamDeps): Promise<void> {
   const { methods, config, epoch, signal, holds, now = Date.now } = deps;
   const idleSaveMs = deps.idleSaveMs ?? IDLE_SAVE_MS;
   let savedAt = 0;
+  /* Never moved back: a later batch's proof can be older than an earlier one's. */
+  let syncedTo = 0;
 
   const saved = await methods.readSearchState(STREAM_KEY, JOB_STATE_READ);
   let position = isPosition(saved?.resumeToken) ? saved.resumeToken : null;
@@ -88,12 +90,17 @@ export async function runSyncStream(deps: SyncStreamDeps): Promise<void> {
           continue;
         }
         const fields: Record<string, unknown> = { savedAt: new Date(now()) };
-        if (batch.caughtUpTo !== null) {
-          fields.syncedTo = new Date(batch.caughtUpTo);
+        if (batch.caughtUpTo !== null && batch.caughtUpTo > syncedTo) {
+          syncedTo = batch.caughtUpTo;
+          fields.syncedTo = new Date(syncedTo);
         }
         if (batch.position) {
           fields.resumeToken = batch.position;
           position = batch.position;
+        }
+        if (events.length > 0) {
+          /* Proof that the stream delivers changes: an idle save looks healthy without one. */
+          fields.lastEventAt = new Date(events[events.length - 1].at);
         }
         if (!(await methods.saveSearchStreamState({ epoch, fields }))) {
           /* A newer writer saved after this one: its turn has begun. */

@@ -29,10 +29,21 @@ export interface ExtractedConversation {
 const hash = (fields: ReadonlyArray<string | readonly string[]>): string =>
   createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 
+/**
+ * A source row that can never have a record, because it lacks its user, its ID or a date. The
+ * sync writer tells this from a pack that throws, so it is a class and not a message to match.
+ */
+export class UnusableSourceError extends TypeError {
+  constructor(field: string) {
+    super(`Search source has no usable ${field}`);
+    this.name = 'UnusableSourceError';
+  }
+}
+
 function requireString(source: SearchSource, field: string): string {
   const value = source[field];
   if (typeof value !== 'string' || value.length === 0) {
-    throw new TypeError(`Search source has no usable ${field}`);
+    throw new UnusableSourceError(field);
   }
   return value;
 }
@@ -48,12 +59,12 @@ function requireDate(source: SearchSource, field: string): Date {
       return date;
     }
   }
-  throw new TypeError(`Search source has no usable ${field}`);
+  throw new UnusableSourceError(field);
 }
 
 const requireId = (source: SearchSource): string => {
   if (source._id == null) {
-    throw new TypeError('Search source has no usable _id');
+    throw new UnusableSourceError('_id');
   }
   return String(source._id);
 };

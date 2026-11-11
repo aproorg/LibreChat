@@ -5,15 +5,15 @@ Each scenario proves an outcome; shapes are in [data-model.md](data-model.md) an
 ## Prerequisites
 
 - `npm ci`, `npm run build:data-provider`.
-- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to T016's output, `SEARCH_QUALITY_VOCAB` to the corpus-wide word list, `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0, and `SEARCH_LANGUAGE_DATA_DIR` to the private copy.
+- For Icelandic and quality: `search.languageDataDir` set to the private copy ([R-02](research.md#r-02-language-data-delivery)); `SEARCH_QUALITY_CORPUS` set to the generated corpus, `SEARCH_QUALITY_DIR` to T016's output, `SEARCH_QUALITY_VOCAB` to T016's `vocab.ndjson.gz` in that output (each condition's word list is read from the same folder), `SEARCH_QUALITY_MONGO_URI` to a local MongoDB 8.0, and `SEARCH_LANGUAGE_DATA_DIR` to the private copy.
 - For live checks: `DOCUMENTDB_URI` and `DOCUMENTDB_TLS_CA_FILE`, as `packages/data-schemas/misc/documentdb/` expects.
 - `librechat.yaml` with `search: { data: true, backend: search }`, and `SEARCH=true`.
 
 ## 1. Default configuration changes nothing (FR-041)
 
 ```bash
-cd packages/api && npx jest src/search/http
-cd packages/data-schemas && npx jest src/methods/conversation.spec.ts src/methods/share.test.ts src/models/plugins/mongoMeili.spec.ts
+(cd packages/api && npx jest src/search/http)
+(cd packages/data-schemas && npx jest src/methods/conversation.spec.ts src/methods/share.test.ts src/models/plugins/mongoMeili.spec.ts)
 npm run lighthouse
 ```
 
@@ -46,8 +46,8 @@ Expect:
 ## 4. Reads, paging, failures (US2)
 
 ```bash
-cd packages/api && npx jest src/search/read src/search/http
-cd client && npx jest src/routes/__tests__/Search
+(cd packages/api && npx jest src/search/read src/search/http)
+(cd client && npx jest src/routes/__tests__/Search)
 ```
 
 Expect:
@@ -85,8 +85,10 @@ Owner decision, 2026-11-10: no separate measurement runs before the code. The sa
 Before the trial, run the data methods against the engine:
 
 ```bash
-cd packages/data-schemas && npx jest --config misc/documentdb/jest.documentdb.config.mjs
+cd packages/data-schemas && DOCUMENTDB_STRICT=true npx jest --config misc/documentdb/jest.documentdb.config.mjs
 ```
+
+It needs `DOCUMENTDB_URI` pointing at a database of its own with change streams enabled, as [runbook.md](runbook.md#engine-compatibility-run) describes. Without strict mode a rejected query only prints, and without the URI every suite skips.
 
 ## 7. The sandbox trial: operator path on the sandbox tenant (US3, SC-017)
 
