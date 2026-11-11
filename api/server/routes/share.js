@@ -568,6 +568,8 @@ if (allowSharedLinks) {
  * Shared links
  */
 router.get('/', requireJwtAuth, async (req, res) => {
+  const shareSearch = req.app.locals.search?.shares;
+  let searchContext;
   try {
     const sortBy =
       typeof req.query.sortBy === 'string' && ['createdAt', 'title'].includes(req.query.sortBy)
@@ -595,6 +597,7 @@ router.get('/', requireJwtAuth, async (req, res) => {
         : 'desc',
       search: search || undefined,
     };
+    searchContext = params.search ? shareSearch?.context(req, res) : undefined;
 
     const result = await getSharedLinks(
       req.user.id,
@@ -603,14 +606,21 @@ router.get('/', requireJwtAuth, async (req, res) => {
       params.sortBy,
       params.sortDirection,
       params.search,
+      searchContext,
     );
+    shareSearch?.completed(searchContext, result);
 
     res.status(200).send({
       links: result.links,
       nextCursor: result.nextCursor,
       hasNextPage: result.hasNextPage,
+      ...(result.reason && { reason: result.reason }),
     });
   } catch (error) {
+    const searchFailure = shareSearch?.failure(searchContext, error);
+    if (searchFailure) {
+      return res.status(searchFailure.status).json(searchFailure.body);
+    }
     logger.error('Error getting shared links:', error);
     res.status(500).json({ message: 'Error getting shared links' });
   }

@@ -1,5 +1,3 @@
-import type { TMessage } from '../schemas';
-
 /** Stable codes a search failure exposes. Clients map them to localized copy. */
 export const SEARCH_ERROR_CODES = [
   'search_busy',
@@ -23,27 +21,4 @@ export type SearchMeta = {
     text: string;
     url: string;
   };
-  panel?: {
-    eligible: boolean;
-  };
-};
-
-export type SearchPanelState = 'ok' | 'dropped' | 'failed';
-export type SearchPanelVerdict = 'better' | 'equal' | 'worse';
-
-/** `GET /api/search/panel/compare`, for the caller's own search. */
-export type SearchPanelCompareResponse = {
-  meilisearch: {
-    messages: TMessage[];
-  };
-  search: {
-    messages: TMessage[];
-    state: SearchPanelState;
-  };
-};
-
-/** `POST /api/search/panel/verdict`. Nothing else is accepted or stored. */
-export type SearchPanelVerdictRequest = {
-  verdict: SearchPanelVerdict;
-  knownMissed: boolean;
 };

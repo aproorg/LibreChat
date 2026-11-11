@@ -1252,7 +1252,7 @@ endpoints:
 # document can change it. Values below are the defaults.
 # search:
 #   data: false                # Sync, backfill and language packs. Off: no pack loaded, no new records, no attribution
-#   backend: meilisearch       # meilisearch | shadow | search. The last two need data: true
+#   backend: meilisearch       # meilisearch | search. The last needs data: true
 #   languages: [is, en]        # Enabled language packs
 #   languageDataDir: ''        # Directory of language data delivered outside this repository; required when `is` is enabled
 #   sidebarLimit: 1000         # Most messages the sidebar reads for one search
@@ -1271,6 +1271,7 @@ endpoints:
 #   jobs:
 #     batchSize: 200           # Documents read per batch in backfill and repair jobs
 #     batchDelayMs: 1000       # Pause between batches
+#     vocabCopyBatchSize: 5000 # Word list rows settled per batch at the end of a rebuild (max 50000)
 #     backfillOnStart: false   # Request a backfill after startup if no chain has finished, so a deploy can start it
 #   sync:
 #     watch: database          # database | collections: one change stream, or one per source collection
@@ -1284,11 +1285,7 @@ endpoints:
 #   typo:
 #     maxCorrections: 8        # Most corrections tried for a word that matches nothing
 #     maxVocabRows: 50000      # Most word list rows read for one correction
-#   shadow:
-#     maxConcurrent: 4         # Most detached runs a process holds at once
-#     panelRound: 1            # Comparison panel round
-#     panelUsers: []           # User IDs in the comparison panel
-#     largestUserId: ''        # User ID whose searches are flagged as the largest; only a boolean reaches logs
+#   largestUserId: ''          # User ID whose searches are flagged as the largest; only a boolean reaches logs
 
 # Web Search Configuration (optional)
 # webSearch:

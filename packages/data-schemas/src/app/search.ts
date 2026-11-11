@@ -22,7 +22,7 @@ export function loadSearchConfig(config: DeepPartial<TCustomConfig>): Conversati
   if (search.backend !== 'meilisearch' && !search.data) {
     logger.error(
       `[AppService] search.backend '${search.backend}' needs search.data to be true. ` +
-        "Until corrected, 'shadow' serves Meilisearch with no detached run and 'search' reports search as disabled.",
+        'Until corrected, search reports as disabled.',
     );
   }
   return search;

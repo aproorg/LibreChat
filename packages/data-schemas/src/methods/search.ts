@@ -212,7 +212,26 @@ export interface SearchWindowParams {
   tokens: readonly string[];
   /** Other words' tokens, each set matched at least once. */
   allOf?: ReadonlyArray<readonly string[]>;
+  /** Tokens a row must not hold: earlier jobs, higher tiers and fuller word sets (R-06, R-07). */
+  noneOf?: readonly string[];
+  /** Load-more's date bounds. Page 1 reads without them. */
+  range?: SearchWindowRange;
   limit: number;
+}
+
+export interface SearchWindowRange {
+  /** Inclusive upper date: the pagination's anchor. */
+  upTo?: Date;
+  /** Exclusive upper date. */
+  before?: Date;
+  /** Exclusive lower date. */
+  after?: Date;
+}
+
+/** One date's rows in `_id` order, which a date-ordered read cannot page through. */
+export interface SearchTieParams extends Omit<SearchWindowParams, 'range'> {
+  at: Date;
+  afterId?: string;
 }
 
 export interface SearchWindowRow {
@@ -363,6 +382,8 @@ export interface SearchMethods {
     params: SearchWindowParams,
     options: SearchReadOptions,
   ): Promise<SearchWindowRow[]>;
+  /** One user's records at exactly one date, by `_id`, for a same-date run (R-06). */
+  readRecordTies(params: SearchTieParams, options: SearchReadOptions): Promise<SearchWindowRow[]>;
   /** Tokens of chosen records, in chunks, for ranking. */
   readRecordTokens(
     params: { user: string; ids: readonly string[] },
@@ -488,11 +509,20 @@ export interface SearchMethods {
   }): Promise<void>;
   /** One page of the word list by token, for the rebuild's copy pass. */
   readSearchVocabBatch(params: { afterId?: string; limit: number }): Promise<SearchVocabBatchRow[]>;
-  /** Moves `dfNext` to `df` on some rows and deletes others. */
+  /**
+   * Settles one page of the word list in a single unordered write: moves `dfNext` to `df` on
+   * the rows given, and deletes every row in the page's token range that run `run` never
+   * stamped. The server decides each delete as it writes, so a row the sync writer stamped
+   * after the page was read survives.
+   */
   settleSearchVocab(params: {
     copy: ReadonlyArray<{ token: string; df: number }>;
-    remove: readonly string[];
+    /** The page: after `afterId`, up to and including `upToId`. */
+    range: { afterId?: string; upToId: string };
+    run: number;
   }): Promise<void>;
+  /** Removes the four search collections and nothing else. Answers the names it removed. */
+  dropSearchCollections(): Promise<string[]>;
 }
 
 /** A read without a real user is a violated invariant, and must never reach the database. */
@@ -504,6 +534,33 @@ function assertUser(user: unknown): void {
 
 const tokenSets = (allOf: ReadonlyArray<readonly string[]>) =>
   allOf.map((tokens) => ({ tokens: { $in: [...tokens] } }));
+
+/** One user's rows holding a job's tokens, every other word, and none of the excluded tokens. */
+function windowFilter({
+  user,
+  tokens,
+  allOf,
+  noneOf,
+}: Pick<SearchWindowParams, 'user' | 'tokens' | 'allOf' | 'noneOf'>) {
+  const others = [
+    ...tokenSets(allOf ?? []),
+    ...(noneOf?.length ? [{ tokens: { $nin: [...noneOf] } }] : []),
+  ];
+  return {
+    user,
+    tokens: tokens.length === 1 ? tokens[0] : { $in: [...tokens] },
+    ...(others.length ? { $and: others } : {}),
+  };
+}
+
+function dateRange(range: SearchWindowRange | undefined) {
+  const bounds = {
+    ...(range?.upTo ? { $lte: range.upTo } : {}),
+    ...(range?.before ? { $lt: range.before } : {}),
+    ...(range?.after ? { $gt: range.after } : {}),
+  };
+  return Object.keys(bounds).length ? { createdAt: bounds } : {};
+}
 
 /**
  * A `singleBatch` read of whole messages stops at 16 MB and says nothing, so what it
@@ -600,7 +657,25 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
   }
 
   async function readRecordWindow(
-    { user, tokens, allOf, limit }: SearchWindowParams,
+    { user, tokens, allOf, noneOf, range, limit }: SearchWindowParams,
+    options: SearchReadOptions,
+  ): Promise<SearchWindowRow[]> {
+    assertUser(user);
+    if (tokens.length === 0) {
+      return [];
+    }
+    const rows = await mongoose.models.MessageSearch.find(
+      { ...windowFilter({ user, tokens, allOf, noneOf }), ...dateRange(range) },
+      WINDOW_FIELDS,
+      { ...singleBatch(limit, options), hint: MESSAGE_RECORD_INDEX },
+    )
+      .sort({ createdAt: -1 })
+      .lean<Array<Omit<SearchWindowRow, '_id'> & { _id: unknown }>>();
+    return rows.map((row) => ({ ...row, _id: String(row._id) }));
+  }
+
+  async function readRecordTies(
+    { user, tokens, allOf, noneOf, at, afterId, limit }: SearchTieParams,
     options: SearchReadOptions,
   ): Promise<SearchWindowRow[]> {
     assertUser(user);
@@ -609,14 +684,14 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     }
     const rows = await mongoose.models.MessageSearch.find(
       {
-        user,
-        tokens: tokens.length === 1 ? tokens[0] : { $in: [...tokens] },
-        ...(allOf?.length ? { $and: tokenSets(allOf) } : {}),
+        ...windowFilter({ user, tokens, allOf, noneOf }),
+        createdAt: at,
+        ...(afterId != null ? { _id: { $gt: afterId } } : {}),
       },
       WINDOW_FIELDS,
       { ...singleBatch(limit, options), hint: MESSAGE_RECORD_INDEX },
     )
-      .sort({ createdAt: -1 })
+      .sort({ _id: 1 })
       .lean<Array<Omit<SearchWindowRow, '_id'> & { _id: unknown }>>();
     return rows.map((row) => ({ ...row, _id: String(row._id) }));
   }
@@ -1210,26 +1285,47 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
 
   async function settleSearchVocab({
     copy,
-    remove,
+    range,
+    run,
   }: {
     copy: ReadonlyArray<{ token: string; df: number }>;
-    remove: readonly string[];
+    range: { afterId?: string; upToId: string };
+    run: number;
   }): Promise<void> {
     const ops = [
       ...copy.map(({ token, df }) => ({
         updateOne: { filter: { _id: token }, update: { $set: { df }, $unset: { dfNext: 1 } } },
       })),
-      ...remove.map((token) => ({ deleteOne: { filter: { _id: token } } })),
+      {
+        deleteMany: { filter: { ...idRange(range.afterId, range.upToId), r: { $ne: run } } },
+      },
     ];
-    if (ops.length > 0) {
-      await runAsSystem(() =>
-        tenantSafeBulkWrite(
-          mongoose.models.SearchVocab,
-          ops as unknown as AnyBulkWriteOperation[],
-          { ordered: false },
-        ),
-      );
-    }
+    await runAsSystem(() =>
+      tenantSafeBulkWrite(mongoose.models.SearchVocab, ops as unknown as AnyBulkWriteOperation[], {
+        ordered: false,
+      }),
+    );
+  }
+
+  /* The state goes last, so a drop that stops half-way still shows what a second run must finish. */
+  function dropSearchCollections(): Promise<string[]> {
+    return runAsSystem(async () => {
+      const db = mongoose.connection.db;
+      if (!db) {
+        throw new Error('Search collections dropped before the database connected');
+      }
+      const { MessageSearch, ConversationSearch, SearchVocab, SearchState } = mongoose.models;
+      const dropped: string[] = [];
+      for (const model of [MessageSearch, ConversationSearch, SearchVocab, SearchState]) {
+        // eslint-disable-next-line no-restricted-syntax -- reads the collection's name only, no driver call
+        const name = model.collection.collectionName;
+        const found = await db.listCollections({ name }).toArray();
+        if (found.length > 0 && (await db.dropCollection(name))) {
+          dropped.push(name);
+        }
+      }
+      return dropped;
+    });
   }
 
   return {
@@ -1238,6 +1334,7 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     readVocabFrequencies,
     readVocabRange,
     readRecordWindow,
+    readRecordTies,
     readRecordTokens,
     readConversationRecords,
     readMessageTexts,
@@ -1270,5 +1367,6 @@ export function createSearchMethods(mongoose: typeof import('mongoose')): Search
     incrementSearchVocabNext,
     readSearchVocabBatch,
     settleSearchVocab,
+    dropSearchCollections,
   };
 }

@@ -414,6 +414,171 @@ describe('search jobs', () => {
       expect((await vocab()).zzarrived).toBe(1);
     });
 
+    describe('copy pass cost', () => {
+      const RUN = 4;
+      const ROWS = 1000;
+      const COPY_BATCH = 250;
+      const token = (index: number) => `w${String(index).padStart(5, '0')}`;
+
+      /** A rebuild stopped just as its copy pass began: every tenth row is one no run stamped. */
+      const seedCopyPass = async () => {
+        await harness.methods.writeSearchState('vocab', {
+          run: RUN,
+          phase: 'copy',
+          lastId: null,
+          walked: 0,
+          status: 'running',
+        });
+        await harness.database.connection
+          .db!.collection('search_vocab')
+          .insertMany(
+            Array.from({ length: ROWS }, (_, index) =>
+              index % 10 === 0
+                ? { _id: token(index), df: 9, r: RUN - 1 }
+                : { _id: token(index), df: 1, dfNext: index, r: RUN },
+            ) as never[],
+          );
+      };
+
+      /** Counts every method call, check and wait: each is one round trip or one throttle wait. */
+      const instrumented = (control: ReturnType<typeof freeControl>) => {
+        const calls: Record<string, number> = {};
+        const limits: number[] = [];
+        const count = (name: string) => {
+          calls[name] = (calls[name] ?? 0) + 1;
+        };
+        const methods = new Proxy(harness.methods, {
+          get(target, name: string) {
+            const real = target[name as keyof typeof target] as (...args: unknown[]) => unknown;
+            return (...args: unknown[]) => {
+              count(name);
+              if (name === 'readSearchVocabBatch') {
+                limits.push((args[0] as { limit: number }).limit);
+              }
+              return real(...args);
+            };
+          },
+        });
+        return {
+          calls,
+          limits,
+          methods,
+          control: {
+            ...control,
+            check: async () => {
+              count('check');
+              return control.check();
+            },
+            wait: async () => {
+              count('wait');
+            },
+          },
+        };
+      };
+
+      it('settles a page in one read, one write and one state write, at the copy batch size', async () => {
+        await seedCopyPass();
+        const counted = instrumented(freeControl({ batchSize: 2, copyBatchSize: COPY_BATCH }));
+
+        expect(await runVocabRebuild({ methods: counted.methods, control: counted.control })).toBe(
+          'done',
+        );
+
+        const pages = ROWS / COPY_BATCH;
+        expect(counted.limits).toEqual(Array(pages + 1).fill(COPY_BATCH));
+        expect(counted.calls).toEqual({
+          /* The saved state once, then a state write per page and the one that finishes the run. */
+          readSearchState: 1,
+          writeSearchState: pages + 1,
+          /* Every page, and the empty read that ends the pass. */
+          readSearchVocabBatch: pages + 1,
+          check: pages + 1,
+          settleSearchVocab: pages,
+          wait: pages,
+        });
+
+        const list = await vocab();
+        expect(Object.keys(list)).toHaveLength(ROWS - ROWS / 10);
+        expect(list[token(0)]).toBeUndefined();
+        expect(list[token(999)]).toBe(999);
+        expect(await stateOf(harness, 'vocab')).toMatchObject({
+          status: 'finished',
+          walked: ROWS,
+        });
+      });
+
+      it('stays resumable page by page, and settling a page twice changes nothing', async () => {
+        await seedCopyPass();
+        const control = () => freeControl({ copyBatchSize: COPY_BATCH, stopAfter: 2 });
+
+        expect(await runVocabRebuild({ methods: harness.methods, control: control() })).toBe(
+          'lost',
+        );
+        expect(await stateOf(harness, 'vocab')).toMatchObject({
+          status: 'running',
+          lastId: token(2 * COPY_BATCH - 1),
+          walked: 2 * COPY_BATCH,
+        });
+        /* As a crash after the write and before the state write would leave it. */
+        await harness.methods.writeSearchState('vocab', { lastId: token(COPY_BATCH - 1) });
+
+        expect(
+          await runVocabRebuild({
+            methods: harness.methods,
+            control: freeControl({ copyBatchSize: COPY_BATCH }),
+          }),
+        ).toBe('done');
+
+        const list = await vocab();
+        expect(Object.keys(list)).toHaveLength(ROWS - ROWS / 10);
+        expect(list[token(251)]).toBe(251);
+        expect(list[token(999)]).toBe(999);
+      });
+
+      it('writes nothing once the lease is lost', async () => {
+        await seedCopyPass();
+        const settle = jest.fn(harness.methods.settleSearchVocab);
+
+        expect(
+          await runVocabRebuild({
+            methods: withMethods(harness, { settleSearchVocab: settle }),
+            control: { ...freeControl({ copyBatchSize: COPY_BATCH }), holds: () => false },
+          }),
+        ).toBe('lost');
+
+        expect(settle).not.toHaveBeenCalled();
+        expect(Object.keys(await vocab())).toHaveLength(ROWS);
+      });
+
+      it('keeps a row the writer stamped after its page was read', async () => {
+        await seedCopyPass();
+        const read = harness.methods.readSearchVocabBatch;
+        const methods = withMethods(harness, {
+          readSearchVocabBatch: async (params) => {
+            const rows = await read(params);
+            if (params.afterId === undefined) {
+              /* An unstamped row in this page gets stamped, and a new word lands inside it. */
+              await harness.methods.incrementSearchVocab({
+                counts: [
+                  [token(0), 1],
+                  [`${token(5)}x`, 1],
+                ],
+                run: RUN,
+              });
+            }
+            return rows;
+          },
+        });
+
+        await runVocabRebuild({ methods, control: freeControl({ copyBatchSize: COPY_BATCH }) });
+
+        const list = await vocab();
+        expect(list[token(0)]).toBe(10);
+        expect(list[`${token(5)}x`]).toBe(1);
+        expect(list[token(10)]).toBeUndefined();
+      });
+    });
+
     it.each([1, 2, 3, 4, 5, 6, 7, 8])(
       'resumes after stopping at check %i, ending with the right list',
       async (stopAfter) => {

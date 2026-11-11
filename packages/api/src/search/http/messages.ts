@@ -1,4 +1,3 @@
-import { SearchError } from '@librechat/data-schemas';
 import type { SearchableMessage, SearchContext } from '@librechat/data-schemas';
 import type { MessageSearchHits, SearchService, SearchServiceMethods } from '../service';
 import type { SearchMetrics, SearchRequestEvent } from '../metrics';
@@ -69,7 +68,6 @@ export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): Search
       metrics.request({
         surface: 'messages',
         backend: 'search',
-        detached: false,
         ms: Date.now() - ctx.startedAt,
         ...notes,
         ...stats,
@@ -77,19 +75,15 @@ export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): Search
       });
 
     try {
-      /* No page 1 hands out a cursor until load-more exists, so none sent can be valid. */
-      if (cursor) {
-        throw new SearchError('search_cursor_invalid');
-      }
       if (typeof query !== 'string') {
         emit('empty');
         return { status: 200, body: { messages: [], nextCursor: null } };
       }
-      const result = await service.searchMessages(ctx, query);
+      const result = await service.searchMessages(ctx, query, cursor);
       if (!result) {
         return null;
       }
-      const { hits, reason, words, tierReached, reads, rows } = result;
+      const { hits, nextCursor, reason, words, tierReached, reads, rows } = result;
       const messages = hits.length ? await hydrate(ctx, hits) : [];
       emit(messages.length ? 'ok' : 'empty', {
         words,
@@ -99,7 +93,7 @@ export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): Search
       });
       return {
         status: 200,
-        body: { messages, nextCursor: null, ...(reason ? { reason } : {}) },
+        body: { messages, nextCursor, ...(reason ? { reason } : {}) },
       };
     } catch (error) {
       const response = searchErrorResponse(error);

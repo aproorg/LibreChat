@@ -170,6 +170,33 @@ describe('search job runner', () => {
       expect((await chain())?.finishedAt).toBeInstanceOf(Date);
     });
 
+    it('pages the word list copy by jobs.vocabCopyBatchSize, and its walks by jobs.batchSize', async () => {
+      await seed();
+      const copyLimits: number[] = [];
+      const walkLimits: number[] = [];
+      const runner = createRunner(harness, {
+        search: { jobs: { batchSize: 2, vocabCopyBatchSize: 7 } },
+        methods: withMethods(harness, {
+          readSearchVocabBatch: (params) => {
+            copyLimits.push(params.limit);
+            return harness.methods.readSearchVocabBatch(params);
+          },
+          readSearchRecordTokenBatch: (params) => {
+            walkLimits.push(params.limit);
+            return harness.methods.readSearchRecordTokenBatch(params);
+          },
+        }),
+      });
+      await request('backfill');
+
+      await settle(runner);
+
+      expect((await chain())?.finishedAt).toBeInstanceOf(Date);
+      expect(copyLimits.length).toBeGreaterThan(0);
+      expect(new Set(copyLimits)).toEqual(new Set([7]));
+      expect(new Set(walkLimits)).toEqual(new Set([2]));
+    });
+
     it.each(['backfill', 'indexes', 'vocab', 'reconcile', 'verify'])(
       'a holder killed in step %s has the next holder resume there',
       async (step) => {

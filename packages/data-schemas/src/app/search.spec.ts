@@ -31,32 +31,46 @@ describe('loadSearchConfig', () => {
     expect(search.backend).toBe('meilisearch');
     expect(search.meiliResyncPending).toBe(false);
     expect(search.sidebarLimit).toBe(1000);
-    expect(search.jobs).toEqual({ batchSize: 200, batchDelayMs: 1000, backfillOnStart: false });
+    expect(search.jobs).toEqual({
+      batchSize: 200,
+      batchDelayMs: 1000,
+      vocabCopyBatchSize: 5000,
+      backfillOnStart: false,
+    });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('applies defaults under a partial block, including partial nested blocks', () => {
     const search = loadSearchConfig(asConfig({ data: true, jobs: { batchSize: 5 } }));
     expect(search.data).toBe(true);
-    expect(search.jobs).toEqual({ batchSize: 5, batchDelayMs: 1000, backfillOnStart: false });
+    expect(search.jobs).toEqual({
+      batchSize: 5,
+      batchDelayMs: 1000,
+      vocabCopyBatchSize: 5000,
+      backfillOnStart: false,
+    });
     expect(search.typo.maxCorrections).toBe(8);
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it.each(['shadow', 'search'])(
-    'logs a configuration error for backend %s with data off, keeping the values',
-    (backend) => {
-      const search = loadSearchConfig(asConfig({ backend }));
-      expect(search.backend).toBe(backend);
-      expect(search.data).toBe(false);
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(errorSpy.mock.calls[0][0]).toContain('search.data');
-    },
-  );
+  it('logs a configuration error for backend search with data off, keeping the values', () => {
+    const search = loadSearchConfig(asConfig({ backend: 'search' }));
+    expect(search.backend).toBe('search');
+    expect(search.data).toBe(false);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0][0]).toContain('search.data');
+  });
 
-  it.each(['shadow', 'search'])('accepts backend %s with data on', (backend) => {
-    loadSearchConfig(asConfig({ backend, data: true }));
+  it('accepts backend search with data on', () => {
+    loadSearchConfig(asConfig({ backend: 'search', data: true }));
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('no longer accepts the removed shadow backend', () => {
+    const search = loadSearchConfig(asConfig({ backend: 'shadow', data: true }));
+    expect(search.backend).toBe('meilisearch');
+    expect(search.data).toBe(false);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the defaults on an invalid block that passed the file schema', () => {
@@ -81,10 +95,10 @@ describe('AppService search config', () => {
   it('carries the block from a full config', async () => {
     const config = configSchema.parse({
       version: '1.3.0',
-      search: { data: true, backend: 'shadow' },
+      search: { data: true, backend: 'search' },
     });
     const appConfig = await AppService({ config: config as DeepPartial<TCustomConfig> });
-    expect(appConfig.search?.backend).toBe('shadow');
+    expect(appConfig.search?.backend).toBe('search');
     expect(appConfig.search?.data).toBe(true);
   });
 

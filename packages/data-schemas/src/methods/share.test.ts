@@ -9,6 +9,7 @@ import {
   getResponseSender,
 } from 'librechat-data-provider';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
+import type { SearchContext, SearchPort } from '~/types/search';
 import type * as t from '~/types';
 import {
   createShareMethods,
@@ -17,6 +18,7 @@ import {
   type SharedLinkContentSnapshot,
 } from './share';
 import { MEILI_SEARCH_LIMIT } from '~/common/search';
+import { SearchError } from '~/utils/searchError';
 import logger from '~/config/winston';
 
 describe('Share Methods', () => {
@@ -145,6 +147,219 @@ describe('Share Methods', () => {
     await Message.deleteMany({});
     await Conversation.deleteMany({});
     await File.deleteMany({});
+  });
+
+  describe('getSharedLinks with a search port', () => {
+    const userId = 'port-user';
+    const searchContext: SearchContext = {
+      user: userId,
+      signal: new AbortController().signal,
+      startedAt: 0,
+    };
+    const EMPTY = { links: [], nextCursor: undefined, hasNextPage: false };
+
+    let titleMatches: jest.MockedFunction<SearchPort['titleMatches']>;
+    let meiliSearch: jest.Mock;
+    let logError: jest.SpyInstance;
+    let withPort: ShareMethods;
+
+    const search = (query = 'search term') =>
+      withPort.getSharedLinks(userId, undefined, 10, 'createdAt', 'desc', query, searchContext);
+
+    beforeEach(async () => {
+      titleMatches = jest.fn();
+      meiliSearch = jest.fn().mockResolvedValue({ hits: [{ conversationId: 'conv-meili' }] });
+      Conversation.meiliSearch = meiliSearch;
+      logError = jest.spyOn(logger, 'error').mockImplementation(() => logger);
+      withPort = createShareMethods(mongoose, {
+        getSearchPort: () => ({ titleMatches, conversationMatches: jest.fn() }),
+      });
+      await SharedLink.create([
+        { shareId: 'share-port', conversationId: 'conv-port', user: userId, title: 'By port' },
+        { shareId: 'share-meili', conversationId: 'conv-meili', user: userId, title: 'By meili' },
+        { shareId: 'share-other', conversationId: 'conv-other', user: userId, title: 'Other' },
+      ]);
+    });
+
+    afterEach(() => {
+      logError.mockRestore();
+    });
+
+    test('filters the links by the port matches, and never asks Meilisearch', async () => {
+      titleMatches.mockResolvedValue({ conversationIds: ['conv-port', 'conv-absent'] });
+
+      const result = await search();
+
+      expect(result.links.map(({ shareId }) => shareId)).toEqual(['share-port']);
+      expect(result.hasNextPage).toBe(false);
+      expect(result).not.toHaveProperty('reason');
+      expect(titleMatches).toHaveBeenCalledWith(searchContext, 'search term');
+      expect(meiliSearch).not.toHaveBeenCalled();
+    });
+
+    test('never returns another user link the port matched', async () => {
+      await SharedLink.create({
+        shareId: 'share-theirs',
+        conversationId: 'conv-port',
+        user: 'someone-else',
+        title: 'Theirs',
+      });
+      titleMatches.mockResolvedValue({ conversationIds: ['conv-port'] });
+
+      const result = await search();
+
+      expect(result.links.map(({ shareId }) => shareId)).toEqual(['share-port']);
+    });
+
+    test('passes the reason through with an empty match', async () => {
+      titleMatches.mockResolvedValue({ conversationIds: [], reason: 'only_stop_words' });
+
+      const result = await search('the');
+
+      expect(result).toEqual({ ...EMPTY, reason: 'only_stop_words' });
+      expect(meiliSearch).not.toHaveBeenCalled();
+    });
+
+    test('returns the ordinary empty result for an empty match with no reason', async () => {
+      titleMatches.mockResolvedValue({ conversationIds: [] });
+
+      const result = await search();
+
+      expect(result).toEqual(EMPTY);
+      expect(result).not.toHaveProperty('reason');
+      expect(meiliSearch).not.toHaveBeenCalled();
+    });
+
+    test('keeps the Meilisearch path when the port answers null', async () => {
+      titleMatches.mockResolvedValue(null);
+
+      const result = await search();
+
+      expect(result.links.map(({ shareId }) => shareId)).toEqual(['share-meili']);
+      expect(Object.keys(result).sort()).toEqual(['hasNextPage', 'links', 'nextCursor']);
+      expect(meiliSearch).toHaveBeenCalledWith('search term', {
+        filter: `user = "${userId}"`,
+        limit: MEILI_SEARCH_LIMIT,
+        attributesToRetrieve: ['conversationId'],
+      });
+    });
+
+    test('keeps the empty result on a Meilisearch error when the port answers null', async () => {
+      titleMatches.mockResolvedValue(null);
+      meiliSearch.mockRejectedValue(new Error('meili down'));
+
+      const result = await search();
+
+      expect(result).toEqual(EMPTY);
+      expect(Object.keys(result).sort()).toEqual(['hasNextPage', 'links', 'nextCursor']);
+      expect(logError).toHaveBeenCalledWith('[getSharedLinks] Meilisearch error', {
+        error: 'meili down',
+        user: userId,
+      });
+    });
+
+    test('never asks the port without a search context', async () => {
+      const result = await withPort.getSharedLinks(
+        userId,
+        undefined,
+        10,
+        'createdAt',
+        'desc',
+        'search term',
+      );
+
+      expect(titleMatches).not.toHaveBeenCalled();
+      expect(result.links.map(({ shareId }) => shareId)).toEqual(['share-meili']);
+    });
+
+    test('never asks the port without a search', async () => {
+      const result = await withPort.getSharedLinks(
+        userId,
+        undefined,
+        10,
+        'createdAt',
+        'desc',
+        '  ',
+        searchContext,
+      );
+
+      expect(titleMatches).not.toHaveBeenCalled();
+      expect(meiliSearch).not.toHaveBeenCalled();
+      expect(result.links).toHaveLength(3);
+    });
+
+    test('runs as today when no port is bound yet', async () => {
+      const unbound = createShareMethods(mongoose, { getSearchPort: () => null });
+
+      const result = await unbound.getSharedLinks(
+        userId,
+        undefined,
+        10,
+        'createdAt',
+        'desc',
+        'search term',
+        searchContext,
+      );
+
+      expect(result.links.map(({ shareId }) => shareId)).toEqual(['share-meili']);
+    });
+
+    test.each(['search_busy', 'search_failed'] as const)(
+      'lets a %s from the port pass both catches unchanged',
+      async (code) => {
+        const failure = new SearchError(code);
+        titleMatches.mockRejectedValue(failure);
+
+        await expect(search()).rejects.toBe(failure);
+
+        /* Neither turned into an empty result by the inner catch, nor rewrapped by the outer. */
+        expect(logError).not.toHaveBeenCalled();
+        expect(meiliSearch).not.toHaveBeenCalled();
+      },
+    );
+
+    test('lets a SearchError from another bundle pass, recognised by name and code', async () => {
+      const foreign = Object.assign(new Error('search_busy'), {
+        name: 'SearchError',
+        code: 'search_busy',
+      });
+      titleMatches.mockRejectedValue(foreign);
+
+      await expect(search()).rejects.toBe(foreign);
+      expect(logError).not.toHaveBeenCalled();
+    });
+
+    test('lets a SearchError raised after the search pass the outer catch', async () => {
+      const failure = new SearchError('search_busy');
+      titleMatches.mockResolvedValue({ conversationIds: ['conv-port'] });
+      const find = jest.spyOn(SharedLink, 'find').mockImplementation(() => {
+        throw failure;
+      });
+
+      try {
+        await expect(search()).rejects.toBe(failure);
+        expect(logError).not.toHaveBeenCalled();
+      } finally {
+        find.mockRestore();
+      }
+    });
+
+    test('still rewraps any other failure of the link read, as today', async () => {
+      titleMatches.mockResolvedValue({ conversationIds: ['conv-port'] });
+      const find = jest.spyOn(SharedLink, 'find').mockImplementation(() => {
+        throw new Error('link read down');
+      });
+
+      try {
+        await expect(search()).rejects.toMatchObject({
+          name: 'ShareServiceError',
+          code: 'SHARES_FETCH_ERROR',
+          message: 'Error getting shares',
+        });
+      } finally {
+        find.mockRestore();
+      }
+    });
   });
 
   describe('createSharedLink', () => {

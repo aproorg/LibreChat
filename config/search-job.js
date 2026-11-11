@@ -8,6 +8,7 @@ require('~/db/models');
 const { runSearchJobCommand } = require('@librechat/api');
 const { silentExit } = require('./helpers');
 const connect = require('./connect');
+const { getAppConfig } = require('~/server/services/Config');
 const methods = require('~/models');
 
 (async () => {
@@ -16,6 +17,7 @@ const methods = require('~/models');
     argv: process.argv.slice(2),
     methods,
     print: (line) => console.log(line),
+    loadAppConfig: () => getAppConfig({ baseOnly: true }),
   });
   silentExit(code);
 })().catch((error) => {

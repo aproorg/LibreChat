@@ -78,6 +78,7 @@ export async function settle(runner: { tick(): Promise<void>; idle(): Promise<vo
 export function freeControl(
   options: {
     batchSize?: number;
+    copyBatchSize?: number;
     stopAfter?: number;
     stop?: 'paused' | 'lost';
   } = {},
@@ -85,6 +86,7 @@ export function freeControl(
   let checks = 0;
   return {
     batchSize: options.batchSize ?? 2,
+    copyBatchSize: options.copyBatchSize ?? 2,
     holds: () => true,
     check: async () => {
       checks += 1;

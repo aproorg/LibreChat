@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SearchMethods, SearchSourceCollection } from '@librechat/data-schemas';
+import type { ConversationSearchConfig } from 'librechat-data-provider';
+import type { DropRefusalCode } from './drop';
 import {
   BACKFILL_KEYS,
   CHAIN_KEY,
@@ -11,6 +13,8 @@ import {
   VERIFICATION_KEY,
   VOCAB_KEY,
 } from './control';
+import { createSearchConfigSnapshot } from '../config';
+import { dropSearchData } from './drop';
 
 export type SearchScriptMethods = Pick<
   SearchMethods,
@@ -19,10 +23,19 @@ export type SearchScriptMethods = Pick<
   | 'searchStateExists'
   | 'listSearchJobRequests'
   | 'readSearchSourceTenants'
+  | 'dropSearchCollections'
 >;
 
 const REQUEST_COMMANDS = ['backfill', 'pause', 'resume', 'reconcile', 'verify'] as const;
-const USAGE = 'Usage: search-job <status|backfill|pause|resume|reconcile|verify>';
+const USAGE = 'Usage: search-job <status|backfill|pause|resume|reconcile|verify|drop --yes>';
+const CONFIRM_FLAG = '--yes';
+const DROP_REFUSALS: Readonly<Record<DropRefusalCode, string>> = {
+  search_data_on:
+    'Nothing dropped: search.data is true. Set it to false, restart every process, then run drop again.',
+  search_lease_held:
+    'Nothing dropped: a process still holds the sync lease, so it runs with search data on. ' +
+    'Restart every process with search.data false, wait for the lease to run out, then run drop again.',
+};
 /** A rate older than this came from a process that stopped, so it predicts nothing. */
 const RATE_STALE_MS = 5 * 60_000;
 
@@ -238,18 +251,22 @@ function nextAction(status: SearchJobStatus): string {
 
 /**
  * The whole of `config/search-job.js` past its wiring. Answers an exit code. `status` only
- * reads; the others write one `jobRequest:<id>` for the lease holder, and never run a job here.
+ * reads. `drop` runs here, because with search data off no lease holder exists to run it. The
+ * others write one `jobRequest:<id>` for the lease holder, and never run a job here.
  */
 export async function runSearchJobCommand({
   argv,
   methods,
   print,
+  loadAppConfig,
   now = Date.now,
   randomId = randomUUID,
 }: {
   argv: readonly string[];
   methods: SearchScriptMethods;
   print(line: string): void;
+  /** The base config as the server reads it. Called only by `drop`, so `status` stays cheap. */
+  loadAppConfig?: () => Promise<{ search?: ConversationSearchConfig }>;
   now?: () => number;
   randomId?: () => string;
 }): Promise<number> {
@@ -257,6 +274,9 @@ export async function runSearchJobCommand({
   if (command === 'status') {
     formatSearchJobStatus(await readSearchJobStatus(methods, now())).forEach(print);
     return 0;
+  }
+  if (command === 'drop') {
+    return runDrop({ argv, methods, print, loadAppConfig, now });
   }
   if (!REQUEST_COMMANDS.includes(command as (typeof REQUEST_COMMANDS)[number])) {
     print(USAGE);
@@ -290,5 +310,44 @@ export async function runSearchJobCommand({
   if ((dateOf(lease?.leaseUntil)?.getTime() ?? 0) <= now()) {
     print('No process holds the lease right now, so this waits until one does. Check the server.');
   }
+  return 0;
+}
+
+async function runDrop({
+  argv,
+  methods,
+  print,
+  loadAppConfig,
+  now,
+}: {
+  argv: readonly string[];
+  methods: SearchScriptMethods;
+  print(line: string): void;
+  loadAppConfig?: () => Promise<{ search?: ConversationSearchConfig }>;
+  now: () => number;
+}): Promise<number> {
+  if (!argv.includes(CONFIRM_FLAG)) {
+    print(
+      'Nothing dropped: drop removes the four search collections for good, and nothing else. ' +
+        `Run it again with ${CONFIRM_FLAG} to go ahead.`,
+    );
+    return 2;
+  }
+  if (!loadAppConfig) {
+    print('Nothing dropped: the configuration could not be read, so search.data is unknown.');
+    return 1;
+  }
+  const config = createSearchConfigSnapshot(await loadAppConfig());
+  const result = await dropSearchData({ methods, config, now });
+  if (!result.ok) {
+    print(DROP_REFUSALS[result.error.code]);
+    return 1;
+  }
+  const { dropped } = result.value;
+  print(
+    dropped.length > 0
+      ? `Dropped ${dropped.join(', ')}.`
+      : 'Nothing to drop: no search collection exists.',
+  );
   return 0;
 }

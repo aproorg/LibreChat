@@ -29,6 +29,12 @@ const PHASES: readonly Phase[] = [...SOURCE_COLLECTIONS, COPY_PHASE];
  * The position is saved only after a flush, so a crash loses unflushed counts and re-walks
  * them. A crash between the flush and the save can count one flush twice, which `df` allows,
  * as it only orders expansions and rarity.
+ *
+ * The copy pass pages by `jobs.vocabCopyBatchSize`, not `jobs.batchSize`: a row is a token and
+ * two counts, and at 200 rows a batch the throttle's wait and the state writes were nearly all
+ * of its time. Each batch is one pause check, one read, one unordered write and one state
+ * write, then the throttle's wait. It stays resumable from the saved token, and settling a
+ * page twice changes nothing.
  */
 export async function runVocabRebuild({
   methods,
@@ -120,22 +126,27 @@ export async function runVocabRebuild({
     if (stop) {
       return stop;
     }
-    const rows = await methods.readSearchVocabBatch({ afterId: lastId, limit: control.batchSize });
+    const rows = await methods.readSearchVocabBatch({
+      afterId: lastId,
+      limit: control.copyBatchSize,
+    });
     if (rows.length === 0) {
       break;
     }
     if (!control.holds()) {
       return 'lost';
     }
+    const upToId = rows[rows.length - 1].token;
     await methods.settleSearchVocab({
       copy: rows
         .filter(({ r, dfNext }) => r === run && dfNext != null)
         .map(({ token, dfNext }) => ({ token, df: dfNext as number })),
-      remove: rows.filter(({ r }) => r !== run).map(({ token }) => token),
+      range: { afterId: lastId, upToId },
+      run,
     });
-    lastId = rows[rows.length - 1].token;
-    await save({ lastId });
-    await noteProgress(rows.length);
+    lastId = upToId;
+    walked += rows.length;
+    await methods.writeSearchState(VOCAB_KEY, { lastId, walked, walkedAt: new Date(now()) });
     await control.wait();
   }
 

@@ -2,9 +2,14 @@ import type { SearchHarness } from '../__tests__/helpers/harness';
 import { createSearchHarness, sourceMessage } from '../__tests__/helpers/harness';
 import { createReadGate, createReadRunner } from './retry';
 import { deriveRanked, SEARCH_PAGE_SIZE } from './window';
+import { readSearchPlan, stageDriver } from './plan';
 import { analyzeQuery } from '../analyzer/query';
 import { buildTierJobs, RARE_DF } from './tiers';
-import { readSearchPlan } from './plan';
+
+const BUDGETS = {
+  prefix: { maxCommonReads: 4, maxRareTokens: 200, maxVocabRows: 50_000 },
+  typo: { maxCorrections: 8, maxVocabRows: 50_000 },
+};
 
 describe('read plan', () => {
   let harness: SearchHarness;
@@ -30,11 +35,13 @@ describe('read plan', () => {
       window,
       readConcurrency,
       run,
+      ...BUDGETS,
       methods: {
         readVocabFrequencies: (tokens, options) => {
           reads.df += 1;
           return harness.methods.readVocabFrequencies(tokens, options);
         },
+        readVocabRange: harness.methods.readVocabRange,
         readRecordWindow: (params, options) => {
           reads.windows.push({ tokens: params.tokens, limit: params.limit });
           return harness.methods.readRecordWindow(params, options);
@@ -44,7 +51,7 @@ describe('read plan', () => {
   };
 
   const page = (read: Awaited<ReturnType<typeof plan>>, limit = SEARCH_PAGE_SIZE) =>
-    deriveRanked(read, { limit, rankWindow: 200, readConcurrency: 2, lengthBucket: true });
+    deriveRanked(read, { limit, rankWindow: 200, lengthBucket: true });
 
   beforeAll(async () => {
     harness = await createSearchHarness();
@@ -90,7 +97,7 @@ describe('read plan', () => {
 
     const read = await plan('blorgum');
 
-    expect(read.plan.jobs.map(({ tier }) => tier)).toEqual(['exact', 'lemma', 'part']);
+    expect(read.jobs.map(({ tier }) => tier)).toEqual(['exact', 'lemma', 'part']);
     const hits = page(read).hits;
     const tier = (id: string) => hits.find(({ messageId }) => messageId === id)?.tier;
     expect(tier('inflected')).toBe('exact');
@@ -177,8 +184,10 @@ describe('read plan', () => {
       window: 200,
       readConcurrency: 2,
       run,
+      ...BUDGETS,
       methods: {
         readVocabFrequencies: harness.methods.readVocabFrequencies,
+        readVocabRange: harness.methods.readVocabRange,
         readRecordWindow: async (params, options) => {
           seen.push(params.tokens);
           active += 1;
@@ -200,15 +209,15 @@ describe('read plan', () => {
 
     const read = await plan('blorgum');
 
-    expect(read.plan.driver).toBe(0);
+    expect(stageDriver(read.plan, 0)).toBe(0);
     expect(read.plan.words[0]).toMatchObject({
       exact: 'blorgum',
       lemmas: ['blorg'],
       parts: ['~blorgum', '~blorg'],
     });
     expect(read.plan.words[0].df).toBeGreaterThan(0);
-    expect(read.plan.jobs.length).toBeGreaterThan(0);
-    expect(JSON.parse(JSON.stringify(read.plan)).jobs).toEqual(read.plan.jobs);
+    expect(read.plan.common).toEqual([]);
+    expect(JSON.parse(JSON.stringify(read.plan))).toEqual(read.plan);
   });
 
   it('ranks a compound-only match below the word itself (US1 scenario 6)', async () => {
@@ -274,16 +283,18 @@ describe('read plan', () => {
     expect(page(read).hits.map(({ messageId }) => messageId)).toEqual(['mine']);
   });
 
-  it('requires every word when there are several', async () => {
+  it('requires every word first, then drops the trailing word while the page cannot fill', async () => {
     await harness.seed({
       messages: [
+        sourceMessage({ text: 'blorg alone', messageId: 'one', createdAt: new Date('2026-06-01') }),
         sourceMessage({ text: 'blorg horses', messageId: 'both' }),
-        sourceMessage({ text: 'blorg alone', messageId: 'one' }),
+        sourceMessage({ text: 'horses alone', messageId: 'trailing-only' }),
       ],
     });
 
     const read = await plan('blorg horses');
 
-    expect(page(read).hits.map(({ messageId }) => messageId)).toEqual(['both']);
+    expect(read.jobs.map(({ stage }) => stage)).toEqual(expect.arrayContaining([0, 1]));
+    expect(page(read).hits.map(({ messageId }) => messageId)).toEqual(['both', 'one']);
   });
 });

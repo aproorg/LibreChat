@@ -3185,8 +3185,8 @@ export const searchConfigSchema = z
   .object({
     /** Runs sync, backfill and language packs. Off: no pack loaded, no new records, no attribution. */
     data: z.boolean().default(false),
-    /** Which search serves users. `shadow` and `search` need `data: true`. */
-    backend: z.enum(['meilisearch', 'shadow', 'search']).default('meilisearch'),
+    /** Which search serves users. `search` needs `data: true`. */
+    backend: z.enum(['meilisearch', 'search']).default('meilisearch'),
     /** Enabled language pack IDs, checked by the service against registered packs. */
     languages: z.array(z.string()).default(['is', 'en']),
     /** Directory holding language data delivered outside this repository. Required for `is`. */
@@ -3224,6 +3224,11 @@ export const searchConfigSchema = z
         batchSize: searchLimit(200),
         /** Pause between batches, in milliseconds. */
         batchDelayMs: searchLimit(1000),
+        /**
+         * Word list rows settled per batch at the end of a rebuild. Far above `batchSize`
+         * because a row is a token and two counts, and each batch is one read and one write.
+         */
+        vocabCopyBatchSize: z.number().int().min(1).max(50000).default(5000),
         /**
          * The lease holder requests a backfill after startup if no chain has finished, so a
          * deploy can start it. Off, a backfill starts only when an operator requests one.
@@ -3279,20 +3284,8 @@ export const searchConfigSchema = z
       })
       .strict()
       .default({}),
-    /** Settings for running the new search beside Meilisearch. */
-    shadow: z
-      .object({
-        /** Most detached runs a process holds at once. */
-        maxConcurrent: searchLimit(4),
-        /** Comparison panel round, stored with each verdict so rounds never mix. */
-        panelRound: searchLimit(1),
-        /** User IDs in the comparison panel. Set per deployment. */
-        panelUsers: z.array(z.string()).default([]),
-        /** User ID whose searches are flagged as the largest. Only a boolean reaches logs. */
-        largestUserId: z.string().default(''),
-      })
-      .strict()
-      .default({}),
+    /** User ID whose searches are flagged as the largest. Only a boolean reaches logs. */
+    largestUserId: z.string().default(''),
   })
   .strict();
 

@@ -62,7 +62,7 @@ const requireId = (source: SearchSource): string => {
  * Fields are taken by name: `contextMeta`, `summary`, `metadata`, tool output, sender
  * and IDs never reach the text (FR-008), and nothing here logs a document.
  */
-function messageText(source: SearchSource): string {
+export function messageText(source: { content?: unknown; text?: unknown }): string {
   if (Array.isArray(source.content)) {
     return parseTextParts(source.content as TMessageContentParts[], false, { includeSteer: true });
   }

@@ -2,7 +2,12 @@ const mongoose = require('mongoose');
 const { MeiliSearch } = require('meilisearch');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys } = require('librechat-data-provider');
-const { isEnabled, FlowStateManager, evalKeyvRedisScript } = require('@librechat/api');
+const {
+  isEnabled,
+  FlowStateManager,
+  isMeiliConfigured,
+  evalKeyvRedisScript,
+} = require('@librechat/api');
 const { getLogStores } = require('~/cache');
 const { batchResetMeiliFlags } = require('./utils');
 
@@ -357,7 +362,7 @@ async function performSync(flowManager, flowId, flowType) {
  * Main index sync function that uses FlowStateManager to prevent concurrent execution
  */
 async function indexSync() {
-  if (!searchEnabled) {
+  if (!searchEnabled || !isMeiliConfigured(process.env)) {
     return;
   }
 

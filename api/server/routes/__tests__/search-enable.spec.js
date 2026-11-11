@@ -1,16 +1,12 @@
 const express = require('express');
 const request = require('supertest');
 
-const mockHealth = jest.fn();
-
-jest.mock('meilisearch', () => ({
-  MeiliSearch: jest.fn(() => ({ health: mockHealth })),
-}));
 jest.mock('~/server/middleware/requireJwtAuth', () => (req, res, next) => next());
 
 const searchRoute = require('../search');
 
-describe('GET /api/search/enable', () => {
+/** The route only hands over to the binding; the table itself is tested in `packages/api`. */
+describe('search status routes', () => {
   const appWith = (search) => {
     const app = express();
     if (search) {
@@ -20,42 +16,36 @@ describe('GET /api/search/enable', () => {
     return app;
   };
 
-  const previousSearch = process.env.SEARCH;
+  describe('GET /api/search/enable', () => {
+    it.each([true, false])('sends the binding’s answer %s as a bare boolean', async (answer) => {
+      const enabled = jest.fn().mockResolvedValue(answer);
+      const response = await request(appWith({ enabled })).get('/api/search/enable');
 
-  beforeEach(() => {
-    process.env.SEARCH = 'true';
-    mockHealth.mockResolvedValue({ status: 'available' });
+      expect(response.status).toBe(200);
+      expect(response.body).toBe(answer);
+      expect(enabled).toHaveBeenCalledTimes(1);
+    });
+
+    it('is false with no binding', async () => {
+      const response = await request(appWith()).get('/api/search/enable');
+      expect(response.body).toBe(false);
+    });
   });
 
-  afterAll(() => {
-    process.env.SEARCH = previousSearch;
-  });
+  describe('GET /api/search/meta', () => {
+    it('sends the binding’s answer', async () => {
+      const attribution = { text: 'text', url: 'https://example.com' };
+      const meta = jest.fn().mockResolvedValue({ attribution });
+      const response = await request(appWith({ meta })).get('/api/search/meta');
 
-  it('keeps today’s check with no binding', async () => {
-    const response = await request(appWith()).get('/api/search/enable');
-    expect(response.body).toBe(true);
-    expect(mockHealth).toHaveBeenCalledTimes(1);
-  });
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ attribution });
+    });
 
-  it('keeps today’s check when the service leaves it to Meilisearch', async () => {
-    const enabled = jest.fn().mockResolvedValue(null);
-    const response = await request(appWith({ enabled })).get('/api/search/enable');
-    expect(response.body).toBe(true);
-    expect(mockHealth).toHaveBeenCalledTimes(1);
-  });
-
-  it('answers the search row on the new backend, without asking Meilisearch', async () => {
-    const enabled = jest.fn().mockResolvedValue(false);
-    const response = await request(appWith({ enabled })).get('/api/search/enable');
-    expect(response.body).toBe(false);
-    expect(mockHealth).not.toHaveBeenCalled();
-  });
-
-  it('stays off with SEARCH off, reading nothing', async () => {
-    process.env.SEARCH = 'false';
-    const enabled = jest.fn();
-    const response = await request(appWith({ enabled })).get('/api/search/enable');
-    expect(response.body).toBe(false);
-    expect(enabled).not.toHaveBeenCalled();
+    it('is {} by default', async () => {
+      const meta = jest.fn().mockResolvedValue({});
+      expect((await request(appWith({ meta })).get('/api/search/meta')).body).toEqual({});
+      expect((await request(appWith()).get('/api/search/meta')).body).toEqual({});
+    });
   });
 });

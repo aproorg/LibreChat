@@ -68,6 +68,7 @@ describe('backfill chain, end to end', () => {
       jwtSecret: 'test-secret',
       logger: harness.logger,
       resolvePacks: () => ({ ok: true, packs: harness.packs }),
+      meili: { env: { SEARCH: 'true' } },
     });
 
     await startSearchBackground(binding);
