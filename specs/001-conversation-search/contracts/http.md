@@ -4,7 +4,7 @@ Default configuration (`search.data: false`, `search.backend: meilisearch`): eve
 
 ## GET /api/messages?search=…
 
-Applies when `backend: search`. Under `shadow`, Meilisearch serves with today's response and the new search runs detached. On `meilisearch` and `shadow`, a cursor with the `s1.` prefix returns `search_cursor_invalid`, because that cursor came from before a rollback. Today's client never sends any other cursor here.
+Applies when `backend: search`. On `meilisearch`, a cursor with the `s1.` prefix returns `search_cursor_invalid`, because that cursor came from before a rollback. Today's client never sends any other cursor here.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -29,30 +29,22 @@ Bare boolean, as today, with the status read cached ([R-15](../research.md#r-15-
 | Backend | True when |
 |---|---|
 | `SEARCH` off | Never |
-| `meilisearch`, `shadow` | Meilisearch healthy, and `search.meiliResyncPending` is unset or, per model, nothing is pending indexing or cleanup and unprocessed documents are within `MEILI_SYNC_THRESHOLD` |
+| `meilisearch` | Meilisearch healthy, and `search.meiliResyncPending` is unset or, per model, nothing is pending indexing or cleanup and unprocessed documents are within `MEILI_SYNC_THRESHOLD` |
 | `search` | `search.data` on, this process's packs loaded, and `verification.status` is `passed` with `passedAt` later than `invalidatedAt` |
 
-Misconfiguration (`data` off): `shadow` serves Meilisearch with no detached run and logs a configuration error; `search` reports false and logs the same. A pack that failed to load makes `search` report false in that process, and alarms.
+Misconfiguration (`backend: search` with `data` off): `search` reports false and logs a configuration error. A pack that failed to load makes `search` report false in that process, and alarms.
 
 ## GET /api/search/meta (new)
 
-Called by the `/search` view for the panel and by the About tab in Settings for the attribution. JWT required. Applies whenever `search.data` is on, on any backend, and until FR-043's re-analysis finishes.
+Called by the About tab in Settings for the attribution. JWT required. Applies whenever `search.data` is on, on either backend, and until FR-043's re-analysis finishes.
 
 ```json
 {
-  "attribution": { "text": "…verbatim…", "url": "https://bin.arnastofnun.is" },
-  "panel": { "eligible": true }
+  "attribution": { "text": "…verbatim…", "url": "https://bin.arnastofnun.is" }
 }
 ```
 
-`attribution` is present per FR-043. `panel` is present only for a user in `search.shadow.panelUsers` during `shadow`. With the default configuration it returns `{}`.
-
-## Panel (new, `backend: shadow` only)
-
-Server rejects with 404 unless the backend is `shadow` and the user is listed.
-
-- `GET /api/search/panel/compare?search=…` returns `{ meilisearch: { messages }, search: { messages, state: 'ok' | 'dropped' | 'failed' } }`, for the caller's own search. Query text is not stored or logged.
-- `POST /api/search/panel/verdict` with `{ verdict: 'better' | 'equal' | 'worse', knownMissed: boolean }` returns 204. Nothing else is accepted or stored, and the server adds the round to the key ([R-18](../research.md#r-18-fr-011s-panel-re-run)).
+`attribution` is present per FR-043, and it is the only field. With the default configuration it returns `{}`.
 
 ## Errors
 
@@ -72,4 +64,4 @@ Shared links no longer return an empty 200 on failure on this backend, so an out
 
 ## Types
 
-Add to `packages/data-provider`: `SearchErrorCode`, `SearchReason`, response additions, `SearchMeta`, panel types, endpoints in `api-endpoints.ts`, services in `data-service.ts`, keys in `keys.ts`.
+Add to `packages/data-provider`: `SearchErrorCode`, `SearchReason`, response additions, `SearchMeta`, endpoints in `api-endpoints.ts`, services in `data-service.ts`, keys in `keys.ts`.

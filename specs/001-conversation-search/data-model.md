@@ -48,7 +48,7 @@ All records are new and derived. `messages` and `conversations` keep their shape
 
 ## Sync state (`search_state`)
 
-One collection with one document per key, so `_id` is a string. Fields hold IDs, counts, timestamps, statuses and the panel's two facts, never content.
+One collection with one document per key, so `_id` is a string. Fields hold IDs, counts, timestamps and statuses, never content.
 
 | `_id` | Fields | Purpose |
 |---|---|---|
@@ -62,8 +62,6 @@ One collection with one document per key, so `_id` is a string. Fields hold IDs,
 | `observed` | `backend`, `data` | Last config seen, compared at each process start (R-11) |
 | `vocab` | `run`, `phase`, `lastId`, `walked`, `walkedAt`, `status`, `startedAt`, `finishedAt?` | Rebuild run number and resume position |
 | `jobRequest:<id>` | `job`, `requestedAt` | Written by `config/search-job.js` |
-| `panel:<round>:<uuid>` | `verdict`, `knownMissed` | Panel facts: no query text, user ID or date (FR-033); rounds kept apart (R-18) |
-
 ## Language pack
 
 In code, not storage: [contracts/language-pack.md](contracts/language-pack.md).
@@ -87,7 +85,7 @@ older v ─► rewritten by reconcile (compare-and-set on h, v)
 search data off ──on──► syncing ──backfill requested──► backfilling ──load, indexes, word list, reconcile──► verifying
 verifying ──mismatch──► alarm, reconcile, verify again; after 3 rounds status failed, owner called
 verifying ──passed──► ready (Meilisearch still serving)
-ready ──backend: shadow──► shadow ──SC pass──► backend: search (30-day hold, Meilisearch in sync)
+ready ──entry checks pass──► backend: search (30-day hold, Meilisearch in sync)
 hold ──30 days──► Meilisearch and its volume removed
 any stage before removal ──abort threshold──► backend: meilisearch + written cause; next process start invalidates verification
 after removal ──rollback──► reset sync state, full sync, search hidden until finished
