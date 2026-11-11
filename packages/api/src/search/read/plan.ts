@@ -6,7 +6,7 @@ import type { SearchRealtext } from '../metrics';
 import type { SearchReadRunner } from './retry';
 import type { TypoBudget } from './typo';
 import { buildTierJobs, expandPrefix, RARE_DF, READ_TIERS } from './tiers';
-import { PLAN_BUDGET_BYTES, planBytes } from './frozen';
+import { PLAN_BUDGET_BYTES, PLAN_SLOT_BYTES, planBytes } from './frozen';
 import { expandTypos } from './typo';
 
 /** A read the plan ran. Jobs sharing a `batch` ran together. */
@@ -160,6 +160,30 @@ export function fitPrefix(
   return tokens.slice(0, low);
 }
 
+/**
+ * Corrections, nearest first, as far as the plan still fits its slot in the cursor. They
+ * are frozen after the prefix budget is spent, which is why the slot is larger than it.
+ */
+export function fitTypos(
+  words: readonly PlannedWord[],
+  index: number,
+  { tokens, df }: Expansion,
+  known: ReadonlyMap<string, number>,
+): string[] {
+  const merged = new Map([...known, ...df]);
+  for (let count = tokens.length; count > 0; count -= 1) {
+    const candidate = words.map((word, at) =>
+      at === index ? { ...word, typos: tokens.slice(0, count) } : word,
+    );
+    if (
+      planBytes({ words: candidate, common: commonTokens(candidate, merged) }) <= PLAN_SLOT_BYTES
+    ) {
+      return tokens.slice(0, count);
+    }
+  }
+  return [];
+}
+
 /** Expansions read straight from the word list, where nothing shares them. */
 export const createPlanExpansions = ({
   run,
@@ -240,7 +264,7 @@ export async function readSearchPlan(options: ReadPlanOptions): Promise<PlanRead
     }
     const expansion = await expansions.typos(word.exact);
     learn(expansion);
-    word.typos = expansion.tokens;
+    word.typos = fitTypos(planned, index, expansion, df);
   };
 
   /* A word matching nothing gets its prefix (last word) or corrections before any AND is built. */
@@ -322,7 +346,11 @@ export async function readSearchPlan(options: ReadPlanOptions): Promise<PlanRead
     }
   }
 
-  /* A misspelling that is itself a word gets no correction: count how often that left nothing. */
+  /*
+   * A word the tenant's word list holds gets no correction up front, so a misspelling that
+   * is itself a word can leave a query with nothing. Only the driving word is corrected
+   * late, as the reference does. This counts the searches where another word was not.
+   */
   if (seen.size === 0 && planned.some((word) => !word.typos && matchCount(word) > 0)) {
     realtext?.addTypoSkippedWordExists();
   }

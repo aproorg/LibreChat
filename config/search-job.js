@@ -8,7 +8,6 @@ require('~/db/models');
 const { runSearchJobCommand } = require('@librechat/api');
 const { silentExit } = require('./helpers');
 const connect = require('./connect');
-const { getAppConfig } = require('~/server/services/Config');
 const methods = require('~/models');
 
 (async () => {
@@ -17,7 +16,8 @@ const methods = require('~/models');
     argv: process.argv.slice(2),
     methods,
     print: (line) => console.log(line),
-    loadAppConfig: () => getAppConfig({ baseOnly: true }),
+    /* Only `drop` reads the config, and loading its service is slow, so `status` does not pay for it. */
+    loadAppConfig: () => require('~/server/services/Config').getAppConfig({ baseOnly: true }),
   });
   silentExit(code);
 })().catch((error) => {

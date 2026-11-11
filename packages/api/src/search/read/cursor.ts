@@ -2,8 +2,8 @@ import { SearchError } from '@librechat/data-schemas';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import type { EncodedPlan, FrozenPlan, PlannedWord } from './frozen';
+import { encodePlan, PLAN_SLOT_BYTES } from './frozen';
 import { PART_MARKER } from '../analyzer/analyze';
-import { encodePlan } from './frozen';
 import { READ_TIERS } from './tiers';
 
 /** Marks a new-search cursor, so the Meilisearch branch can refuse one after a rollback. */
@@ -21,6 +21,7 @@ const QUERY_HASH_BYTES = 8;
 /** Bounds what a forged-but-authentic cursor could make a decode allocate. */
 const MAX_INFLATED_BYTES = 64 * 1024;
 const MAX_PLAN_WORDS = 64;
+const PLAN_LENGTH_BYTES = 2;
 
 export type CursorMode = 'fresh' | 'window' | 'tie';
 
@@ -136,13 +137,15 @@ function decodePlan(value: unknown): FrozenPlan {
 const MODES: readonly CursorMode[] = ['fresh', 'window', 'tie'];
 
 export interface SearchCursorCodec {
-  encode(cursor: SearchCursor, scope: { user: string; query: string }): string;
+  /** `null` when the plan is too large to carry, in which case there is no load-more. */
+  encode(cursor: SearchCursor, scope: { user: string; query: string }): string | null;
   /** Throws `search_cursor_invalid` for anything but this user's cursor for this query. */
   decode(value: unknown, scope: { user: string; query: string }): SearchCursor;
 }
 
 /**
- * Load-more's cursor: `s1.` plus deflated JSON under AES-256-GCM. It is encrypted because
+ * Load-more's cursor: `s1.` plus deflated JSON under AES-256-GCM. The plan sits in a slot
+ * of fixed size, so the cursor's length says nothing about what the word list held. It is encrypted because
  * the frozen plan holds expansions from the tenant-wide word list, which may contain
  * other users' names (FR-029). The user ID is bound as associated data, so another
  * user's cursor fails, and every decoded field is checked before it reaches a filter.
@@ -157,7 +160,6 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
         b: CURSOR_BACKEND,
         q: queryHash(query),
         a: cursor.anchor,
-        p: encodePlan(cursor.plan),
         s: cursor.stage,
         t: cursor.tier,
         j: cursor.job,
@@ -172,10 +174,18 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
         l: cursor.carryFloor,
         o: cursor.sequential ? 1 : 0,
       };
+      const plan = deflateRawSync(JSON.stringify(encodePlan(cursor.plan)));
+      if (plan.length > PLAN_SLOT_BYTES) {
+        return null;
+      }
+      const slot = Buffer.alloc(PLAN_LENGTH_BYTES + PLAN_SLOT_BYTES);
+      slot.writeUInt16BE(plan.length, 0);
+      plan.copy(slot, PLAN_LENGTH_BYTES);
       const iv = randomBytes(IV_BYTES);
       const cipher = createCipheriv('aes-256-gcm', key, iv);
       cipher.setAAD(Buffer.from(user, 'utf8'));
       const sealed = Buffer.concat([
+        cipher.update(slot),
         cipher.update(deflateRawSync(JSON.stringify(payload))),
         cipher.final(),
       ]);
@@ -190,6 +200,7 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
         return invalid();
       }
       let payload: Record<string, unknown>;
+      let sealedPlan: unknown;
       try {
         const bytes = Buffer.from(value.slice(SEARCH_CURSOR_PREFIX.length), 'base64url');
         const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, IV_BYTES));
@@ -199,9 +210,17 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
           decipher.update(bytes.subarray(IV_BYTES + TAG_BYTES)),
           decipher.final(),
         ]);
-        payload = JSON.parse(
-          inflateRawSync(opened, { maxOutputLength: MAX_INFLATED_BYTES }).toString('utf8'),
-        ) as Record<string, unknown>;
+        const planLength = opened.readUInt16BE(0);
+        const slotEnd = PLAN_LENGTH_BYTES + PLAN_SLOT_BYTES;
+        if (planLength > PLAN_SLOT_BYTES || opened.length <= slotEnd) {
+          return invalid();
+        }
+        const inflate = (bytes: Buffer): unknown =>
+          JSON.parse(
+            inflateRawSync(bytes, { maxOutputLength: MAX_INFLATED_BYTES }).toString('utf8'),
+          );
+        sealedPlan = inflate(opened.subarray(PLAN_LENGTH_BYTES, PLAN_LENGTH_BYTES + planLength));
+        payload = inflate(opened.subarray(slotEnd)) as Record<string, unknown>;
       } catch {
         return invalid();
       }
@@ -214,7 +233,7 @@ export function createSearchCursorCodec(secret: string): SearchCursorCodec {
       if (payload.q !== queryHash(query)) {
         return invalid();
       }
-      const plan = decodePlan(payload.p);
+      const plan = decodePlan(sealedPlan);
       const { s: stage, t: tier, j: job, m: mode } = payload;
       if (!isCount(stage) || stage >= plan.words.length) {
         return invalid();

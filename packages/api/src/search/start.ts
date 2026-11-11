@@ -92,7 +92,12 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
     cursorSecret: jwtSecret,
     ...(resolvePacks ? { resolvePacks } : {}),
   });
-  const route: SearchMessagesRoute = createSearchMessagesRoute({ service, methods, metrics });
+  const route: SearchMessagesRoute = createSearchMessagesRoute({
+    service,
+    methods,
+    metrics,
+    logger,
+  });
   const status = createSearchStatus({ service, methods, logger, meili });
   let jobs: SearchJobRunner | null = null;
   let writer: SearchWriter | null = null;

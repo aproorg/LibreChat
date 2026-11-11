@@ -1,7 +1,9 @@
+import { isSearchError } from '@librechat/data-schemas';
 import type { SearchableMessage, SearchContext } from '@librechat/data-schemas';
 import type { MessageSearchHits, SearchService, SearchServiceMethods } from '../service';
 import type { SearchMetrics, SearchRequestEvent } from '../metrics';
 import type { SearchHttpResponse } from './errors';
+import { getSafeErrorMetadata } from '~/utils/errors';
 import { searchErrorResponse } from './errors';
 
 /** `getSearchableMessages` and `getSearchHitConversations`, counted in `search.request`. */
@@ -11,6 +13,7 @@ export interface SearchMessagesRouteDeps {
   service: SearchService;
   methods: Pick<SearchServiceMethods, 'getSearchableMessages' | 'getSearchHitConversations'>;
   metrics: Pick<SearchMetrics, 'request'>;
+  logger?: { warn(message: string, meta: object): unknown };
 }
 
 export type SearchMessagesRoute = (
@@ -25,7 +28,7 @@ export type SearchMessagesRoute = (
  * a stale record cannot reach the client (FR-014).
  */
 export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): SearchMessagesRoute {
-  const { service, methods, metrics } = deps;
+  const { service, methods, metrics, logger } = deps;
 
   async function hydrate(ctx: SearchContext, hits: MessageSearchHits['hits']) {
     const run = service.requestRunner(ctx, 'messages');
@@ -96,6 +99,9 @@ export function createSearchMessagesRoute(deps: SearchMessagesRouteDeps): Search
         body: { messages, nextCursor, ...(reason ? { reason } : {}) },
       };
     } catch (error) {
+      if (!isSearchError(error)) {
+        logger?.warn('[search] Message search failed', getSafeErrorMetadata(error));
+      }
       const response = searchErrorResponse(error);
       emit(ctx.signal.aborted ? 'aborted' : response.body.code);
       return response;

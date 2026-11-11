@@ -15,10 +15,10 @@ import {
   sanitizeUIResourceContent,
   stripMessageUIResourceMarkers,
 } from '~/utils/stripUIResourceMarkers';
+import { isSearchError, SearchError } from '~/utils/searchError';
 import { activeExpirationFilter } from '~/utils/retention';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { MEILI_SEARCH_LIMIT } from '~/common/search';
-import { isSearchError } from '~/utils/searchError';
 import { CLIENT_MESSAGE_SELECT } from './message';
 import logger from '~/config/winston';
 
@@ -1136,7 +1136,12 @@ export function createShareMethods(
         try {
           /* `null` from the port means Meilisearch serves, and today's code below runs unchanged. */
           const portMatches = searchContext
-            ? await (deps.getSearchPort?.() ?? null)?.titleMatches(searchContext, search)
+            ? await Promise.resolve(
+                (deps.getSearchPort?.() ?? null)?.titleMatches(searchContext, search),
+              ).catch((portError: unknown) => {
+                /* Whatever the port throws is a failed search, never an empty result. */
+                throw isSearchError(portError) ? portError : new SearchError('search_failed');
+              })
             : null;
           if (portMatches) {
             if (!portMatches.conversationIds.length) {

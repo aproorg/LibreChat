@@ -337,7 +337,16 @@ async function runDrop({
     print('Nothing dropped: the configuration could not be read, so search.data is unknown.');
     return 1;
   }
-  const config = createSearchConfigSnapshot(await loadAppConfig());
+  const appConfig = await loadAppConfig();
+  /* A config that failed to load looks the same as one with no block, and both default to off. */
+  if (appConfig.search == null) {
+    print(
+      'Nothing dropped: the loaded configuration has no search block, so search.data is ' +
+        'unknown. Set search.data to false in librechat.yaml, check CONFIG_PATH, and run it again.',
+    );
+    return 1;
+  }
+  const config = createSearchConfigSnapshot(appConfig);
   const result = await dropSearchData({ methods, config, now });
   if (!result.ok) {
     print(DROP_REFUSALS[result.error.code]);

@@ -3199,8 +3199,8 @@ export const searchConfigSchema = z
     readConcurrency: searchLimit(2),
     /** Most searches a process serves at once. Above it, a search fails as busy at once. */
     maxConcurrentSearches: searchLimit(4),
-    /** Most query words used, counted after stop-word removal. */
-    queryWordLimit: searchLimit(10),
+    /** Most query words used, counted after stop-word removal. At most 32: the words ride in load-more's cursor. */
+    queryWordLimit: z.number().int().min(1).max(32).default(10),
     /** Time allowed for one search, in milliseconds. */
     searchTimeoutMs: searchLimit(10000),
     /** Seconds before another process takes over from a silent sync writer. */
@@ -3277,8 +3277,8 @@ export const searchConfigSchema = z
     /** Budgets for correcting a word that matches nothing. */
     typo: z
       .object({
-        /** Most corrections tried for one word. */
-        maxCorrections: searchLimit(8),
+        /** Most corrections tried for one word. At most 16: they ride in load-more's cursor. */
+        maxCorrections: z.number().int().min(1).max(16).default(8),
         /** Most word list rows read for one correction. */
         maxVocabRows: searchLimit(50000),
       })

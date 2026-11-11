@@ -183,7 +183,8 @@ export const sharedReadSize = ({
   rankWindow: number;
   sidebarLimit: number;
 }) => ({
-  need: Math.max(SEARCH_PAGE_SIZE, sidebarLimit),
+  /* One past the page, so a read that fills it exactly still looks for what load-more owes. */
+  need: Math.max(SEARCH_PAGE_SIZE + 1, sidebarLimit),
   window: Math.max(rankWindow, SEARCH_PAGE_SIZE, sidebarLimit),
 });
 

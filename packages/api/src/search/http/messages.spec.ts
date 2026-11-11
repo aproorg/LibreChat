@@ -284,6 +284,41 @@ describe('searchMessagesRoute', () => {
       expect(pages[1].body.messages).toHaveLength(25);
     });
 
+    it('still hands out a cursor when the first tier fills the page exactly and a lower tier holds more', async () => {
+      await harness.seed({
+        messages: [
+          ...Array.from({ length: 25 }, (_, index) =>
+            sourceMessage({
+              text: 'blorgum',
+              messageId: `exact${index}`,
+              createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+            }),
+          ),
+          ...Array.from({ length: 3 }, (_, index) =>
+            sourceMessage({ text: 'blorg', messageId: `lemma${index}` }),
+          ),
+        ],
+        conversations: [visible()],
+      });
+      /* A sidebar limit at or under the page used to size the read to stop right at 25. */
+      const route = await routeFor({ sidebarLimit: 10 });
+
+      const first = (await route(contextFor(), 'blorgum', null)) as Page;
+      expect(first.body.messages).toHaveLength(25);
+      expect(first.body.nextCursor).toEqual(expect.stringMatching(/^s1\./));
+
+      const served = [...first.body.messages];
+      for (let cursor = first.body.nextCursor, step = 0; cursor !== null && step < 20; step += 1) {
+        const next = (await route(contextFor(), 'blorgum', cursor)) as Page;
+        served.push(...next.body.messages);
+        cursor = next.body.nextCursor;
+      }
+      expect(
+        served.map(({ messageId }) => messageId).filter((id) => id.startsWith('lemma')),
+      ).toHaveLength(3);
+      expect(served).toHaveLength(28);
+    });
+
     it('returns a null cursor when exactly one page matches', async () => {
       await matching(25);
 

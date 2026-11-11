@@ -60,6 +60,12 @@ describe('isMeiliSyncCaughtUp', () => {
     ['indexing pending', progress({ pendingIndexing: 1 }), false],
     ['cleanup pending', progress({ pendingCleanup: 1 }), false],
     ['no pending figures reported', { totalProcessed: 5, totalDocuments: 5 }, true],
+    [
+      'nothing indexed yet on a tenant smaller than the threshold',
+      progress({ totalProcessed: 0, totalDocuments: 8 }),
+      false,
+    ],
+    ['an empty tenant', progress({ totalProcessed: 0, totalDocuments: 0 }), true],
   ])('%s: %j is %s', (_name, entry, expected) => {
     expect(isMeiliSyncCaughtUp(entry, 10)).toBe(expected);
   });

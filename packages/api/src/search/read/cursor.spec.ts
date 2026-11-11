@@ -9,7 +9,7 @@ import {
   isSearchCursor,
   SEARCH_CURSOR_PREFIX,
 } from './cursor';
-import { PLAN_BUDGET_BYTES, planBytes } from './frozen';
+import { PLAN_BUDGET_BYTES, PLAN_SLOT_BYTES, planBytes } from './frozen';
 import { WINDOW_OVERFLOW_FACTOR } from './page';
 import { fitPrefix } from './plan';
 
@@ -49,8 +49,19 @@ const cursor = (fields: Partial<SearchCursor> = {}): SearchCursor => ({
   ...fields,
 });
 
-/** Seals any payload as the codec does, so a test can hold a field the codec would never write. */
+const VALID_PLAN = { w: [['blorgum', ['blorg'], 12, 3, 0, 0]], c: [] };
+
+/**
+ * Seals any payload as the codec does, so a test can hold a field the codec would never
+ * write. The plan, `p`, goes in its fixed slot ahead of the rest.
+ */
 function seal(payload: unknown, user = USER, secret = SECRET): string {
+  const isObject = payload !== null && typeof payload === 'object';
+  const { p: plan = VALID_PLAN, ...rest } = (isObject ? payload : {}) as Record<string, unknown>;
+  const planBytes_ = deflateRawSync(JSON.stringify(plan));
+  const slot = Buffer.alloc(2 + PLAN_SLOT_BYTES);
+  slot.writeUInt16BE(planBytes_.length, 0);
+  planBytes_.copy(slot, 2);
   const key = Buffer.from(
     hkdfSync('sha256', secret, Buffer.alloc(0), 'librechat:search:cursor:v1', 32),
   );
@@ -58,7 +69,8 @@ function seal(payload: unknown, user = USER, secret = SECRET): string {
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(user, 'utf8'));
   const sealed = Buffer.concat([
-    cipher.update(deflateRawSync(JSON.stringify(payload))),
+    cipher.update(slot),
+    cipher.update(deflateRawSync(JSON.stringify(isObject ? rest : payload))),
     cipher.final(),
   ]);
   return (
@@ -79,7 +91,7 @@ const payload = (overrides: Record<string, unknown> = {}) => ({
   b: 'search',
   q: queryHash(QUERY),
   a: Date.UTC(2026, 5, 1),
-  p: { w: [['blorgum', ['blorg'], 12, 3, 0, 0]], c: [] },
+  p: VALID_PLAN,
   s: 0,
   t: 0,
   j: 0,
@@ -123,7 +135,7 @@ describe('search cursor', () => {
   });
 
   it('carries the marker the Meilisearch branch refuses', () => {
-    const encoded = codec.encode(cursor(), scope);
+    const encoded = codec.encode(cursor(), scope) as string;
 
     expect(encoded.startsWith('s1.')).toBe(true);
     expect(isSearchCursor(encoded)).toBe(true);
@@ -132,7 +144,7 @@ describe('search cursor', () => {
   });
 
   it('reveals no token to whoever holds it', () => {
-    const encoded = codec.encode(cursor(), scope);
+    const encoded = codec.encode(cursor(), scope) as string;
     const bytes = Buffer.from(encoded.slice(SEARCH_CURSOR_PREFIX.length), 'base64url');
 
     for (const token of ['blorgum', 'kvartana', 'kvartanaxyz', 'lemma']) {
@@ -144,8 +156,49 @@ describe('search cursor', () => {
     expect(codec.encode(cursor(), scope)).not.toBe(encoded);
   });
 
+  it('is the same length whatever the word list put in the plan', () => {
+    const bare = cursor({ plan: { words: [word('blorgum'), word('kvartana')], common: [] } });
+    const expanded = (count: number, typos = 0) =>
+      cursor({
+        plan: {
+          words: [
+            word(
+              'blorgum',
+              typos ? { typos: Array.from({ length: typos }, (_, at) => `blorgu${at}x`) } : {},
+            ),
+            word('kvartana', {
+              prefix: Array.from({ length: count }, (_, at) => `kvartana${at.toString(36)}zq`),
+            }),
+          ],
+          common: count > 3 ? ['kvartana0zq'] : [],
+        },
+      });
+    const length = (value: SearchCursor) => (codec.encode(value, scope) as string).length;
+
+    const expected = length(bare);
+    for (const plan of [expanded(1), expanded(3), expanded(40), expanded(120, 8)]) {
+      expect(length(plan)).toBe(expected);
+    }
+  });
+
+  it('hands out no cursor for a plan too large for its slot', () => {
+    const huge = Array.from({ length: 2000 }, (_, at) => `kvartana${at}${Math.random()}`);
+
+    expect(
+      codec.encode(
+        cursor({ plan: { words: [word('kvartana', { prefix: huge })], common: [] } }),
+        scope,
+      ),
+    ).toBeNull();
+  });
+
+  it('refuses a plan length that points outside the slot', () => {
+    const encoded = codec.encode(cursor(), scope) as string;
+    expect(() => codec.decode(encoded.slice(0, 60), scope)).toThrow(invalid);
+  });
+
   it('refuses a tampered cursor', () => {
-    const encoded = codec.encode(cursor(), scope);
+    const encoded = codec.encode(cursor(), scope) as string;
     const bytes = Buffer.from(encoded.slice(SEARCH_CURSOR_PREFIX.length), 'base64url');
 
     for (const at of [0, 13, 30, bytes.length - 1]) {
@@ -159,7 +212,7 @@ describe('search cursor', () => {
   });
 
   it("refuses another user's cursor, another query's, and another secret's", () => {
-    const encoded = codec.encode(cursor(), scope);
+    const encoded = codec.encode(cursor(), scope) as string;
 
     expect(() => codec.decode(encoded, { ...scope, user: 'fedcba9876543210fedcba98' })).toThrow(
       invalid,
@@ -235,7 +288,7 @@ describe('search cursor', () => {
     expect(pasted.length).toBeGreaterThan(composed.length);
     expect(composed.length).toBeGreaterThan(CURSOR_QUERY_CHARS);
 
-    const encoded = codec.encode(cursor(), { user: USER, query: pasted });
+    const encoded = codec.encode(cursor(), { user: USER, query: pasted }) as string;
     const sent = pasted.normalize('NFC').slice(0, CURSOR_QUERY_CHARS);
 
     expect(() => codec.decode(encoded, { user: USER, query: sent })).not.toThrow();
@@ -305,14 +358,16 @@ describe('search cursor', () => {
         );
       /* Three bytes a character, the most a letter of the basic plane costs percent-encoded. */
       const query = '漢'.repeat(400).normalize('NFC').slice(0, CURSOR_QUERY_CHARS);
-      const url = (encoded: string) =>
-        `/api/messages?search=${encodeURIComponent(query)}&cursor=${encodeURIComponent(encoded)}`;
+      const url = (encoded: string | null) =>
+        `/api/messages?search=${encodeURIComponent(query)}&cursor=${encodeURIComponent(encoded ?? '')}`;
 
       const ranked = url(largest({ seen: hashes(mostSeen, 'seen') }));
       const sequential = url(
         largest({ carry: hashes(mostSeen, 'carry'), seen: new Set(), sequential: true }),
       );
 
+      expect(ranked).toContain('cursor=s1.');
+      expect(sequential).toContain('cursor=s1.');
       expect(Buffer.byteLength(ranked)).toBeLessThanOrEqual(MAX_URL_BYTES);
       expect(Buffer.byteLength(sequential)).toBeLessThanOrEqual(MAX_URL_BYTES);
     });

@@ -56,6 +56,10 @@ export function meiliSyncThreshold(env: MeiliEnv): number {
  * unacknowledged save leaves that false with nothing left to clear it.
  */
 export function isMeiliSyncCaughtUp(progress: MeiliSyncProgress, threshold: number): boolean {
+  /* Right after a flag reset nothing is indexed, which a small tenant's threshold would let through. */
+  if (progress.totalProcessed === 0 && progress.totalDocuments > 0) {
+    return false;
+  }
   return (
     (progress.pendingIndexing ?? 0) === 0 &&
     (progress.pendingCleanup ?? 0) === 0 &&

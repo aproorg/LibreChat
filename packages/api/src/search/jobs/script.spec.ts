@@ -69,6 +69,11 @@ describe('search-job script', () => {
   describe('drop', () => {
     const SEARCH_COLLECTIONS = ['csearch', 'msearch', 'search_state', 'search_vocab'];
 
+    /* What the runbook leaves behind before a drop: the block kept, with search data off. */
+    beforeEach(() => {
+      appConfig = { search: searchConfig({ data: false, backend: 'meilisearch' }) };
+    });
+
     it('runs in the script: removes the four collections and queues no request', async () => {
       await storeSources(harness, 'messages', [sourceMessage({ text: 'kept' })]);
 
@@ -108,6 +113,16 @@ describe('search-job script', () => {
 
       expect(code).toBe(1);
       expect(lines.join()).toContain('holds the sync lease');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses when the loaded configuration has no search block: a failed load looks the same', async () => {
+      appConfig = {};
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('no search block');
       expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
     });
 

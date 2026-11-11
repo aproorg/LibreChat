@@ -26,6 +26,14 @@ export interface FrozenPlan {
 /** Deflated bytes a frozen plan may take, so the worst-case URL fits a proxy's request line. */
 export const PLAN_BUDGET_BYTES = 1500;
 
+/**
+ * What the plan always occupies in a cursor, whatever it holds: the prefix budget plus
+ * room for corrections frozen after it. A cursor's length must not vary with the plan,
+ * or it would tell its holder how many words of the tenant's word list an expansion
+ * found (FR-029).
+ */
+export const PLAN_SLOT_BYTES = 1900;
+
 export type EncodedWord = [string, string[], number, number, string[] | 0, string[] | 0];
 
 export interface EncodedPlan {
