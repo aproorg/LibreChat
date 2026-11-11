@@ -48,8 +48,8 @@ describe('createSearchService', () => {
   });
 
   describe('routing', () => {
-    it.each(['meilisearch', 'shadow'] as const)('answers null on %s', async (backend) => {
-      const created = await service({ backend });
+    it('answers null on meilisearch', async () => {
+      const created = await service({ backend: 'meilisearch' });
       expect(created.isServing()).toBe(false);
       expect(await created.searchMessages(contextFor(), 'word')).toBeNull();
       expect(await created.conversationMatches(contextFor(), 'word')).toBeNull();
@@ -87,7 +87,6 @@ describe('createSearchService', () => {
       await expect(created.conversationMatches(contextFor(), 'blorg')).rejects.toMatchObject({
         code: 'search_busy',
       });
-      expect(created.canRunShadow()).toBe(false);
     });
 
     it('search_failed when a pack failed, with chat unaffected', async () => {
@@ -140,15 +139,6 @@ describe('createSearchService', () => {
         code: 'search_failed',
       });
       expect(harness.logged.filter(({ event }) => event === 'search.pack')).toEqual([]);
-    });
-
-    it('allows a shadow run only when loaded', async () => {
-      const loaded = await service({ backend: 'shadow' });
-      expect(loaded.canRunShadow()).toBe(true);
-      const loading = await service({ backend: 'shadow' }, false);
-      expect(loading.canRunShadow()).toBe(false);
-      const dataOff = await service({ backend: 'shadow', data: false });
-      expect(dataOff.canRunShadow()).toBe(false);
     });
 
     it('emits a loaded event per pack with time and memory', async () => {
@@ -535,7 +525,7 @@ describe('createSearchService', () => {
       let now = 1_000_000;
       const created = createSearchService({
         config: createSearchConfigSnapshot({
-          search: searchConfig({ shadow: { largestUserId: 'whale' } }),
+          search: searchConfig({ largestUserId: 'whale' }),
         }),
         methods: harness.methods,
         metrics: harness.metrics,

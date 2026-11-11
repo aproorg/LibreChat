@@ -94,7 +94,7 @@ export function summarizeMeasure({ rows, grades, isolationViolations }: Conditio
  * reference's rules. It reports, and holds no thresholds: T076 owns the SC-001 gate.
  */
 export async function measureCondition(
-  methods: QualityReadMethods,
+  methods: Omit<QualityReadMethods, 'readMessageTexts'>,
   analyzer: Analyzer,
   manifest: QualityManifest,
   condition: QualityCondition,
@@ -110,9 +110,18 @@ export async function measureCondition(
     }
   };
   const textsOf = (ids: readonly string[]) => ids.map((id) => conditionRows.get(id)?.text ?? '');
+  /* Only records are loaded, so proximity reads its text from the condition's rows. */
+  const reads: QualityReadMethods = {
+    ...methods,
+    readMessageTexts: async ({ messageIds }) =>
+      messageIds.map((messageId) => ({
+        messageId,
+        text: conditionRows.get(messageId)?.text ?? '',
+      })),
+  };
   const search = async (query: string): Promise<QueryReads> => {
-    const shallow = await rankedMessageIds(methods, analyzer, condition.user, query, SHALLOW);
-    const deep = await rankedMessageIds(methods, analyzer, condition.user, query, DEEP);
+    const shallow = await rankedMessageIds(reads, analyzer, condition.user, query, SHALLOW);
+    const deep = await rankedMessageIds(reads, analyzer, condition.user, query, DEEP);
     checkIsolation([...shallow.firstPage, ...shallow.top, ...deep.firstPage, ...deep.top]);
     return { shallow, deep };
   };

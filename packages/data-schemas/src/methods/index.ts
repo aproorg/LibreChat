@@ -480,7 +480,7 @@ export function createMethods(
     ...aclEntryMethods,
     ...systemGrantMethods,
     ...createAuditLogMethods(mongoose),
-    ...createShareMethods(mongoose),
+    ...createShareMethods(mongoose, { getSearchPort: deps.getSearchPort }),
     ...createPluginAuthMethods(mongoose),
     /* Tier 1 */
     ...actionMethods,
@@ -602,7 +602,9 @@ export type {
 export type {
   SearchReadOptions,
   SearchVocabFrequency,
+  SearchTieParams,
   SearchWindowParams,
+  SearchWindowRange,
   SearchWindowRow,
   SearchRecordTokens,
   SearchMessageText,

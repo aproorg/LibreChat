@@ -36,7 +36,6 @@ export function createConversationSearch({
     metrics.request({
       surface: 'conversations',
       backend: 'search',
-      detached: false,
       ms: Date.now() - ctx.startedAt,
       ...service.noteRequest(ctx.user),
       ...stats,

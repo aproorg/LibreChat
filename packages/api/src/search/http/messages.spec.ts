@@ -55,8 +55,8 @@ describe('searchMessagesRoute', () => {
     await harness.reset();
   });
 
-  it.each(['meilisearch', 'shadow'] as const)('answers null on %s', async (backend) => {
-    const route = await routeFor({ backend });
+  it('answers null on meilisearch', async () => {
+    const route = await routeFor({ backend: 'meilisearch' });
     expect(await route(contextFor(), 'blorg', null)).toBeNull();
     expect(harness.logged.filter(({ event }) => event === 'search.request')).toEqual([]);
   });
@@ -217,7 +217,7 @@ describe('searchMessagesRoute', () => {
     expect(ids(response)).toHaveLength(25);
   });
 
-  it('returns a null cursor until paging exists, and rejects any cursor sent', async () => {
+  it('returns a null cursor when one page holds everything, and rejects a cursor that is not its own', async () => {
     await harness.seed({
       messages: [sourceMessage({ text: 'blorg' })],
       conversations: [visible()],
@@ -228,6 +228,211 @@ describe('searchMessagesRoute', () => {
     expect(await route(contextFor(), 'blorg', 's1.anything')).toEqual({
       status: 400,
       body: { code: 'search_cursor_invalid' },
+    });
+  });
+
+  describe('load-more', () => {
+    interface Page {
+      status: number;
+      body: { messages: Array<{ messageId: string }>; nextCursor: string | null };
+    }
+
+    const matching = (count: number) =>
+      harness.seed({
+        messages: Array.from({ length: count }, (_, index) =>
+          sourceMessage({
+            text: 'blorg',
+            messageId: `m${String(index).padStart(2, '0')}`,
+            createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+          }),
+        ),
+        conversations: [visible()],
+      });
+
+    /** Follows `nextCursor` to the end, bounded so a cursor that never ends fails the test. */
+    const pagesFrom = async (
+      route: Awaited<ReturnType<typeof routeFor>>,
+      first: Page,
+    ): Promise<Page[]> => {
+      const pages = [first];
+      for (let step = 0; step < 20 && pages[pages.length - 1].body.nextCursor !== null; step += 1) {
+        const next = await route(contextFor(), 'blorg', pages[pages.length - 1].body.nextCursor);
+        expect(next?.status).toBe(200);
+        pages.push(next as Page);
+      }
+      expect(pages[pages.length - 1].body.nextCursor).toBeNull();
+      return pages;
+    };
+
+    it('returns a cursor when more than a page matches, and pages to the end with no repeats', async () => {
+      await matching(60);
+      const route = await routeFor();
+
+      const first = (await route(contextFor(), 'blorg', null)) as Page;
+      expect(first.body.messages).toHaveLength(25);
+      expect(first.body.nextCursor).toEqual(expect.stringMatching(/^s1\./));
+
+      const pages = await pagesFrom(route, first);
+      const served = pages.flatMap(({ body }) => body.messages.map(({ messageId }) => messageId));
+
+      expect(new Set(served).size).toBe(served.length);
+      expect([...served].sort()).toEqual(
+        Array.from({ length: 60 }, (_, index) => `m${String(index).padStart(2, '0')}`),
+      );
+      /* One word, one tier and one length: the order is newest first across every page. */
+      expect(served).toEqual([...served].sort().reverse());
+      expect(pages[1].body.messages).toHaveLength(25);
+    });
+
+    it('still hands out a cursor when the first tier fills the page exactly and a lower tier holds more', async () => {
+      await harness.seed({
+        messages: [
+          ...Array.from({ length: 25 }, (_, index) =>
+            sourceMessage({
+              text: 'blorgum',
+              messageId: `exact${index}`,
+              createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+            }),
+          ),
+          ...Array.from({ length: 3 }, (_, index) =>
+            sourceMessage({ text: 'blorg', messageId: `lemma${index}` }),
+          ),
+        ],
+        conversations: [visible()],
+      });
+      /* A sidebar limit at or under the page used to size the read to stop right at 25. */
+      const route = await routeFor({ sidebarLimit: 10 });
+
+      const first = (await route(contextFor(), 'blorgum', null)) as Page;
+      expect(first.body.messages).toHaveLength(25);
+      expect(first.body.nextCursor).toEqual(expect.stringMatching(/^s1\./));
+
+      const served = [...first.body.messages];
+      for (let cursor = first.body.nextCursor, step = 0; cursor !== null && step < 20; step += 1) {
+        const next = (await route(contextFor(), 'blorgum', cursor)) as Page;
+        served.push(...next.body.messages);
+        cursor = next.body.nextCursor;
+      }
+      expect(
+        served.map(({ messageId }) => messageId).filter((id) => id.startsWith('lemma')),
+      ).toHaveLength(3);
+      expect(served).toHaveLength(28);
+    });
+
+    it('returns a null cursor when exactly one page matches', async () => {
+      await matching(25);
+
+      const first = (await (await routeFor())(contextFor(), 'blorg', null)) as Page;
+
+      expect(first.body.messages).toHaveLength(25);
+      const pages = await pagesFrom(await routeFor(), first);
+      expect(pages.flatMap(({ body }) => body.messages)).toHaveLength(25);
+    });
+
+    it.each([
+      ['deleted', (ids: string[]) => ({ op: 'delete' as const, ids })],
+      ['hidden', (ids: string[]) => ({ op: 'hide' as const, ids })],
+    ])(
+      'keeps the cursor when every source message of the next page was %s',
+      async (_name, change) => {
+        await matching(60);
+        const route = await routeFor();
+        const first = (await route(contextFor(), 'blorg', null)) as Page;
+        /* Newest first, so the second page is the next 25 by date: m34 down to m10. */
+        const { op, ids: second } = change(
+          Array.from({ length: 25 }, (_, index) => `m${String(34 - index).padStart(2, '0')}`),
+        );
+        const stored = harness.database.connection.db!.collection('messages');
+        if (op === 'delete') {
+          await stored.deleteMany({ messageId: { $in: second } });
+        } else {
+          await stored.updateMany({ messageId: { $in: second } }, { $set: { unfinished: true } });
+        }
+
+        const emptied = (await route(contextFor(), 'blorg', first.body.nextCursor)) as Page;
+
+        expect(emptied.status).toBe(200);
+        expect(emptied.body.messages).toEqual([]);
+        expect(emptied.body.nextCursor).toEqual(expect.stringMatching(/^s1\./));
+
+        const pages = await pagesFrom(route, emptied);
+        const rest = pages.flatMap(({ body }) => body.messages.map(({ messageId }) => messageId));
+        expect(rest).toEqual(
+          Array.from({ length: 10 }, (_, index) => `m${String(9 - index).padStart(2, '0')}`),
+        );
+      },
+    );
+
+    describe('a cursor the request may not use', () => {
+      const INVALID = { status: 400, body: { code: 'search_cursor_invalid' } };
+
+      const issued = async () => {
+        await harness.seed({
+          messages: [
+            ...Array.from({ length: 30 }, () => sourceMessage({ text: 'blorg horses' })),
+            ...Array.from({ length: 30 }, () =>
+              sourceMessage({ text: 'blorg horses', user: 'user-b' }),
+            ),
+          ],
+          conversations: [visible(), visible('convo-a', { user: 'user-b' })],
+        });
+        const route = await routeFor();
+        const first = (await route(contextFor(), 'blorg', null)) as Page;
+        return { route, cursor: first.body.nextCursor as string };
+      };
+
+      it('is accepted for the same user and query', async () => {
+        const { route, cursor } = await issued();
+        const next = (await route(contextFor(), 'blorg', cursor)) as Page;
+        expect(next.status).toBe(200);
+        expect(next.body.messages).toHaveLength(5);
+      });
+
+      it('is rejected for another user', async () => {
+        const { route, cursor } = await issued();
+        expect(await route(contextFor('user-b'), 'blorg', cursor)).toEqual(INVALID);
+      });
+
+      it('is rejected for another query', async () => {
+        const { route, cursor } = await issued();
+        expect(await route(contextFor(), 'horses', cursor)).toEqual(INVALID);
+        expect(await route(contextFor(), 'blorg horses', cursor)).toEqual(INVALID);
+      });
+
+      it('is rejected when tampered with', async () => {
+        const { route, cursor } = await issued();
+        const middle = Math.floor(cursor.length / 2);
+        const swapped = cursor[middle] === 'A' ? 'B' : 'A';
+        const tampered = cursor.slice(0, middle) + swapped + cursor.slice(middle + 1);
+
+        expect(await route(contextFor(), 'blorg', tampered)).toEqual(INVALID);
+        expect(await route(contextFor(), 'blorg', cursor.slice(0, -4))).toEqual(INVALID);
+        expect(await route(contextFor(), 'blorg', `${cursor}AAAA`)).toEqual(INVALID);
+      });
+
+      it.each([
+        ['a date, as Meilisearch paging sends', '2026-01-01T00:00:00.000Z'],
+        ['plain text', 'not-a-cursor'],
+        ['the prefix alone', 's1.'],
+        ['a list', ['s1.x']],
+        ['a number', 7],
+      ])('is rejected when it is %s', async (_name, value) => {
+        const { route } = await issued();
+        expect(await route(contextFor(), 'blorg', value)).toEqual(INVALID);
+      });
+
+      it('emits the code as the outcome, and no cursor text', async () => {
+        const { route, cursor } = await issued();
+        harness.logged.length = 0;
+
+        await route(contextFor('user-b'), 'blorg', cursor);
+
+        const events = harness.logged.filter(({ event }) => event === 'search.request');
+        expect(events.map(({ meta }) => (meta as { outcome: string }).outcome)).toEqual([
+          'search_cursor_invalid',
+        ]);
+        expect(JSON.stringify(harness.logged)).not.toContain(cursor);
+      });
     });
   });
 
@@ -283,7 +488,6 @@ describe('searchMessagesRoute', () => {
     expect(event?.meta).toEqual({
       surface: 'messages',
       backend: 'search',
-      detached: false,
       ms: expect.any(Number),
       reads: expect.any(Number),
       rows: expect.any(Number),

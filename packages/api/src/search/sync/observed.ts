@@ -6,17 +6,15 @@ export type ObservedMethods = Pick<SearchMethods, 'readSearchState' | 'writeSear
 
 type Observed = Pick<SearchConfigSnapshot, 'backend' | 'data'>;
 
-const SERVING_BACKENDS: ReadonlyArray<Observed['backend']> = ['shadow', 'search'];
-
 /**
  * R-11's readiness rule, run by each process in the background after it listens. Config
  * changes only by restart, so comparing this process's `{ backend, data }` with the last one
  * stored is how an abort or a stopped sync reaches readiness (FR-037).
  *
  * A tenant that never turned search data on has no `search_state`, so the read finds nothing
- * and nothing is written: no collection appears. With state present, moving to `meilisearch`
- * from `shadow` or `search`, or `data` going off, sets `invalidatedAt`, so an old pass cannot
- * serve again until reconcile and a later verification. `data` coming back on discards the
+ * and nothing is written: no collection appears. With state present, moving from `search` to
+ * `meilisearch`, or `data` going off, sets `invalidatedAt`, so an old pass cannot serve again
+ * until reconcile and a later verification. `data` coming back on discards the
  * saved stream position, because the writes made while it was off are not in the stream any
  * more, and the writer then treats it as a gap and queues reconcile.
  */
@@ -34,7 +32,8 @@ export async function checkObserved({
     return;
   }
   const at = new Date(now());
-  const wasServing = SERVING_BACKENDS.includes(previous.backend as Observed['backend']);
+  /* Anything but `meilisearch`, so a value an older release stored still invalidates. */
+  const wasServing = typeof previous.backend === 'string' && previous.backend !== 'meilisearch';
   const dataWentOff = previous.data === true && !config.data;
   if ((wasServing && config.backend === 'meilisearch') || dataWentOff) {
     await methods.writeSearchState(VERIFICATION_KEY, { invalidatedAt: at });

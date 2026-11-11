@@ -49,8 +49,8 @@ describe('createConversationSearch', () => {
     await harness.reset();
   });
 
-  it.each(['meilisearch', 'shadow'] as const)('builds no context on %s', async (backend) => {
-    const { conversations } = await searchFor({ backend });
+  it('builds no context on meilisearch', async () => {
+    const { conversations } = await searchFor({ backend: 'meilisearch' });
     expect(conversations.context(req, res)).toBeUndefined();
     expect(harness.logged).toEqual([
       expect.objectContaining({ event: 'search.pack' }),

@@ -28,7 +28,6 @@ type Emitters = Record<string, (...args: unknown[]) => void>;
 const validRequest = {
   surface: 'messages',
   backend: 'search',
-  detached: false,
   ms: 12,
   reads: 2,
   rows: 30,
@@ -45,7 +44,6 @@ describe('createSearchMetrics', () => {
     const metrics = createSearchMetrics(logger);
 
     metrics.request(validRequest);
-    metrics.shadow({ surface: 'messages', state: 'ok', dropped: false });
     metrics.cursorError({ surface: 'messages', retries: 2, final: true });
     metrics.syncLag({ lagMs: 10, batch: 5 });
     metrics.syncStatus({ savedAgeMs: 10, hasHolder: true, isHolder: false });
@@ -67,13 +65,11 @@ describe('createSearchMetrics', () => {
       status: 'paused',
       pausedReason: 'operator',
     });
-    metrics.probe({ check: 'temporary', leak: false });
     metrics.realtext.addMessage(10, false);
     metrics.flushRealtext();
 
     expect(lines.map(([event]) => event)).toEqual([
       'search.request',
-      'search.shadow',
       'search.cursor_error',
       'search.sync_lag',
       'search.sync_status',
@@ -85,16 +81,15 @@ describe('createSearchMetrics', () => {
       'search.verify',
       'search.pack',
       'search.backfill',
-      'search.probe',
       'search.realtext',
     ]);
     expect(lines[0][1]).toEqual(validRequest);
-    expect(lines[7][1]).toEqual({
+    expect(lines[6][1]).toEqual({
       holder: '123e4567-e89b-12d3-a456-426614174000',
       epoch: 2,
       event: 'acquired',
     });
-    expect(lines[12][1]).toEqual({
+    expect(lines[11][1]).toEqual({
       collection: 'messages',
       rate: 100,
       processed: 10,
@@ -111,11 +106,11 @@ describe('createSearchMetrics', () => {
         typeof value === 'function' && name !== 'flushRealtext' && name !== 'startRealtextFlush',
     );
 
-    expect(emitters.length).toBe(15);
+    expect(emitters.length).toBe(13);
     for (const [, emit] of emitters) {
       emit(sentinelFields);
     }
-    expect(lines).toHaveLength(15);
+    expect(lines).toHaveLength(13);
     expect(JSON.stringify(lines)).not.toContain('SENTINEL');
     expect(JSON.stringify(lines)).not.toContain('user words');
   });

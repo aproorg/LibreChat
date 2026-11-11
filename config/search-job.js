@@ -16,6 +16,8 @@ const methods = require('~/models');
     argv: process.argv.slice(2),
     methods,
     print: (line) => console.log(line),
+    /* Only `drop` reads the config, and loading its service is slow, so `status` does not pay for it. */
+    loadAppConfig: () => require('~/server/services/Config').getAppConfig({ baseOnly: true }),
   });
   silentExit(code);
 })().catch((error) => {

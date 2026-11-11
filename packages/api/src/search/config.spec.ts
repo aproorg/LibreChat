@@ -4,12 +4,7 @@ import { readFileSync } from 'fs';
 import { loadSearchConfig } from '@librechat/data-schemas';
 import { searchConfigSchema } from 'librechat-data-provider';
 import type { ConversationSearchConfig } from 'librechat-data-provider';
-import {
-  createSearchConfigSnapshot,
-  isShadowRunEnabled,
-  isSearchServing,
-  isSearchDataOn,
-} from './config';
+import { createSearchConfigSnapshot, isSearchServing, isSearchDataOn } from './config';
 
 const configured = (search: Partial<ConversationSearchConfig>): ConversationSearchConfig => ({
   ...searchConfigSchema.parse({}),
@@ -18,10 +13,10 @@ const configured = (search: Partial<ConversationSearchConfig>): ConversationSear
 
 describe('createSearchConfigSnapshot', () => {
   it('takes the search block from the base config', () => {
-    const search = configured({ data: true, backend: 'shadow' });
+    const search = configured({ data: true, backend: 'search' });
     const snapshot = createSearchConfigSnapshot({ search });
     expect(snapshot.data).toBe(true);
-    expect(snapshot.backend).toBe('shadow');
+    expect(snapshot.backend).toBe('search');
   });
 
   it('gives the defaults when the app config has no search block', () => {
@@ -33,8 +28,7 @@ describe('createSearchConfigSnapshot', () => {
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.languages)).toBe(true);
     expect(Object.isFrozen(snapshot.jobs)).toBe(true);
-    expect(Object.isFrozen(snapshot.shadow)).toBe(true);
-    expect(Object.isFrozen(snapshot.shadow.panelUsers)).toBe(true);
+    expect(Object.isFrozen(snapshot.typo)).toBe(true);
   });
 
   it('does not change when the source does, and leaves the source unfrozen', () => {
@@ -60,18 +54,14 @@ describe('snapshot helpers', () => {
     const defaults = createSearchConfigSnapshot({});
     expect(isSearchDataOn(defaults)).toBe(false);
     expect(isSearchServing(defaults)).toBe(false);
-    expect(isShadowRunEnabled(defaults)).toBe(false);
   });
 
   it.each([
-    [{ data: false, backend: 'meilisearch' }, false, false],
-    [{ data: true, backend: 'meilisearch' }, false, false],
-    [{ data: false, backend: 'shadow' }, false, false],
-    [{ data: true, backend: 'shadow' }, false, true],
-    [{ data: true, backend: 'search' }, true, false],
-  ] as const)('%j serves %s and shadows %s', (search, serving, shadowing) => {
+    [{ data: false, backend: 'meilisearch' }, false],
+    [{ data: true, backend: 'meilisearch' }, false],
+    [{ data: true, backend: 'search' }, true],
+  ] as const)('%j serves %s', (search, serving) => {
     expect(isSearchServing(snapshot(search))).toBe(serving);
-    expect(isShadowRunEnabled(snapshot(search))).toBe(shadowing);
   });
 
   it('routes backend search with data off to the search service, whose reads then fail', () => {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SearchError } from '@librechat/data-schemas';
 import type { SearchMethods, SearchPort } from '@librechat/data-schemas';
 import type { SearchContextRequest, SearchContextResponse } from './http/context';
 import type { SearchJobMethods, SearchJobRunner } from './jobs/runner';
@@ -10,6 +11,8 @@ import type { SearchHttpResponse } from './http/errors';
 import type { SearchConfigSnapshot } from './config';
 import type { SearchMetricsLogger } from './metrics';
 import type { SearchStatus } from './http/status';
+import type { ShareSearch } from './http/shares';
+import type { MeiliStatusDeps } from './meili';
 import { createSearchConfigSnapshot, isSearchDataOn } from './config';
 import { createSearchWriter, startSyncStatus } from './sync/writer';
 import { checkObserved, recordObserved } from './sync/observed';
@@ -18,10 +21,13 @@ import { createSearchMessagesRoute } from './http/messages';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchJobRunner } from './jobs/runner';
 import { createSearchContext } from './http/context';
+import { searchErrorResponse } from './http/errors';
 import { createSearchStatus } from './http/status';
+import { createShareSearch } from './http/shares';
 import { createSearchLease } from './sync/lease';
 import { createSearchService } from './service';
 import { createSearchMetrics } from './metrics';
+import { isSearchCursor } from './read/cursor';
 
 /** The longest a shutdown waits for the writer and runner before leaving the lease to expire. */
 const STOP_BOUND_MS = 5_000;
@@ -38,6 +44,8 @@ export interface BindSearchDeps {
   jwtSecret?: string;
   logger: SearchMetricsLogger;
   resolvePacks?: SearchServiceDeps['resolvePacks'];
+  /** Meilisearch as `/api/search/enable` sees it. Left out, `SEARCH` counts as off. */
+  meili?: MeiliStatusDeps;
 }
 
 /** What routes reach through `app.locals.search`: each only adds its call to one of these. */
@@ -58,7 +66,9 @@ export interface SearchBinding {
     cursor: unknown,
   ): Promise<SearchHttpResponse | null>;
   conversations: ConversationSearch;
+  shares: ShareSearch;
   enabled: SearchStatus['enabled'];
+  meta: SearchStatus['meta'];
   /** The running job runner, or `null` before packs load, or with search data off. */
   jobs(): SearchJobRunner | null;
   /** The running sync writer, or `null` before packs load, or with search data off. */
@@ -71,6 +81,7 @@ export interface SearchBinding {
  */
 export function bindSearch(deps: BindSearchDeps): SearchBinding {
   const { app, appConfig, methods, setSearchPort, jwtSecret = '', logger, resolvePacks } = deps;
+  const { meili = { env: {} } } = deps;
   const config = createSearchConfigSnapshot(appConfig);
   const metrics = createSearchMetrics(logger);
   const service = createSearchService({
@@ -81,8 +92,13 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
     cursorSecret: jwtSecret,
     ...(resolvePacks ? { resolvePacks } : {}),
   });
-  const route: SearchMessagesRoute = createSearchMessagesRoute({ service, methods, metrics });
-  const status = createSearchStatus({ service, methods, logger });
+  const route: SearchMessagesRoute = createSearchMessagesRoute({
+    service,
+    methods,
+    metrics,
+    logger,
+  });
+  const status = createSearchStatus({ service, methods, logger, meili });
   let jobs: SearchJobRunner | null = null;
   let writer: SearchWriter | null = null;
   let stopStatus: (() => void) | null = null;
@@ -175,12 +191,21 @@ export function bindSearch(deps: BindSearchDeps): SearchBinding {
       ]);
       clearTimeout(timer);
     },
-    messages: (req, res, query, cursor) =>
-      service.isServing()
-        ? route(createSearchContext(req, res), query, cursor)
-        : Promise.resolve(null),
+    messages: (req, res, query, cursor) => {
+      if (service.isServing()) {
+        return route(createSearchContext(req, res), query, cursor);
+      }
+      /* A new-search cursor here came from before a rollback: Meilisearch would read it as a date. */
+      return Promise.resolve(
+        isSearchCursor(cursor)
+          ? searchErrorResponse(new SearchError('search_cursor_invalid'))
+          : null,
+      );
+    },
     conversations: createConversationSearch({ service, metrics, logger }),
+    shares: createShareSearch({ service, metrics, logger }),
     enabled: status.enabled,
+    meta: status.meta,
     jobs: () => jobs,
     writer: () => writer,
   };

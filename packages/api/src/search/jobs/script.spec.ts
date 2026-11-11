@@ -1,8 +1,9 @@
 import type { SearchHarness } from '../__tests__/helpers/harness';
 import {
   createSearchHarness,
-  sourceMessage,
   sourceConversation,
+  sourceMessage,
+  searchConfig,
 } from '../__tests__/helpers/harness';
 import { formatSearchJobStatus, readSearchJobStatus, runSearchJobCommand } from './script';
 import { storeSources } from './__tests__/helpers/jobs';
@@ -12,16 +13,22 @@ describe('search-job script', () => {
   let harness: SearchHarness;
   const NOW = Date.parse('2026-06-01T12:00:00Z');
 
+  let appConfig: { search?: ReturnType<typeof searchConfig> };
+  const loadAppConfig = jest.fn(async () => appConfig);
+
   const run = async (...argv: string[]) => {
     const lines: string[] = [];
     const code = await runSearchJobCommand({
       argv,
       methods: harness.methods,
       print: (line) => lines.push(line),
+      loadAppConfig,
       now: () => NOW,
     });
     return { code, lines };
   };
+  const collections = async () =>
+    (await harness.database.connection.db!.listCollections().toArray()).map(({ name }) => name);
 
   beforeAll(async () => {
     harness = await createSearchHarness();
@@ -33,6 +40,8 @@ describe('search-job script', () => {
 
   beforeEach(async () => {
     await harness.reset();
+    appConfig = {};
+    loadAppConfig.mockClear();
   });
 
   it.each(['backfill', 'pause', 'resume', 'reconcile', 'verify'])(
@@ -49,12 +58,95 @@ describe('search-job script', () => {
     },
   );
 
-  it.each(['drop', 'nonsense', undefined])('rejects %s with usage', async (job) => {
+  it.each(['nonsense', undefined])('rejects %s with usage', async (job) => {
     const { code, lines } = await run(...(job ? [job] : []));
 
     expect(code).toBe(2);
     expect(lines.join()).toContain('Usage');
     expect(await harness.methods.listSearchJobRequests()).toHaveLength(0);
+  });
+
+  describe('drop', () => {
+    const SEARCH_COLLECTIONS = ['csearch', 'msearch', 'search_state', 'search_vocab'];
+
+    /* What the runbook leaves behind before a drop: the block kept, with search data off. */
+    beforeEach(() => {
+      appConfig = { search: searchConfig({ data: false, backend: 'meilisearch' }) };
+    });
+
+    it('runs in the script: removes the four collections and queues no request', async () => {
+      await storeSources(harness, 'messages', [sourceMessage({ text: 'kept' })]);
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(0);
+      expect(lines.join()).toContain('Dropped');
+      const names = await collections();
+      expect(names).toContain('messages');
+      expect(names.filter((name) => SEARCH_COLLECTIONS.includes(name))).toEqual([]);
+      expect(await harness.database.connection.db!.collection('messages').countDocuments()).toBe(1);
+    });
+
+    it('does nothing without --yes, and reads no config', async () => {
+      const { code, lines } = await run('drop');
+
+      expect(code).toBe(2);
+      expect(lines.join()).toContain('--yes');
+      expect(loadAppConfig).not.toHaveBeenCalled();
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses while search data is on', async () => {
+      appConfig = { search: searchConfig({ data: true }) };
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('search.data is true');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses while a process still holds the lease', async () => {
+      await harness.methods.writeSearchState('lease', { leaseUntil: new Date(NOW + 1000) });
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('holds the sync lease');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('refuses when the loaded configuration has no search block: a failed load looks the same', async () => {
+      appConfig = {};
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(1);
+      expect(lines.join()).toContain('no search block');
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
+
+    it('says so when there is nothing to drop, and creates nothing', async () => {
+      await harness.database.connection.db!.dropDatabase();
+
+      const { code, lines } = await run('drop', '--yes');
+
+      expect(code).toBe(0);
+      expect(lines.join()).toContain('Nothing to drop');
+      expect(await collections()).toEqual([]);
+    });
+
+    it('refuses when the configuration cannot be read', async () => {
+      const lines: string[] = [];
+      const code = await runSearchJobCommand({
+        argv: ['drop', '--yes'],
+        methods: harness.methods,
+        print: (line) => lines.push(line),
+      });
+
+      expect(code).toBe(1);
+      expect((await collections()).sort()).toEqual(SEARCH_COLLECTIONS);
+    });
   });
 
   it('writes no backfill request while a chain runs, and says why', async () => {

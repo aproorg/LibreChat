@@ -86,7 +86,7 @@ interface ChainStep {
 
 export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunner {
   const { config, methods, metrics, logger, service, now = Date.now } = deps;
-  const { batchSize, batchDelayMs, backfillOnStart } = config.jobs;
+  const { batchSize, batchDelayMs, vocabCopyBatchSize, backfillOnStart } = config.jobs;
   const lease: SearchLease =
     deps.lease ??
     createSearchLease({
@@ -119,6 +119,7 @@ export function createSearchJobRunner(deps: SearchJobRunnerDeps): SearchJobRunne
     const holds = () => !stopped && lease.isHeld() && lease.epoch() === epoch;
     return {
       batchSize,
+      copyBatchSize: vocabCopyBatchSize,
       holds,
       async check() {
         if (!holds()) {

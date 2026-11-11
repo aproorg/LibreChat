@@ -138,6 +138,7 @@ describeCheckpoint('Phase 4 checkpoint', () => {
       setSearchPort: db.setSearchPort,
       jwtSecret: 'test',
       logger,
+      meili: { env: { SEARCH: 'true' } },
     });
     await startSearchBackground(binding);
 

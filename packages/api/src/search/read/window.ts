@@ -1,9 +1,13 @@
 import { SearchError } from '@librechat/data-schemas';
+import type { SearchMethods } from '@librechat/data-schemas';
+import type { Analyzer } from '../analyzer/analyze';
+import type { SearchReadRunner } from './retry';
 import type { SearchTier } from '../metrics';
 import type { TieredRow } from './rank';
 import type { PlanRead } from './plan';
+import { proximityCandidates, rankHits, wordTiers } from './rank';
+import { readProximity } from './proximity';
 import { planBatches } from './plan';
-import { rankHits } from './rank';
 
 /** `/search`'s page (FR-013). */
 export const SEARCH_PAGE_SIZE = 25;
@@ -179,7 +183,8 @@ export const sharedReadSize = ({
   rankWindow: number;
   sidebarLimit: number;
 }) => ({
-  need: Math.max(SEARCH_PAGE_SIZE, sidebarLimit),
+  /* One past the page, so a read that fills it exactly still looks for what load-more owes. */
+  need: Math.max(SEARCH_PAGE_SIZE + 1, sidebarLimit),
   window: Math.max(rankWindow, SEARCH_PAGE_SIZE, sidebarLimit),
 });
 
@@ -187,46 +192,111 @@ export interface DeriveOptions {
   /** How many ranked rows this surface shows. */
   limit: number;
   rankWindow: number;
-  readConcurrency: number;
   lengthBucket: boolean;
+}
+
+export interface DerivedCandidates {
+  rows: TieredRow[];
+  tierReached: SearchTier;
+  /** Whether matches may exist beyond these rows: the replay stopped early, or a job was cut. */
+  more: boolean;
 }
 
 export interface DerivedHits {
   hits: TieredRow[];
   tierReached: SearchTier;
+  /** Whether load-more may find anything after `hits`. */
+  more: boolean;
+}
+
+/** What multi-word ranking reads: each candidate's tokens, and the top candidates' text. */
+export interface RankReads {
+  user: string;
+  run: SearchReadRunner;
+  methods: Pick<SearchMethods, 'readRecordTokens' | 'readMessageTexts'>;
+  analyzer: Pick<Analyzer, 'analyzeWord'>;
 }
 
 /**
- * One surface's answer, as a pure function of the read: replays the read's stop rule
- * at this surface's size, as if the read had been made for it, then ranks. Each job's
- * rows are newest first, so its first `window` rows are what a smaller read returns.
+ * One surface's candidates, as a pure function of the read: replays the read's stop
+ * rule at this surface's size, as if the read had been made for it. Each job's rows are
+ * newest first, so its first `window` rows are what a smaller read returns.
  */
-export function deriveRanked(read: PlanRead, options: DeriveOptions): DerivedHits {
-  const { limit, rankWindow, readConcurrency, lengthBucket } = options;
+export function deriveCandidates(
+  read: PlanRead,
+  { limit, rankWindow }: Pick<DeriveOptions, 'limit' | 'rankWindow'>,
+): DerivedCandidates {
   const window = Math.max(rankWindow, limit);
-  const { plan, rowsByJob } = read;
+  const { jobs, rowsByJob } = read;
   const seen = new Map<string, TieredRow>();
+  let more = false;
 
-  for (const batch of planBatches(plan, readConcurrency)) {
+  for (const batch of planBatches(jobs)) {
     if (seen.size >= limit) {
+      more = true;
       break;
     }
     for (const index of batch) {
-      for (const row of (rowsByJob[index] ?? []).slice(0, window)) {
+      const rows = rowsByJob[index] ?? [];
+      more = more || rows.length >= window;
+      for (const row of rows.slice(0, window)) {
         if (!seen.has(row._id)) {
-          seen.set(row._id, { ...row, tier: plan.jobs[index].tier });
+          seen.set(row._id, { ...row, tier: jobs[index].tier, stage: jobs[index].stage });
         }
       }
     }
   }
 
   const rows = [...seen.values()];
-  const hits = rankHits(rows, [plan.words[plan.driver]], { lengthBucket }).slice(0, limit);
   const tierReached = rows.reduce<SearchTier>(
     (lowest, { tier }) => (tierOrder(tier) > tierOrder(lowest) ? tier : lowest),
     'none',
   );
-  return { hits, tierReached };
+  return { rows, tierReached, more: more || rows.length > limit };
+}
+
+/**
+ * A surface's ranked rows without reading anything more. One word ranks fully. Several
+ * words rank by the stage and tier that found each row, which is all the sidebar needs:
+ * it shows conversations, not an order (R-08).
+ */
+export function deriveRanked(read: PlanRead, options: DeriveOptions): DerivedHits {
+  const { rows, tierReached, more } = deriveCandidates(read, options);
+  const hits = rankHits(rows, read.plan.words, { lengthBucket: options.lengthBucket });
+  return { hits: hits.slice(0, options.limit), tierReached, more };
+}
+
+/**
+ * `/search`'s ranked rows. A multi-word query also reads its candidates' tokens, in
+ * chunks, for each word's tier, and the top candidates' text for proximity (FR-011).
+ */
+export async function derivePage(
+  read: PlanRead,
+  options: DeriveOptions,
+  reads: RankReads,
+): Promise<DerivedHits> {
+  const { words } = read.plan;
+  const { rows, tierReached, more } = deriveCandidates(read, options);
+  if (words.length < 2 || rows.length === 0) {
+    const hits = rankHits(rows, words, { lengthBucket: options.lengthBucket });
+    return { hits: hits.slice(0, options.limit), tierReached, more };
+  }
+  const { user, run, methods, analyzer } = reads;
+  const records = await run((read_) =>
+    methods.readRecordTokens({ user, ids: rows.map(({ _id }) => _id) }, read_),
+  );
+  const masks = new Map(records.map(({ _id, tokens }) => [_id, wordTiers(words, tokens)]));
+  const ranking = { lengthBucket: options.lengthBucket, masks };
+  const proximity = await readProximity({
+    user,
+    rows: proximityCandidates(rows, words, ranking),
+    words,
+    analyzer,
+    run,
+    methods,
+  });
+  const hits = rankHits(rows, words, { ...ranking, proximity });
+  return { hits: hits.slice(0, options.limit), tierReached, more };
 }
 
 const TIER_ORDER: readonly SearchTier[] = ['none', 'exact', 'lemma', 'part', 'prefix', 'typo'];

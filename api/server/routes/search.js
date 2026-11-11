@@ -1,6 +1,4 @@
 const express = require('express');
-const { MeiliSearch } = require('meilisearch');
-const { isEnabled } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 
 const router = express.Router();
@@ -8,26 +6,11 @@ const router = express.Router();
 router.use(requireJwtAuth);
 
 router.get('/enable', async function (req, res) {
-  if (!isEnabled(process.env.SEARCH)) {
-    return res.send(false);
-  }
+  res.send((await req.app.locals.search?.enabled()) ?? false);
+});
 
-  const enabled = await req.app.locals.search?.enabled();
-  if (enabled != null) {
-    return res.send(enabled);
-  }
-
-  try {
-    const client = new MeiliSearch({
-      host: process.env.MEILI_HOST,
-      apiKey: process.env.MEILI_MASTER_KEY,
-    });
-
-    const { status } = await client.health();
-    return res.send(status === 'available');
-  } catch {
-    return res.send(false);
-  }
+router.get('/meta', async function (req, res) {
+  res.json((await req.app.locals.search?.meta()) ?? {});
 });
 
 module.exports = router;

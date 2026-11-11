@@ -3,10 +3,9 @@ import type { SearchErrorCode } from 'librechat-data-provider';
 
 /** Numbers, durations, stable codes, surface names and record IDs only (FR-020). */
 const SURFACES = ['messages', 'conversations', 'shares'] as const;
-const BACKENDS = ['meilisearch', 'shadow', 'search'] as const;
+const BACKENDS = ['meilisearch', 'search'] as const;
 const TIERS = ['none', 'exact', 'lemma', 'part', 'prefix', 'typo'] as const;
 const OUTCOME_STATES = ['ok', 'empty', 'partial', 'aborted'] as const;
-const SHADOW_STATES = ['ok', 'dropped', 'failed'] as const;
 const SKIP_CODES = ['read_failed', 'analyze_failed', 'write_failed', 'unknown'] as const;
 const LEASE_EVENTS = ['acquired', 'renewed', 'lost', 'released'] as const;
 const STOP_CODES = ['tenant_mismatch'] as const;
@@ -15,13 +14,6 @@ const PACK_STATES = ['loading', 'loaded', 'failed'] as const;
 const COLLECTIONS = ['messages', 'conversations'] as const;
 const BACKFILL_STATUSES = ['running', 'paused', 'finished', 'failed'] as const;
 const PAUSE_REASONS = ['operator', 'threshold'] as const;
-const PROBE_CHECKS = [
-  'temporary',
-  'subagent',
-  'tool_output',
-  'context_meta',
-  'other_user',
-] as const;
 
 const REALTEXT_FLUSH_MS = 60_000;
 
@@ -32,7 +24,6 @@ export type SearchOutcome = (typeof OUTCOME_STATES)[number] | SearchErrorCode;
 export interface SearchRequestEvent {
   surface: SearchSurface;
   backend: (typeof BACKENDS)[number];
-  detached: boolean;
   ms: number;
   reads?: number;
   rows?: number;
@@ -41,12 +32,6 @@ export interface SearchRequestEvent {
   coldAfterIdle?: boolean;
   isLargestUser?: boolean;
   outcome: SearchOutcome;
-}
-
-export interface SearchShadowEvent {
-  surface: SearchSurface;
-  state: (typeof SHADOW_STATES)[number];
-  dropped: boolean;
 }
 
 export interface SearchCursorErrorEvent {
@@ -122,11 +107,6 @@ export interface SearchBackfillEvent {
   pausedReason?: (typeof PAUSE_REASONS)[number];
 }
 
-export interface SearchProbeEvent {
-  check: (typeof PROBE_CHECKS)[number];
-  leak: boolean;
-}
-
 /** Reads one field. Answers `undefined`, dropping the field, for anything the contract forbids. */
 type Field<T> = (value: unknown) => T | undefined;
 
@@ -157,7 +137,6 @@ const packId = matching(/^[a-z][a-z0-9_]{0,15}$/);
 const REQUEST: FieldSpec<SearchRequestEvent> = {
   surface: oneOf(SURFACES),
   backend: oneOf(BACKENDS),
-  detached: flag,
   ms: count,
   reads: count,
   rows: count,
@@ -166,11 +145,6 @@ const REQUEST: FieldSpec<SearchRequestEvent> = {
   coldAfterIdle: flag,
   isLargestUser: flag,
   outcome: oneOf<SearchOutcome>([...OUTCOME_STATES, ...SEARCH_ERROR_CODES]),
-};
-const SHADOW: FieldSpec<SearchShadowEvent> = {
-  surface: oneOf(SURFACES),
-  state: oneOf(SHADOW_STATES),
-  dropped: flag,
 };
 const CURSOR_ERROR: FieldSpec<SearchCursorErrorEvent> = {
   surface: oneOf(SURFACES),
@@ -223,7 +197,6 @@ const BACKFILL: FieldSpec<SearchBackfillEvent> = {
   status: oneOf(BACKFILL_STATUSES),
   pausedReason: oneOf(PAUSE_REASONS),
 };
-const PROBE: FieldSpec<SearchProbeEvent> = { check: oneOf(PROBE_CHECKS), leak: flag };
 
 function pick<T>(spec: FieldSpec<T>, fields: unknown): Partial<T> {
   const source = (fields ?? {}) as Record<string, unknown>;
@@ -257,7 +230,6 @@ export interface SearchRealtext {
 
 export interface SearchMetrics {
   request(fields: SearchRequestEvent): void;
-  shadow(fields: SearchShadowEvent): void;
   cursorError(fields: SearchCursorErrorEvent): void;
   syncLag(fields: SearchSyncLagEvent): void;
   syncStatus(fields: SearchSyncStatusEvent): void;
@@ -270,7 +242,6 @@ export interface SearchMetrics {
   verify(fields: SearchVerifyEvent): void;
   pack(fields: SearchPackEvent): void;
   backfill(fields: SearchBackfillEvent): void;
-  probe(fields: SearchProbeEvent): void;
   realtext: SearchRealtext;
   flushRealtext(): void;
   /** Flushes `search.realtext` each minute. Returns the function that stops it. */
@@ -378,7 +349,6 @@ export function createSearchMetrics(logger: SearchMetricsLogger): SearchMetrics 
 
   return {
     request: emitter('info', 'search.request', REQUEST),
-    shadow: emitter('info', 'search.shadow', SHADOW),
     cursorError: emitter('warn', 'search.cursor_error', CURSOR_ERROR),
     syncLag: emitter('info', 'search.sync_lag', SYNC_LAG),
     syncStatus: emitter('info', 'search.sync_status', SYNC_STATUS),
@@ -391,7 +361,6 @@ export function createSearchMetrics(logger: SearchMetricsLogger): SearchMetrics 
     verify: emitter('info', 'search.verify', VERIFY),
     pack: emitter('info', 'search.pack', PACK),
     backfill: emitter('info', 'search.backfill', BACKFILL),
-    probe: emitter('info', 'search.probe', PROBE),
     realtext,
     flushRealtext,
     startRealtextFlush() {

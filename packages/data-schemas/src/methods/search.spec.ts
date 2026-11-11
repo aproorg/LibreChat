@@ -251,6 +251,108 @@ describe('search reads', () => {
         ),
       ).rejects.toThrow();
     });
+
+    it('leaves out rows holding an excluded token, beside every required word set', async () => {
+      await insertRecord(USER, 'word', 'plain', new Date('2026-01-01'));
+      await insertRecord(USER, 'word', 'excluded', new Date('2026-01-02'));
+      await database.connection
+        .db!.collection('msearch')
+        .updateOne({ messageId: 'excluded' }, { $push: { tokens: 'earlier' } } as never);
+
+      const rows = await methods.readRecordWindow(
+        { user: USER, tokens: ['word'], allOf: [['shared']], noneOf: ['earlier'], limit: 10 },
+        READ,
+      );
+
+      expect(rows.map(({ messageId }) => messageId)).toEqual(['plain']);
+      expect(finds('msearch')[0].filter).toEqual({
+        user: USER,
+        tokens: 'word',
+        $and: [{ tokens: { $in: ['shared'] } }, { tokens: { $nin: ['earlier'] } }],
+      });
+    });
+
+    it('bounds its dates: at or below the anchor, below `before`, above `after`', async () => {
+      for (const day of [1, 2, 3, 4, 5]) {
+        await insertRecord(USER, 'word', `day-${day}`, new Date(Date.UTC(2026, 0, day)));
+      }
+      const day = (value: number) => new Date(Date.UTC(2026, 0, value));
+      const read = (range: Parameters<SearchMethods['readRecordWindow']>[0]['range']) =>
+        methods
+          .readRecordWindow({ user: USER, tokens: ['word'], range, limit: 10 }, READ)
+          .then((rows) => rows.map(({ messageId }) => messageId));
+
+      expect(await read({ upTo: day(4) })).toEqual(['day-4', 'day-3', 'day-2', 'day-1']);
+      expect(await read({ before: day(4) })).toEqual(['day-3', 'day-2', 'day-1']);
+      expect(await read({ upTo: day(5), after: day(2) })).toEqual(['day-5', 'day-4', 'day-3']);
+      expect(await read({ before: day(4), after: day(1) })).toEqual(['day-3', 'day-2']);
+      expect(finds('msearch').every(({ hint }) => hint === 'user_tokens_created')).toBe(true);
+    });
+  });
+
+  describe('readRecordTies', () => {
+    const AT = new Date('2026-01-01T00:00:00Z');
+    /** A record's `_id` is its source's ObjectId, which is what a tie read pages by. */
+    const insertTie = async (user: string, messageId: string, createdAt: Date) => {
+      const { insertedId } = await insertRecord(user, 'word', messageId, createdAt);
+      return String(insertedId);
+    };
+
+    it('pages one date in `_id` order, and never another user or another date', async () => {
+      const ids: string[] = [];
+      for (const messageId of ['a', 'b', 'c', 'd']) {
+        ids.push(await insertTie(USER, messageId, AT));
+      }
+      await insertTie(USER, 'other-date', new Date('2026-01-02T00:00:00Z'));
+      await insertTie(OTHER, 'theirs', AT);
+
+      const first = await methods.readRecordTies(
+        { user: USER, tokens: ['word'], at: AT, limit: 3 },
+        READ,
+      );
+      const second = await methods.readRecordTies(
+        { user: USER, tokens: ['word'], at: AT, afterId: first[2]._id, limit: 3 },
+        READ,
+      );
+
+      expect(first.map(({ _id }) => _id)).toEqual([...ids].sort().slice(0, 3));
+      expect(second.map(({ _id }) => _id)).toEqual([...ids].sort().slice(3));
+      expect(first[0]).not.toHaveProperty('tokens');
+    });
+
+    it('sends singleBatch, the limit, maxTimeMS, the index hint and an `_id` sort', async () => {
+      await insertRecord(USER, 'word', 'one', AT);
+
+      await methods.readRecordTies(
+        { user: USER, tokens: ['word', 'other'], noneOf: ['earlier'], at: AT, limit: 5 },
+        READ,
+      );
+
+      expect(finds('msearch')[0]).toMatchObject({
+        filter: {
+          user: USER,
+          tokens: { $in: ['word', 'other'] },
+          $and: [{ tokens: { $nin: ['earlier'] } }],
+          createdAt: AT,
+        },
+        singleBatch: true,
+        batchSize: 5 + DRIVER_BATCH_MARGIN,
+        limit: 5,
+        maxTimeMS: 5000,
+        hint: 'user_tokens_created',
+      });
+      expect(finds('msearch')[0].sort).toEqual(new Map([['_id', 1]]));
+      expect(commands.filter(({ getMore }) => getMore != null)).toHaveLength(0);
+    });
+
+    it('requires a user, and reads nothing for no tokens', async () => {
+      await expect(
+        methods.readRecordTies({ user: '', tokens: ['word'], at: AT, limit: 1 }, READ),
+      ).rejects.toThrow();
+      expect(
+        await methods.readRecordTies({ user: USER, tokens: [], at: AT, limit: 1 }, READ),
+      ).toEqual([]);
+    });
   });
 
   describe('readRecordTokens', () => {
@@ -773,11 +875,80 @@ describe('search job methods', () => {
       ]);
       expect(await methods.readSearchVocabBatch({ afterId: 'new', limit: 10 })).toHaveLength(1);
 
-      await methods.settleSearchVocab({ copy: [{ token: 'old', df: 3 }], remove: ['new'] });
+      await collection('search_vocab').insertMany([
+        { _id: 'gone', df: 4, r: 2 },
+        { _id: 'never', df: 5 },
+        { _id: 'writer', df: 1, r: 3 },
+        { _id: 'zlater', df: 6 },
+      ] as never[]);
+
+      await methods.settleSearchVocab({
+        copy: [
+          { token: 'new', df: 1 },
+          { token: 'old', df: 3 },
+        ],
+        range: { upToId: 'writer' },
+        run: 3,
+      });
 
       expect(await methods.readSearchVocabBatch({ limit: 10 })).toEqual([
+        { token: 'new', df: 1, r: 3 },
         { token: 'old', df: 3, r: 3 },
+        { token: 'writer', df: 1, r: 3 },
+        { token: 'zlater', df: 6 },
       ]);
+    });
+
+    it('settles only inside its range, in one write', async () => {
+      await collection('search_vocab').insertMany([
+        { _id: 'a', df: 1 },
+        { _id: 'b', df: 1 },
+        { _id: 'c', df: 1 },
+      ] as never[]);
+      const bulkWrite = jest.spyOn(database.models.SearchVocab, 'bulkWrite');
+
+      await methods.settleSearchVocab({ copy: [], range: { afterId: 'a', upToId: 'b' }, run: 1 });
+
+      expect(bulkWrite).toHaveBeenCalledTimes(1);
+      expect(bulkWrite.mock.calls[0][1]).toMatchObject({ ordered: false });
+      expect((await methods.readSearchVocabBatch({ limit: 10 })).map(({ token }) => token)).toEqual(
+        ['a', 'c'],
+      );
+      bulkWrite.mockRestore();
+    });
+  });
+
+  describe('dropSearchCollections', () => {
+    it('removes the four search collections and leaves every other one', async () => {
+      await methods.ensureSearchCollections();
+      await collection('messages').insertOne({ messageId: 'kept' } as never);
+      await collection('search_other').insertOne({ kept: true } as never);
+
+      expect((await methods.dropSearchCollections()).sort()).toEqual(
+        [...SEARCH_COLLECTIONS].sort(),
+      );
+
+      const names = (await database.connection.db!.listCollections().toArray()).map(
+        ({ name }) => name,
+      );
+      expect(names).toEqual(expect.arrayContaining(['messages', 'search_other']));
+      for (const name of SEARCH_COLLECTIONS) {
+        expect(names).not.toContain(name);
+      }
+      expect(await collection('messages').countDocuments()).toBe(1);
+    });
+
+    it('answers nothing when no search collection exists, creating none', async () => {
+      await methods.dropSearchCollections();
+
+      expect(await methods.dropSearchCollections()).toEqual([]);
+
+      const names = (await database.connection.db!.listCollections().toArray()).map(
+        ({ name }) => name,
+      );
+      for (const name of SEARCH_COLLECTIONS) {
+        expect(names).not.toContain(name);
+      }
     });
   });
 });

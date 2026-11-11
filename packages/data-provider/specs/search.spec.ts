@@ -1,12 +1,6 @@
 import { BASE_ONLY_CONFIG_SECTIONS, configSchema, searchConfigSchema } from '../src/config';
 import { SEARCH_ERROR_CODES, SEARCH_REASONS } from '../src/types/search';
-import type {
-  SearchPanelCompareResponse,
-  SearchPanelVerdictRequest,
-  SearchErrorResponse,
-  SearchErrorCode,
-  SearchMeta,
-} from '../src/types/search';
+import type { SearchErrorResponse, SearchErrorCode, SearchMeta } from '../src/types/search';
 import type {
   ConversationListResponse,
   MessagesListResponse,
@@ -31,12 +25,12 @@ const CONTRACT_DEFAULTS = {
   statusCacheSeconds: 15,
   analysisCacheWords: 100000,
   meiliResyncPending: false,
-  jobs: { batchSize: 200, batchDelayMs: 1000, backfillOnStart: false },
+  jobs: { batchSize: 200, batchDelayMs: 1000, vocabCopyBatchSize: 5000, backfillOnStart: false },
   sync: { watch: 'database', dropUpdatedText: true },
   rank: { lengthBucket: true },
   prefix: { maxCommonReads: 4, maxRareTokens: 200, maxVocabRows: 50000 },
   typo: { maxCorrections: 8, maxVocabRows: 50000 },
-  shadow: { maxConcurrent: 4, panelRound: 1, panelUsers: [], largestUserId: '' },
+  largestUserId: '',
 };
 
 describe('search config schema', () => {
@@ -50,16 +44,20 @@ describe('search config schema', () => {
   });
 
   it('accepts the block through configSchema', () => {
-    const parsed = configSchema.parse({ version: '1.3.0', search: { backend: 'shadow' } });
-    expect(parsed.search?.backend).toBe('shadow');
+    const parsed = configSchema.parse({ version: '1.3.0', search: { backend: 'search' } });
+    expect(parsed.search?.backend).toBe('search');
   });
 
-  it.each(['meilisearch', 'shadow', 'search'])('accepts backend %s', (backend) => {
+  it.each(['meilisearch', 'search'])('accepts backend %s', (backend) => {
     expect(searchConfigSchema.safeParse({ backend }).success).toBe(true);
   });
 
-  it('rejects an unknown backend', () => {
-    expect(searchConfigSchema.safeParse({ backend: 'elastic' }).success).toBe(false);
+  it.each(['elastic', 'shadow'])('rejects backend %s', (backend) => {
+    expect(searchConfigSchema.safeParse({ backend }).success).toBe(false);
+  });
+
+  it('rejects the removed shadow block', () => {
+    expect(searchConfigSchema.safeParse({ shadow: { largestUserId: 'a' } }).success).toBe(false);
   });
 
   it.each([
@@ -68,7 +66,6 @@ describe('search config schema', () => {
     [{ rank: { unknownField: true } }],
     [{ prefix: { unknownField: 1 } }],
     [{ typo: { unknownField: 1 } }],
-    [{ shadow: { unknownField: 1 } }],
   ])('is strict at every level: %j', (block) => {
     expect(searchConfigSchema.safeParse(block).success).toBe(false);
   });
@@ -100,11 +97,18 @@ describe('search config schema', () => {
     ['prefix', 'maxVocabRows'],
     ['typo', 'maxCorrections'],
     ['typo', 'maxVocabRows'],
-    ['shadow', 'maxConcurrent'],
-    ['shadow', 'panelRound'],
   ])('requires %s.%s to be an integer of at least 1', (block, field) => {
     expect(searchConfigSchema.safeParse({ [block]: { [field]: 0 } }).success).toBe(false);
     expect(searchConfigSchema.safeParse({ [block]: { [field]: 1 } }).success).toBe(true);
+  });
+
+  it('bounds jobs.vocabCopyBatchSize, so one batch stays one bulk write', () => {
+    const parse = (vocabCopyBatchSize: number) =>
+      searchConfigSchema.safeParse({ jobs: { vocabCopyBatchSize } }).success;
+    expect(parse(0)).toBe(false);
+    expect(parse(1)).toBe(true);
+    expect(parse(50000)).toBe(true);
+    expect(parse(50001)).toBe(false);
   });
 
   it('caps rankWindow at 200, which bounds cursor size', () => {
@@ -139,13 +143,7 @@ describe('search API types', () => {
     const error: SearchErrorResponse = { code };
     const meta: SearchMeta = {
       attribution: { text: 'text', url: 'https://example.com' },
-      panel: { eligible: true },
     };
-    const compare: SearchPanelCompareResponse = {
-      meilisearch: { messages: [] },
-      search: { messages: [], state: 'dropped' },
-    };
-    const verdict: SearchPanelVerdictRequest = { verdict: 'equal', knownMissed: false };
     const conversations: ConversationListResponse = {
       conversations: [],
       nextCursor: null,
@@ -166,9 +164,7 @@ describe('search API types', () => {
     const empty: SearchMeta = {};
 
     expect(error.code).toBe('search_busy');
-    expect(meta.panel?.eligible).toBe(true);
-    expect(compare.search.state).toBe('dropped');
-    expect(verdict.knownMissed).toBe(false);
+    expect(meta.attribution?.url).toBe('https://example.com');
     expect(conversations.partial).toBe(true);
     expect(messages.reason).toBe('only_stop_words');
     expect(shares.reason).toBe('only_stop_words');

@@ -16,6 +16,7 @@ const cors = require('cors');
 const axios = require('axios');
 const express = require('express');
 const mongoose = require('mongoose');
+const { MeiliSearch } = require('meilisearch');
 const passport = require('passport');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
@@ -513,6 +514,7 @@ if (cluster.isMaster) {
       setSearchPort,
       jwtSecret: process.env.JWT_SECRET,
       logger,
+      meili: { env: process.env, MeiliSearch, models: mongoose.models },
     });
     /* Hands the sync lease over at once, so the next process need not wait out the takeover time. */
     registerShutdownTask('search background', () => app.locals.search.stopBackground(), {

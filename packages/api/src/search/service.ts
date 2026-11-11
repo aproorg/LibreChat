@@ -10,30 +10,41 @@ import type { SearchReason } from 'librechat-data-provider';
 import type { SearchMetrics, SearchRequestEvent, SearchSurface, SearchTier } from './metrics';
 import type { SearchPackResolution } from './languages/registry';
 import type { ReadGate, SearchReadRunner } from './read/retry';
+import type { PlanExpansions, PlanRead } from './read/plan';
 import type { AnalyzedQuery } from './analyzer/query';
 import type { SearchConfigSnapshot } from './config';
 import type { LanguagePack } from './languages/pack';
 import type { Analyzer } from './analyzer/analyze';
-import type { PlanRead } from './read/plan';
+import type { DerivedHits } from './read/window';
+import type { Expansion } from './read/tiers';
 import {
   createSharedRead,
+  derivePage,
   deriveRanked,
   estimatePlanReadBytes,
   SEARCH_PAGE_SIZE,
   SHARED_READ_TTL_MS,
   sharedReadSize,
 } from './read/window';
-import { isSearchDataOn, isSearchServing, isShadowRunEnabled } from './config';
 import { createReadGate, createReadRunner } from './read/retry';
 import { computeAnalyzerVersion } from './analyzer/version';
+import { isSearchDataOn, isSearchServing } from './config';
 import { resolveSearchPacks } from './languages/registry';
+import { createSearchCursorCodec } from './read/cursor';
 import { getSafeErrorMetadata } from '~/utils/errors';
 import { createSearchLimiter } from './read/limiter';
 import { createAnalyzer } from './analyzer/analyze';
+import { firstCursor, walkPage } from './read/page';
 import { SearchPackError } from './languages/pack';
 import { readTitleMatches } from './read/titles';
 import { analyzeQuery } from './analyzer/query';
 import { readSearchPlan } from './read/plan';
+import { expandPrefix } from './read/tiers';
+import { expandTypos } from './read/typo';
+
+/** Expansions are a few hundred short tokens; this bounds how many queries' worth are kept. */
+const SHARED_EXPANSION_BYTES = 4 * 1024 * 1024;
+const ESTIMATED_TOKEN_BYTES = 64;
 
 /** `coldAfterIdle` means the first search after this long with none (`contracts/telemetry.md`). */
 const COLD_AFTER_IDLE_MS = 30 * 60 * 1000;
@@ -43,7 +54,11 @@ export type SearchPackState = 'loading' | 'loaded' | 'failed';
 export type SearchServiceMethods = Pick<
   SearchMethods,
   | 'readVocabFrequencies'
+  | 'readVocabRange'
   | 'readRecordWindow'
+  | 'readRecordTies'
+  | 'readRecordTokens'
+  | 'readMessageTexts'
   | 'readConversationRecords'
   | 'getSearchableMessages'
   | 'getSearchHitConversations'
@@ -66,6 +81,8 @@ export interface SearchServiceDeps {
 
 export interface MessageSearchHits {
   hits: Array<Pick<SearchWindowRow, 'messageId' | 'conversationId'>>;
+  /** Non-null whenever more matches may exist, even after a short page (FR-013). */
+  nextCursor: string | null;
   words: number;
   tierReached: SearchTier;
   reads: number;
@@ -95,9 +112,11 @@ export interface SearchService extends SearchPort {
     /** Enabled packs, for the attribution the writer records (FR-043). */
     packs?: ReadonlyArray<Pick<LanguagePack, 'id' | 'attribution'>>;
   } | null;
-  /** A shadow run needs an analyzer with packs, so it is skipped in any other state. */
-  canRunShadow(): boolean;
-  searchMessages(ctx: SearchContext, query: string): Promise<MessageSearchHits | null>;
+  searchMessages(
+    ctx: SearchContext,
+    query: string,
+    cursor?: unknown,
+  ): Promise<MessageSearchHits | null>;
   /** A runner for one request's reads outside the shared read, under the same timeout. */
   requestRunner(ctx: SearchContext, surface: SearchSurface): SearchReadRunner;
   /** A sidebar search's figures, for its `search.request`. */
@@ -120,7 +139,16 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     sizeOf: estimatePlanReadBytes,
     now,
   });
+  const sharedExpansions = createSharedRead<Expansion>({
+    ttlMs: SHARED_READ_TTL_MS,
+    maxBytes: SHARED_EXPANSION_BYTES,
+    sizeOf: ({ tokens }) => tokens.length * ESTIMATED_TOKEN_BYTES,
+    now,
+  });
   const size = sharedReadSize(config);
+  const cursors = createSearchCursorCodec(deps.cursorSecret);
+  /** A multi-word page reads tokens and text to rank, once per shared read. */
+  const rankedPages = new WeakMap<PlanRead, DerivedHits>();
 
   let state: SearchPackState = 'loading';
   let analyzer: Analyzer | null = null;
@@ -231,6 +259,39 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       logger,
     });
 
+  /**
+   * A word's prefix or typo expansion, read once for the title and message reads of a
+   * search and for both surfaces that fire it. The first caller's runner makes the read.
+   */
+  const expansionsFor = (signal: AbortSignal, run: SearchReadRunner): PlanExpansions => {
+    const shared = async (
+      kind: 'prefix' | 'typo',
+      exact: string,
+      read: () => Promise<Expansion>,
+    ) => {
+      const key = JSON.stringify([getTenantId() ?? '', kind, exact]);
+      try {
+        return await sharedExpansions.get(key, signal, read);
+      } catch (error) {
+        /* The search that started the read left. This one is still waiting, so it reads. */
+        if (signal.aborted || !isSearchError(error) || error.code !== 'search_busy') {
+          throw error;
+        }
+        return sharedExpansions.get(key, signal, read);
+      }
+    };
+    return {
+      prefix: (exact) =>
+        shared('prefix', exact, () =>
+          expandPrefix(exact, config.prefix, { run, methods, realtext: metrics.realtext }),
+        ),
+      typos: (exact) =>
+        shared('typo', exact, () =>
+          expandTypos(exact, config.typo, { run, methods, realtext: metrics.realtext }),
+        ),
+    };
+  };
+
   /** Counts once against the cap, whichever surfaces wait on it (FR-015). */
   const readShared = async (
     ctx: SearchContext,
@@ -243,23 +304,29 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       ctx.signal,
       (signal) => {
         started = true;
-        return limiter.run(signal, (scope) =>
-          readSearchPlan({
+        return limiter.run(signal, (scope) => {
+          const run = createReadRunner({
+            surface,
+            signal: scope.signal,
+            deadline: scope.deadline,
+            gate: gateFor(ctx),
+            metrics,
+            logger,
+          });
+          return readSearchPlan({
             user: ctx.user,
             words,
             ...size,
             readConcurrency: config.readConcurrency,
             methods,
-            run: createReadRunner({
-              surface,
-              signal: scope.signal,
-              deadline: scope.deadline,
-              gate: gateFor(ctx),
-              metrics,
-              logger,
-            }),
-          }),
-        );
+            run,
+            prefix: config.prefix,
+            typo: config.typo,
+            expansions: expansionsFor(scope.signal, run),
+            realtext: metrics.realtext,
+            now,
+          });
+        });
       },
     );
     return { read, reads: started ? read.reads : 0, rows: started ? read.rows : 0 };
@@ -269,32 +336,98 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     deriveRanked(read, {
       limit,
       rankWindow: config.rankWindow,
-      readConcurrency: config.readConcurrency,
       lengthBucket: config.rank.lengthBucket,
     });
+
+  const firstPage = async (ctx: SearchContext, read: PlanRead): Promise<DerivedHits> => {
+    const ranked = rankedPages.get(read);
+    if (ranked) {
+      return ranked;
+    }
+    const page = await derivePage(
+      read,
+      {
+        limit: SEARCH_PAGE_SIZE,
+        rankWindow: config.rankWindow,
+        lengthBucket: config.rank.lengthBucket,
+      },
+      { user: ctx.user, run: requestRunner(ctx, 'messages'), methods, analyzer: readyAnalyzer() },
+    );
+    rankedPages.set(read, page);
+    return page;
+  };
+
+  /** Load-more reads directly: its position is its own, so there is nothing to share (R-08). */
+  const loadMore = async (
+    ctx: SearchContext,
+    query: string,
+    cursorText: unknown,
+  ): Promise<MessageSearchHits> => {
+    readyAnalyzer();
+    const scope = { user: ctx.user, query };
+    const cursor = cursors.decode(cursorText, scope);
+    const walked = await limiter.run(ctx.signal, (limited) => {
+      const run = createReadRunner({
+        surface: 'messages',
+        signal: limited.signal,
+        deadline: limited.deadline,
+        gate: gateFor(ctx),
+        metrics,
+        logger,
+      });
+      return walkPage({
+        user: ctx.user,
+        cursor,
+        pageSize: SEARCH_PAGE_SIZE,
+        rankWindow: config.rankWindow,
+        lengthBucket: config.rank.lengthBucket,
+        prefix: config.prefix,
+        run,
+        methods,
+        expansions: expansionsFor(limited.signal, run),
+        realtext: metrics.realtext,
+      });
+    });
+    return {
+      hits: walked.rows.map(({ messageId, conversationId }) => ({ messageId, conversationId })),
+      nextCursor: walked.cursor ? cursors.encode(walked.cursor, scope) : null,
+      words: cursor.plan.words.length,
+      tierReached: walked.rows.length ? walked.rows[walked.rows.length - 1].tier : 'none',
+      reads: walked.reads,
+      rows: walked.rowsRead,
+    };
+  };
 
   const emptyReason = ({ status }: AnalyzedQuery): { reason?: SearchReason } =>
     status === 'only_stop_words' ? { reason: 'only_stop_words' } : {};
 
-  const titles = (ctx: SearchContext, analyzed: AnalyzedQuery, surface: SearchSurface) =>
-    readTitleMatches({
+  const titles = (ctx: SearchContext, analyzed: AnalyzedQuery, surface: SearchSurface) => {
+    const run = requestRunner(ctx, surface);
+    return readTitleMatches({
       user: ctx.user,
       words: analyzed.words,
-      run: requestRunner(ctx, surface),
+      run,
       methods,
+      expansions: expansionsFor(ctx.signal, run),
     });
+  };
 
   async function searchMessages(
     ctx: SearchContext,
     query: string,
+    cursor?: unknown,
   ): Promise<MessageSearchHits | null> {
     if (!isSearchServing(config)) {
       return null;
+    }
+    if (cursor != null && cursor !== '') {
+      return loadMore(ctx, query, cursor);
     }
     const analyzed = analyze(query);
     if (analyzed.status !== 'ok') {
       return {
         hits: [],
+        nextCursor: null,
         words: 0,
         tierReached: 'none',
         reads: 0,
@@ -303,10 +436,11 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       };
     }
     const { read, reads, rows } = await readShared(ctx, analyzed, 'messages');
-    const { hits, tierReached } = derive(read, SEARCH_PAGE_SIZE);
+    const { hits, tierReached, more } = await firstPage(ctx, read);
     metrics.realtext.addTier(tierReached);
     return {
       hits: hits.map(({ messageId, conversationId }) => ({ messageId, conversationId })),
+      nextCursor: more ? cursors.encode(firstCursor(read, hits), { user: ctx.user, query }) : null,
       words: analyzed.words.length,
       tierReached,
       reads,
@@ -375,7 +509,6 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       state === 'loaded' && analyzer
         ? { analyzer, version: analyzerVersion, packs: loadedPacks }
         : null,
-    canRunShadow: () => isShadowRunEnabled(config) && state === 'loaded',
     searchMessages,
     conversationMatches,
     titleMatches,
@@ -385,7 +518,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       const at = now();
       const coldAfterIdle = lastRequestAt === null || at - lastRequestAt >= COLD_AFTER_IDLE_MS;
       lastRequestAt = at;
-      const { largestUserId } = config.shadow;
+      const { largestUserId } = config;
       return { coldAfterIdle, isLargestUser: largestUserId !== '' && user === largestUserId };
     },
   };

@@ -11,8 +11,8 @@ export interface SearchContextResponse {
 
 /**
  * What a search needs from its request. The user comes from the session and nowhere
- * else. A response that completed normally leaves the signal alone, so a detached run
- * outlives it; only a real disconnect fires it. Reads no config.
+ * else. A response that completed normally leaves the signal alone; only a real
+ * disconnect fires it. Reads no config.
  */
 export function createSearchContext(
   req: SearchContextRequest,

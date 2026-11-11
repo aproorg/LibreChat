@@ -7,6 +7,8 @@ export type JobOutcome = 'done' | JobStop;
 /** What every job checks between batches, so throttle, pause and lease live in one place. */
 export interface JobControl {
   readonly batchSize: number;
+  /** `jobs.vocabCopyBatchSize`: word list rows per batch in a rebuild's copy pass. */
+  readonly copyBatchSize: number;
   /** A reason to stop now, or `null`. */
   check(): Promise<JobStop | null>;
   /** Whether this process may still write. Checked again just before a batch's write. */

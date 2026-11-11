@@ -1,4 +1,5 @@
 export * from './config';
+export * from './meili';
 export * from './metrics';
 export * from './analyzer/analyze';
 export * from './analyzer/query';

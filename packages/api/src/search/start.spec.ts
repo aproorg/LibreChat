@@ -41,7 +41,7 @@ describe('search startup', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('with default config loads no pack and answers null everywhere', async () => {
+  it('with default config loads no pack and leaves every surface to today’s code', async () => {
     const resolvePacks = jest.fn();
     const { binding } = bind(undefined, { resolvePacks });
 
@@ -50,7 +50,8 @@ describe('search startup', () => {
     expect(resolvePacks).not.toHaveBeenCalled();
     expect(harness.logged.filter(({ event }) => event === 'search.pack')).toEqual([]);
     expect(binding.service.isServing()).toBe(false);
-    expect(await binding.enabled()).toBeNull();
+    expect(await binding.enabled()).toBe(false);
+    expect(await binding.meta()).toEqual({});
     expect(
       await binding.messages(
         { user: { id: 'user-a' } } as never,

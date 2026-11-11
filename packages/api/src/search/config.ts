@@ -41,8 +41,3 @@ export function isSearchDataOn(config: SearchConfigSnapshot): boolean {
 export function isSearchServing(config: SearchConfigSnapshot): boolean {
   return config.backend === 'search';
 }
-
-/** Meilisearch serves and the new search runs detached, which needs search data. */
-export function isShadowRunEnabled(config: SearchConfigSnapshot): boolean {
-  return config.backend === 'shadow' && config.data;
-}

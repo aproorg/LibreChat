@@ -59,8 +59,9 @@ describe('observed config', () => {
     expect(await stateOf(harness, 'observed')).toMatchObject({ backend: 'meilisearch' });
   });
 
-  it('from shadow to meilisearch invalidates too', async () => {
-    await restart({ backend: 'shadow', data: true });
+  it('a backend value an older release stored invalidates too', async () => {
+    await harness.methods.ensureSearchCollections();
+    await harness.methods.writeSearchState('observed', { backend: 'retired', data: true });
     await restart({ backend: 'meilisearch', data: true });
 
     expect(await invalidatedAt()).toEqual(new Date(clock));

@@ -1,38 +1,42 @@
 import type { SearchMethods, SearchWindowRow } from '@librechat/data-schemas';
+import type { Expansion, PrefixBudget, ReadTier, TierJob } from './tiers';
+import type { FrozenPlan, PlannedWord } from './frozen';
 import type { QueryWord } from '../analyzer/query';
+import type { SearchRealtext } from '../metrics';
 import type { SearchReadRunner } from './retry';
-import type { TierJob } from './tiers';
-import { buildTierJobs, READ_TIERS } from './tiers';
+import type { TypoBudget } from './typo';
+import { buildTierJobs, expandPrefix, RARE_DF, READ_TIERS } from './tiers';
+import { PLAN_BUDGET_BYTES, PLAN_SLOT_BYTES, planBytes } from './frozen';
+import { expandTypos } from './typo';
 
-export interface PlannedWord {
-  exact: string;
-  lemmas: string[];
-  parts: string[];
-  /** Word list count over the exact form and lemmas. */
-  df: number;
-  partDf: number;
+/** A read the plan ran. Jobs sharing a `batch` ran together. */
+export interface PlanJob extends TierJob {
+  /** How many trailing words were dropped: 0 requires every word (R-07). */
+  stage: number;
+  batch: number;
 }
 
-/**
- * What the read decided from one word list snapshot. Load-more needs the same
- * decisions on every page, so this stays plain data the cursor can carry (R-06).
- */
-export interface FrozenPlan {
-  words: PlannedWord[];
-  /** Index of the rarest word, whose tiers the read walks. */
-  driver: number;
-  jobs: TierJob[];
-}
-
-/** One search's read. `rowsByJob` lines up with the start of `plan.jobs`: a stopped read has fewer. */
+/** One search's read. `rowsByJob` lines up with `jobs`. */
 export interface PlanRead {
   plan: FrozenPlan;
+  jobs: PlanJob[];
   rowsByJob: SearchWindowRow[][];
   reads: number;
   rows: number;
+  /** When the read began. Load-more lets nothing newer in. */
+  startedAt: number;
 }
 
-export type PlanMethods = Pick<SearchMethods, 'readVocabFrequencies' | 'readRecordWindow'>;
+export type PlanMethods = Pick<
+  SearchMethods,
+  'readVocabFrequencies' | 'readVocabRange' | 'readRecordWindow'
+>;
+
+/** Word list expansions. The service shares them between a search's title and message reads. */
+export interface PlanExpansions {
+  prefix(exact: string): Promise<Expansion>;
+  typos(exact: string): Promise<Expansion>;
+}
 
 export interface ReadPlanOptions {
   user: string;
@@ -44,97 +48,317 @@ export interface ReadPlanOptions {
   readConcurrency: number;
   run: SearchReadRunner;
   methods: PlanMethods;
+  prefix: PrefixBudget;
+  typo: TypoBudget;
+  expansions?: PlanExpansions;
+  realtext?: Pick<
+    SearchRealtext,
+    'addPrefixFanout' | 'addVocabRowsTruncated' | 'addTypoSkippedWordExists'
+  >;
+  now?: () => number;
 }
 
-const wordTokens = ({ exact, lemmas, parts }: Pick<PlannedWord, 'exact' | 'lemmas' | 'parts'>) => [
+/** Every token a row may hold to count as matching this word. */
+export const wordTokens = ({ exact, lemmas, parts, prefix, typos }: PlannedWord): string[] => [
   exact,
   ...lemmas,
   ...parts,
+  ...(prefix ?? []),
+  ...(typos ?? []),
 ];
 
-const sum = (tokens: readonly string[], df: ReadonlyMap<string, number>) =>
-  tokens.reduce((total, token) => total + (df.get(token) ?? 0), 0);
+const matchCount = ({ df, partDf }: PlannedWord): number => df + partDf;
 
-function buildPlan(words: readonly QueryWord[], df: ReadonlyMap<string, number>): FrozenPlan {
-  const planned = words.map(({ exact, lemmas, parts }) => ({
-    exact,
-    lemmas,
-    parts,
-    df: sum([exact, ...lemmas], df),
-    partDf: sum(parts, df),
-  }));
-  const driver = planned.reduce(
-    (best, word, index) =>
-      word.df + word.partDf < planned[best].df + planned[best].partDf ? index : best,
+/** The words a stage requires: all of them, then all but the last, and so on. */
+export const stageWords = (plan: FrozenPlan, stage: number): PlannedWord[] =>
+  plan.words.slice(0, plan.words.length - stage);
+
+/** Index of the stage's rarest word, whose tiers the read walks. The first wins a tie. */
+export function stageDriver(plan: FrozenPlan, stage: number): number {
+  return stageWords(plan, stage).reduce(
+    (best, word, index, words) => (matchCount(word) < matchCount(words[best]) ? index : best),
     0,
   );
-  const { exact, lemmas, parts } = planned[driver];
-  const tokensByTier = { exact: [exact], lemma: lemmas, part: parts };
-  return {
-    words: planned,
-    driver,
-    jobs: READ_TIERS.flatMap((tier) => buildTierJobs(tier, tokensByTier[tier], df)),
-  };
 }
 
-/** A plan's jobs as indexes, in the batches the read runs them: tier by tier, `readConcurrency` at a time. */
-export function planBatches(plan: FrozenPlan, readConcurrency: number): number[][] {
-  const batches: number[][] = [];
-  for (const tier of READ_TIERS) {
-    const indexes = plan.jobs.flatMap((job, index) => (job.tier === tier ? [index] : []));
-    for (let start = 0; start < indexes.length; start += readConcurrency) {
-      batches.push(indexes.slice(start, start + readConcurrency));
+/** The stage's other words, each as the tokens that match it. */
+export const stageRest = (plan: FrozenPlan, stage: number): string[][] => {
+  const driver = stageDriver(plan, stage);
+  return stageWords(plan, stage)
+    .filter((_, index) => index !== driver)
+    .map(wordTokens);
+};
+
+/**
+ * A tier's tokens for a stage's driver. `undefined` means the prefix tier applies and
+ * has not been expanded yet. Only the last query word expands by prefix.
+ */
+export function tierTokens(plan: FrozenPlan, stage: number, tier: ReadTier): string[] | undefined {
+  const driver = stageDriver(plan, stage);
+  const word = plan.words[driver];
+  if (tier === 'exact') {
+    return [word.exact];
+  }
+  if (tier === 'lemma') {
+    return word.lemmas;
+  }
+  if (tier === 'part') {
+    return word.parts;
+  }
+  if (tier === 'prefix') {
+    return driver === plan.words.length - 1 ? word.prefix : [];
+  }
+  return word.typos ?? [];
+}
+
+/** A tier's jobs from the frozen split, as the read made them. */
+export function frozenTierJobs(plan: FrozenPlan, tier: ReadTier, tokens: readonly string[]) {
+  const df = new Map(plan.common.map((token, index) => [token, RARE_DF + 1 + index]));
+  return buildTierJobs(tier, tokens, df);
+}
+
+const commonTokens = (words: readonly PlannedWord[], df: ReadonlyMap<string, number>): string[] =>
+  [...new Set(words.flatMap(wordTokens))]
+    .map((token) => ({ token, df: df.get(token) ?? 0 }))
+    .filter((entry) => entry.df > RARE_DF)
+    .sort((a, b) => a.df - b.df)
+    .map(({ token }) => token);
+
+/**
+ * The longest run of expansions, most frequent first, whose plan still fits the cursor.
+ * Applied once, when they are frozen and before any row is served, so a word past the
+ * budget is outside it rather than lost between pages (R-06).
+ */
+export function fitPrefix(
+  words: readonly PlannedWord[],
+  index: number,
+  { tokens, df }: Expansion,
+  known: ReadonlyMap<string, number>,
+): string[] {
+  const merged = new Map([...known, ...df]);
+  const fits = (count: number): boolean => {
+    const candidate = words.map((word, at) =>
+      at === index ? { ...word, prefix: tokens.slice(0, count) } : word,
+    );
+    return (
+      planBytes({ words: candidate, common: commonTokens(candidate, merged) }) <= PLAN_BUDGET_BYTES
+    );
+  };
+  if (fits(tokens.length)) {
+    return tokens;
+  }
+  let low = 0;
+  let high = tokens.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle)) {
+      low = middle;
+    } else {
+      high = middle - 1;
     }
   }
-  return batches;
+  return tokens.slice(0, low);
+}
+
+/**
+ * Corrections, nearest first, as far as the plan still fits its slot in the cursor. They
+ * are frozen after the prefix budget is spent, which is why the slot is larger than it.
+ */
+export function fitTypos(
+  words: readonly PlannedWord[],
+  index: number,
+  { tokens, df }: Expansion,
+  known: ReadonlyMap<string, number>,
+): string[] {
+  const merged = new Map([...known, ...df]);
+  for (let count = tokens.length; count > 0; count -= 1) {
+    const candidate = words.map((word, at) =>
+      at === index ? { ...word, typos: tokens.slice(0, count) } : word,
+    );
+    if (
+      planBytes({ words: candidate, common: commonTokens(candidate, merged) }) <= PLAN_SLOT_BYTES
+    ) {
+      return tokens.slice(0, count);
+    }
+  }
+  return [];
+}
+
+/** Expansions read straight from the word list, where nothing shares them. */
+export const createPlanExpansions = ({
+  run,
+  methods,
+  prefix,
+  typo,
+  realtext,
+}: Pick<ReadPlanOptions, 'run' | 'prefix' | 'typo' | 'realtext'> & {
+  methods: Pick<SearchMethods, 'readVocabRange'>;
+}): PlanExpansions => ({
+  prefix: (exact) => expandPrefix(exact, prefix, { run, methods, realtext }),
+  typos: (exact) => expandTypos(exact, typo, { run, methods, realtext }),
+});
+
+/** The run's jobs as indexes, in the batches the read ran them. */
+export function planBatches(jobs: readonly PlanJob[]): number[][] {
+  const batches: number[][] = [];
+  jobs.forEach(({ batch }, index) => {
+    (batches[batch] ??= []).push(index);
+  });
+  return batches.filter(Boolean);
 }
 
 /**
  * Ported from `final/search.mjs`: document frequencies in one read, then tiers in
- * order, stopping once the page can fill. Rows stay grouped by job, so each surface
- * can replay the stop rule for its own size from the one read (R-08).
+ * order, stopping once the page can fill. All words are required first, and trailing
+ * words drop while the page cannot fill. Rows stay grouped by job, so each surface can
+ * replay the stop rule for its own size from the one read (R-08).
  */
 export async function readSearchPlan(options: ReadPlanOptions): Promise<PlanRead> {
-  const { user, words, need, window, readConcurrency, run, methods } = options;
-  const tokens = [...new Set(words.flatMap(wordTokens))];
+  const { user, words, need, window, readConcurrency, run, methods, realtext } = options;
+  const { now = Date.now } = options;
+  const expansions = options.expansions ?? createPlanExpansions(options);
+  const startedAt = now();
+
+  const tokens = [
+    ...new Set(words.flatMap(({ exact, lemmas, parts }) => [exact, ...lemmas, ...parts])),
+  ];
   const frequencies = await run((read) => methods.readVocabFrequencies(tokens, read));
   const df = new Map(frequencies.map(({ token, df: count }) => [token, count]));
-  const plan = buildPlan(words, df);
-  const allOf = plan.words.filter((_, index) => index !== plan.driver).map(wordTokens);
-
-  const rowsByJob: SearchWindowRow[][] = [];
-  const seen = new Set<string>();
+  const sum = (list: readonly string[]) =>
+    list.reduce((total, token) => total + (df.get(token) ?? 0), 0);
+  const planned: PlannedWord[] = words.map(({ exact, lemmas, parts }) => ({
+    exact,
+    lemmas,
+    parts,
+    df: sum([exact, ...lemmas]),
+    partDf: sum(parts),
+  }));
+  const plan: FrozenPlan = { words: planned, common: [] };
+  const last = planned.length - 1;
   let reads = 1;
   let rows = frequencies.length;
 
-  for (const batch of planBatches(plan, readConcurrency)) {
-    if (seen.size >= need) {
-      break;
+  const learn = (expansion: Expansion) => {
+    reads += 1;
+    rows += expansion.vocabRows ?? 0;
+    for (const [token, count] of expansion.df) {
+      df.set(token, count);
     }
-    const results = await Promise.all(
-      batch.map((index) =>
-        run((read) =>
-          methods.readRecordWindow(
-            {
-              user,
-              tokens: plan.jobs[index].tokens,
-              ...(allOf.length ? { allOf } : {}),
-              limit: window,
-            },
-            read,
+  };
+  const prefixFor = async (index: number) => {
+    const word = planned[index];
+    if (word.prefix) {
+      return;
+    }
+    const expansion = await expansions.prefix(word.exact);
+    learn(expansion);
+    word.prefix = fitPrefix(planned, index, expansion, df);
+    if (word.prefix.length < expansion.tokens.length) {
+      realtext?.addVocabRowsTruncated();
+    }
+  };
+  const typosFor = async (index: number) => {
+    const word = planned[index];
+    if (word.typos) {
+      return;
+    }
+    const expansion = await expansions.typos(word.exact);
+    learn(expansion);
+    word.typos = fitTypos(planned, index, expansion, df);
+  };
+
+  /* A word matching nothing gets its prefix (last word) or corrections before any AND is built. */
+  for (let index = 0; index <= last; index += 1) {
+    if (matchCount(planned[index]) > 0) {
+      continue;
+    }
+    if (index === last) {
+      await prefixFor(index);
+      if (planned[index].prefix?.length === 0) {
+        await typosFor(index);
+      }
+    } else {
+      await typosFor(index);
+    }
+  }
+  if (last > 0 && matchCount(planned[last]) <= RARE_DF) {
+    await prefixFor(last);
+  }
+
+  const jobs: PlanJob[] = [];
+  const rowsByJob: SearchWindowRow[][] = [];
+  const seen = new Set<string>();
+  let batch = 0;
+
+  const readTier = async (
+    stage: number,
+    tier: ReadTier,
+    tierTokenList: readonly string[],
+    allOf: string[][],
+  ) => {
+    const tierJobs = buildTierJobs(tier, tierTokenList, df);
+    for (let start = 0; start < tierJobs.length && seen.size < need; start += readConcurrency) {
+      const slice = tierJobs.slice(start, start + readConcurrency);
+      const results = await Promise.all(
+        slice.map((job) =>
+          run((read) =>
+            methods.readRecordWindow(
+              { user, tokens: job.tokens, ...(allOf.length ? { allOf } : {}), limit: window },
+              read,
+            ),
           ),
         ),
-      ),
-    );
-    reads += batch.length;
-    for (const result of results) {
-      rowsByJob.push(result);
-      rows += result.length;
-      for (const row of result) {
-        seen.add(row._id);
-      }
+      );
+      reads += slice.length;
+      slice.forEach((job, index) => {
+        jobs.push({ ...job, stage, batch });
+        rowsByJob.push(results[index]);
+        rows += results[index].length;
+        for (const row of results[index]) {
+          seen.add(row._id);
+        }
+      });
+      batch += 1;
+    }
+  };
+
+  for (let stage = 0; stage < planned.length; stage += 1) {
+    if (stage > 0 && seen.size >= need) {
+      break;
+    }
+    const driver = stageDriver(plan, stage);
+    const allOf = stageRest(plan, stage);
+    const word = planned[driver];
+    await readTier(stage, 'exact', [word.exact], allOf);
+    if (seen.size < need) {
+      await readTier(stage, 'lemma', word.lemmas, allOf);
+    }
+    if (seen.size < need) {
+      await readTier(stage, 'part', word.parts, allOf);
+    }
+    if (seen.size < need && driver === last) {
+      await prefixFor(driver);
+      await readTier(stage, 'prefix', word.prefix ?? [], allOf);
+    }
+    if (seen.size === 0) {
+      await typosFor(driver);
+      await readTier(stage, 'typo', word.typos ?? [], allOf);
     }
   }
 
-  return { plan, rowsByJob, reads, rows };
+  /*
+   * A word the tenant's word list holds gets no correction up front, so a misspelling that
+   * is itself a word can leave a query with nothing. Only the driving word is corrected
+   * late, as the reference does. This counts the searches where another word was not.
+   */
+  if (seen.size === 0 && planned.some((word) => !word.typos && matchCount(word) > 0)) {
+    realtext?.addTypoSkippedWordExists();
+  }
+
+  plan.common = commonTokens(planned, df);
+  return { plan, jobs, rowsByJob, reads, rows, startedAt };
 }
+
+export { READ_TIERS };
+
+export type { FrozenPlan, PlannedWord };

@@ -48,8 +48,14 @@ jest.mock('./utils', () => ({
   batchResetMeiliFlags: mockBatchResetMeiliFlags,
 }));
 
+/* The real rule is tested in `packages/api/src/search/meili.spec.ts`; loading the package here is slow. */
+const mockIsMeiliConfigured = jest.fn(
+  (env) => Boolean(env.MEILI_HOST) && Boolean(env.MEILI_MASTER_KEY),
+);
+
 jest.mock('@librechat/api', () => ({
   isEnabled: mockIsEnabled,
+  isMeiliConfigured: mockIsMeiliConfigured,
   FlowStateManager: jest.fn(),
 }));
 
@@ -629,5 +635,41 @@ describe('performSync() - syncThreshold logic', () => {
       '[indexSync] Message reconciliation failed; continuing with conversations:',
       cleanupError,
     );
+  });
+
+  test.each(['MEILI_HOST', 'MEILI_MASTER_KEY'])(
+    'does not start without %s, and reads nothing',
+    async (name) => {
+      delete process.env[name];
+
+      const indexSync = require('./indexSync');
+      await expect(indexSync()).resolves.toBeUndefined();
+
+      expect(mockIsMeiliConfigured).toHaveBeenCalledWith(process.env);
+      expect(mockGetLogStores).not.toHaveBeenCalled();
+      expect(mockMeiliHealth).not.toHaveBeenCalled();
+      expect(Message.getSyncProgress).not.toHaveBeenCalled();
+      expect(Conversation.getSyncProgress).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    },
+  );
+
+  test('starts with both variables set', async () => {
+    Message.getSyncProgress.mockResolvedValue({
+      totalProcessed: 1,
+      totalDocuments: 1,
+      isComplete: true,
+    });
+    Conversation.getSyncProgress.mockResolvedValue({
+      totalProcessed: 1,
+      totalDocuments: 1,
+      isComplete: true,
+    });
+
+    const indexSync = require('./indexSync');
+    await indexSync();
+
+    expect(mockMeiliHealth).toHaveBeenCalledTimes(1);
+    expect(Message.getSyncProgress).toHaveBeenCalledTimes(1);
   });
 });
