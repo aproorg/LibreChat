@@ -24,6 +24,13 @@ const favorites = createFavoriteRuntime(
   createPostgresFavoriteBackend,
 );
 
+/** Bound by the server entry points after config loads; this file runs at require time, before that. */
+let searchPort = null;
+const getSearchPort = () => searchPort;
+const setSearchPort = (port) => {
+  searchPort = port;
+};
+
 const methods = createMethods(mongoose, {
   toolFavorites: favorites.methods,
   matchModelName,
@@ -32,6 +39,7 @@ const methods = createMethods(mongoose, {
   getCache: getLogStores,
   getChannelStorageConfig: channelStorageConfig.getConfig,
   getMCPAppMessageBudget: messageBudget.getBudget,
+  getSearchPort,
 });
 
 const seedDatabase = async () => {
@@ -48,4 +56,5 @@ module.exports = {
   initializeMessageBudget: messageBudget.initialize,
   initializeChannelStorageConfig: channelStorageConfig.initialize,
   seedDatabase,
+  setSearchPort,
 };

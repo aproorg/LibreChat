@@ -3,6 +3,7 @@ export * from './azure';
 export * from './interface';
 export * from './memory';
 export * from './ocr';
+export * from './search';
 export * from './service';
 export * from './specs';
 export * from './turnstile';

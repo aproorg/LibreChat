@@ -254,6 +254,9 @@ router.get('/', async (req, res) => {
     tags = Array.isArray(req.query.tags) ? req.query.tags : [req.query.tags];
   }
 
+  const conversationSearch = req.app.locals.search?.conversations;
+  const searchContext = search ? conversationSearch?.context(req, res) : undefined;
+
   try {
     const { filters, error: filterError } = await resolveConversationListFilters(
       req.query,
@@ -274,9 +277,15 @@ router.get('/', async (req, res) => {
       sortDirection,
       projectId,
       ...filters,
+      searchContext,
     });
+    conversationSearch?.completed(searchContext, result);
     res.status(200).json(result);
   } catch (error) {
+    const searchFailure = conversationSearch?.failure(searchContext, error);
+    if (searchFailure) {
+      return res.status(searchFailure.status).json(searchFailure.body);
+    }
     logger.error('Error fetching conversations', error);
     res.status(500).json({ error: 'Error fetching conversations' });
   }

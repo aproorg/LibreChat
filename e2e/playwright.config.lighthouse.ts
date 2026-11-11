@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { lighthouseDatabaseEnv } from './lighthouse/database.cjs';
 import mockConfig from './playwright.config.mock';
 
 const latencyHook = path.resolve(__dirname, 'benchmarks/mongoose-latency-hook.cjs');
@@ -26,8 +27,7 @@ export default defineConfig({
       ENDPOINTS: 'openAI',
       OPENAI_MODELS: 'gpt-4o-mini',
       ASSISTANTS_API_KEY: '',
-      E2E_USE_MEMORY_MONGO: 'true',
-      E2E_LATENCY_MONGO_DELAY_MS: '250',
+      ...lighthouseDatabaseEnv(process.env.LIGHTHOUSE_MONGO_URI),
       NODE_OPTIONS: [
         server.env.NODE_OPTIONS,
         `--require=${latencyHook}`,

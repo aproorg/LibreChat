@@ -4,7 +4,10 @@ import { useRecoilValue } from 'recoil';
 import type { InfiniteQueryObserverResult } from '@tanstack/react-query';
 import type { ConversationListResponse } from 'librechat-data-provider';
 import type { List } from 'react-virtualized';
+import type { ReactNode } from 'react';
 import {
+  retrySearch,
+  getSearchErrorCode,
   useProjectsInfiniteQuery,
   useConversationsInfiniteQuery,
   usePinnedConversationsQuery,
@@ -23,6 +26,7 @@ import {
   useNavScrolling,
   useScrollFade,
 } from '~/hooks';
+import { SearchErrorState, SearchPartialState, SearchStopWordHint } from '~/components/Search';
 import { chatFacetParamsAtom, useFreshLocalDay } from '~/components/Conversations/facets';
 import ProjectsSection from '~/components/Conversations/ProjectsSection';
 import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
@@ -90,6 +94,7 @@ const ConversationsSection = memo(() => {
     isFetching,
     isPreviousData,
     isError,
+    error,
     refetch,
   } = useConversationsInfiniteQuery(
     {
@@ -107,6 +112,7 @@ const ConversationsSection = memo(() => {
       enabled: isAuthenticated,
       staleTime: 30000,
       cacheTime: 300000,
+      retry: retrySearch,
     },
   );
 
@@ -189,6 +195,23 @@ const ConversationsSection = memo(() => {
     search.isTyping ||
     (!!search.query && (isLoading || (isFetching && conversations.length === 0)));
 
+  /** The search states below exist only on the new search backend: the default one sends no
+   *  code, flag or reason, so each of these stays unset and the sidebar renders as before. */
+  const isShowingSearch = Boolean(search.query) && !isSearchLoading && !isPreviousData;
+  const searchErrorCode = isShowingSearch && isError ? getSearchErrorCode(error) : undefined;
+  const isPartialSearch = isShowingSearch && data?.pages.some((page) => page.partial === true);
+  const isStopWordSearch =
+    isShowingSearch && !isError && data?.pages[0]?.reason === 'only_stop_words';
+
+  /** With nothing to list, the state takes the list's place, so an outage or a query of
+   *  stop words is never also described as a search that matched nothing. */
+  let searchState: ReactNode = null;
+  if (conversations.length === 0 && searchErrorCode != null) {
+    searchState = <SearchErrorState code={searchErrorCode} onRetry={retryConversations} />;
+  } else if (conversations.length === 0 && isStopWordSearch) {
+    searchState = <SearchStopWordHint />;
+  }
+
   /** Projects, Pinned and Chats share one scroll container so the sidebar scrolls
    *  as a single surface: the chats list is virtualized against this viewport
    *  rather than scrolling inside a pane of its own. */
@@ -257,24 +280,28 @@ const ConversationsSection = memo(() => {
                   membershipUpdatedAt={pinnedUpdatedAt}
                 />
               )}
-              <Conversations
-                conversations={conversations}
-                moveToTop={moveToTop}
-                toggleNav={toggleNav}
-                containerRef={conversationsRef}
-                loadMoreConversations={loadMoreConversations}
-                isLoading={isFetchingNextPage || isLoading}
-                isSearchLoading={isSearchLoading || isPreviousData}
-                isChatsExpanded={isChatsExpanded}
-                setIsChatsExpanded={setIsChatsExpanded}
-                hasNextPage={computedHasNextPage}
-                isError={isError}
-                onRetry={retryConversations}
-                chatsHeaderTrailing={chatsHeaderTrailing}
-                accountHasProjects={scopeToUnassigned && hasProjects}
-                scrollViewport={scrollViewport}
-                scrollContent={scrollContent}
-              />
+              {isPartialSearch && <SearchPartialState className="mx-3 mb-2" />}
+              {searchState != null && <div className="px-3 py-2">{searchState}</div>}
+              {searchState == null && (
+                <Conversations
+                  conversations={conversations}
+                  moveToTop={moveToTop}
+                  toggleNav={toggleNav}
+                  containerRef={conversationsRef}
+                  loadMoreConversations={loadMoreConversations}
+                  isLoading={isFetchingNextPage || isLoading}
+                  isSearchLoading={isSearchLoading || isPreviousData}
+                  isChatsExpanded={isChatsExpanded}
+                  setIsChatsExpanded={setIsChatsExpanded}
+                  hasNextPage={computedHasNextPage}
+                  isError={isError}
+                  onRetry={retryConversations}
+                  chatsHeaderTrailing={chatsHeaderTrailing}
+                  accountHasProjects={scopeToUnassigned && hasProjects}
+                  scrollViewport={scrollViewport}
+                  scrollContent={scrollContent}
+                />
+              )}
             </div>
           </div>
           {/* The last row fades rather than being cut off, so a list that continues

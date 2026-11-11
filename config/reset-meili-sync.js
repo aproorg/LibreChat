@@ -6,6 +6,9 @@ const { askQuestion, silentExit } = require('./helpers');
 const connect = require('./connect');
 const { batchResetMeiliFlags } = require('~/db/utils');
 
+/** A one-off task has no TTY, so `--yes` answers both prompts and the script exits when done. */
+const skipPrompts = process.argv.includes('--yes');
+
 (async () => {
   await connect();
 
@@ -16,9 +19,9 @@ const { batchResetMeiliFlags } = require('~/db/utils');
   console.yellow('Use this when MeiliSearch data has been deleted or corrupted,');
   console.yellow('and you need to trigger a full re-synchronization.\n');
 
-  const confirm = await askQuestion(
-    'Are you sure you want to reset all MeiliSearch sync flags? (y/N): ',
-  );
+  const confirm = skipPrompts
+    ? 'y'
+    : await askQuestion('Are you sure you want to reset all MeiliSearch sync flags? (y/N): ');
 
   if (confirm.toLowerCase() !== 'y') {
     console.orange('Operation cancelled.');
@@ -64,7 +67,7 @@ const { batchResetMeiliFlags } = require('~/db/utils');
     console.purple('---------------------------------------\n');
 
     // Ask if user wants to see advanced options
-    const showAdvanced = await askQuestion('Show advanced options? (y/N): ');
+    const showAdvanced = skipPrompts ? 'n' : await askQuestion('Show advanced options? (y/N): ');
 
     if (showAdvanced.toLowerCase() === 'y') {
       console.cyan('\nAdvanced Options:');

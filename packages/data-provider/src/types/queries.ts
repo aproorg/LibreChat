@@ -2,6 +2,7 @@ import type { InfiniteData } from '@tanstack/react-query';
 import type { RerankerTypes, SearchProviders, ScraperProviders } from '../config';
 import type { FullToolCall } from '../previews';
 import type * as p from '../accessPermissions';
+import type { SearchReason } from './search';
 import type * as a from '../types/agents';
 import type * as s from '../schemas';
 import type { TFile } from './files';
@@ -66,6 +67,10 @@ export type MinimalConversation = Pick<
 export type ConversationListResponse = {
   conversations: MinimalConversation[];
   nextCursor: string | null;
+  /** Message search failed, so only title matches are shown. New search backend only. */
+  partial?: boolean;
+  /** New search backend only. */
+  reason?: SearchReason;
 };
 
 export type ConversationData = InfiniteData<ConversationListResponse>;
@@ -113,6 +118,8 @@ export type MessagesListParams = {
 export type MessagesListResponse = {
   messages: s.TMessage[];
   nextCursor: string | null;
+  /** New search backend only. */
+  reason?: SearchReason;
 };
 
 /** Locates one tool-call part. `toolCallId` disambiguates when the part moved. */
@@ -178,6 +185,8 @@ export interface SharedLinksResponse {
   links: SharedLinkItem[];
   nextCursor: string | null;
   hasNextPage: boolean;
+  /** New search backend only. */
+  reason?: SearchReason;
 }
 
 export interface SharedLinkQueryData {

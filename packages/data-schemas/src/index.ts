@@ -45,6 +45,7 @@ export type {
   StoredResponseRecord,
   StoredResponseStatus,
 } from './methods/response';
+export { isIndexableSource } from './models/plugins/indexable';
 export {
   createMethods,
   createToolFavoriteMethods,

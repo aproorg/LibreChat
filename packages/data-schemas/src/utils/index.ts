@@ -1,6 +1,7 @@
 export * from './principal';
 export * from './string';
 export * from './search';
+export * from './searchError';
 export * from './tempChatRetention';
 export * from './retention';
 export { tenantSafeBulkWrite } from './tenantBulkWrite';

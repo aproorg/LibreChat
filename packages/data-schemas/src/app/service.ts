@@ -24,6 +24,7 @@ import { loadMemoryConfig, isMemoryEnabled } from './memory';
 import { loadDefaultInterface } from './interface';
 import { loadTurnstileConfig } from './turnstile';
 import { agentsConfigSetup } from './agents';
+import { loadSearchConfig } from './search';
 import { loadWebSearchConfig } from './web';
 import { processModelSpecs } from './specs';
 import { loadEndpoints } from './endpoints';
@@ -208,6 +209,8 @@ export const AppService = async (params?: {
   const filters = loadFiltersConfig(config);
   const messageFilter = config.messageFilter;
   const langfuse = loadLangfuseConfig(config);
+  /** Absent stays absent, so the admin config responses that serialize this object don't change. */
+  const search = config.search === undefined ? undefined : loadSearchConfig(config);
 
   const defaultConfig = {
     ocr,
@@ -239,6 +242,7 @@ export const AppService = async (params?: {
     includedTools,
     filters,
     langfuse,
+    search,
     messageFilter,
     summarization,
     availableTools,

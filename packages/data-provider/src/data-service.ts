@@ -38,6 +38,7 @@ import type { TInsightsAccessResponse, TInsightsParams, TInsightsResponse } from
 import type { ScheduleMCPConsentView, ConfirmScheduleMCPConsent } from './types/scheduleConsent';
 import type { CodeSetupAttempt, CodeSetupApprovalRequest } from './codeSetup';
 import type { TFileConfig } from './file-config';
+import type { SearchMeta } from './types/search';
 import type * as tl from './types/tools';
 import type * as t from './types';
 import {
@@ -587,6 +588,10 @@ export function deletePreset(arg: s.TPreset | undefined): Promise<m.PresetDelete
 
 export function getSearchEnabled(): Promise<boolean> {
   return request.get(endpoints.searchEnabled());
+}
+
+export function getSearchMeta(): Promise<SearchMeta> {
+  return request.get(endpoints.searchMeta());
 }
 
 export function getUser(): Promise<t.TUser> {
@@ -1329,8 +1334,9 @@ export function clearAllConversations(): Promise<unknown> {
 
 export const listConversations = (
   params?: q.ConversationListParams,
+  signal?: AbortSignal,
 ): Promise<q.ConversationListResponse> => {
-  return request.get(endpoints.conversations(params ?? {}));
+  return request.get(endpoints.conversations(params ?? {}), signal ? { signal } : undefined);
 };
 
 export function getConversationById(id: string, signal?: AbortSignal): Promise<s.TConversation> {
@@ -1430,8 +1436,11 @@ export function genTitle(payload: m.TGenTitleRequest): Promise<m.TGenTitleRespon
   return request.get(endpoints.genTitle(payload.conversationId));
 }
 
-export const listMessages = (params?: q.MessagesListParams): Promise<q.MessagesListResponse> => {
-  return request.get(endpoints.messages(params ?? {}));
+export const listMessages = (
+  params?: q.MessagesListParams,
+  signal?: AbortSignal,
+): Promise<q.MessagesListResponse> => {
+  return request.get(endpoints.messages(params ?? {}), signal ? { signal } : undefined);
 };
 
 export function updateMessage(payload: t.TUpdateMessageRequest): Promise<unknown> {

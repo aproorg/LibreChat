@@ -48,6 +48,8 @@ export * from './auditLog';
 export * from './group';
 /* Config */
 export * from './config';
+/* Search */
+export * from './search';
 /* Admin */
 export * from './admin';
 /* Web */

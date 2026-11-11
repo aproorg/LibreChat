@@ -35,6 +35,7 @@ import type {
   ProjectFilesOptions,
 } from './file';
 import type { RoleMethods, RoleDeps } from './role';
+import type { SearchPort } from '~/types/search';
 import {
   createOpenIDRefreshFlightMethods,
   type OpenIDRefreshFlightMethods,
@@ -123,6 +124,7 @@ import {
   type AuditLogMethods,
 } from './auditLog';
 import { createShareMethods, type ShareMethods } from './share';
+import { createSearchMethods, type SearchMethods } from './search';
 /* Tier 1 — Simple CRUD */
 import { createActionMethods, type ActionMethods } from './action';
 import { createAssistantMethods, type AssistantMethods } from './assistant';
@@ -364,7 +366,8 @@ export type AllMethods = PermissionPrincipalStorage &
   ConfigMethods &
   PrincipalMethods &
   MCPAuthorityMethods &
-  InsightsMethods;
+  InsightsMethods &
+  SearchMethods;
 
 /** Dependencies injected from the api layer into createMethods */
 export interface CreateMethodsDeps {
@@ -385,6 +388,8 @@ export interface CreateMethodsDeps {
   getMCPAppMessageBudget?: () => Promise<number | undefined>;
   /** Recognizes agent skill IDs supplied by an external, non-database registry. */
   isExternalSkillId?: AgentDeps['isExternalSkillId'];
+  /** Returns the search service's port, or `null` until the server has bound it after config loads. */
+  getSearchPort?: () => SearchPort | null;
 }
 
 /**
@@ -432,6 +437,7 @@ export function createMethods(
     getMessages: messageMethods.getMessages,
     deleteMessages: messageMethods.deleteMessages,
     searchMessages: messageMethods.searchMessages,
+    getSearchPort: deps.getSearchPort,
     eraseAgentTriggerDeliveryConversationResults:
       agentTriggerDeliveryMethods.eraseAgentTriggerDeliveryConversationResults,
     prepareAgentTriggerConversationResultErasure:
@@ -590,7 +596,7 @@ export function createMethods(
     ...aclEntryMethods,
     ...systemGrantMethods,
     ...createAuditLogMethods(mongoose),
-    ...createShareMethods(mongoose),
+    ...createShareMethods(mongoose, { getSearchPort: deps.getSearchPort }),
     ...createPluginAuthMethods(mongoose),
     /* Tier 1 */
     ...actionMethods,
@@ -626,6 +632,8 @@ export function createMethods(
     ...createMCPAuthorityMethods(mongoose),
     /* Insights */
     ...createInsightsMethods(mongoose),
+    /* Search */
+    ...createSearchMethods(mongoose),
   };
 }
 
@@ -728,7 +736,32 @@ export type {
   MCPAuthorityConfigSourceDocument,
   MCPAuthorityCredentialSourceDocument,
   InsightsMethods,
+  SearchMethods,
 };
+export type {
+  SearchReadOptions,
+  SearchVocabFrequency,
+  SearchTieParams,
+  SearchWindowParams,
+  SearchWindowRange,
+  SearchWindowRow,
+  SearchRecordTokens,
+  SearchMessageText,
+  SearchableMessage,
+  SearchHitConversation,
+  SearchSourceCollection,
+  SearchSourceRow,
+  SearchSourceBatchParams,
+  SearchRecordBatchParams,
+  SearchRecordWriteResult,
+  SearchLeaseClaim,
+  SearchVocabBatchRow,
+  SearchStreamPosition,
+  SearchSourceEvent,
+  SearchStreamBatch,
+  WatchSearchSourcesParams,
+  SearchRecordStamp,
+} from './search';
 
 export { recordAgentEventActorReceiptMetric, setAgentEventActorReceiptMetricObserver };
 
