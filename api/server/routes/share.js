@@ -606,7 +606,7 @@ router.get('/', requireJwtAuth, async (req, res) => {
       params.sortBy,
       params.sortDirection,
       params.search,
-      searchContext,
+      ...(searchContext ? [searchContext] : []),
     );
     shareSearch?.completed(searchContext, result);
 
