@@ -7,9 +7,10 @@ Read once from the base config at process start ([R-19](../research.md#r-19-conf
 ```yaml
 search:
   data: false                # sync, backfill, packs. Off: no pack loaded, no new records, no attribution
-  backend: meilisearch       # meilisearch | shadow | search. The last two need data: true
+  backend: meilisearch       # meilisearch | search. `search` needs data: true
   languages: [is, en]
   languageDataDir: ''        # required when `is` is enabled; R-02
+  largestUserId: ''          # set in tenant config; only a boolean reaches logs
   sidebarLimit: 1000         # today's value
   rankWindow: 200            # max 200; bounds cursor size (R-06)
   readConcurrency: 2
@@ -26,6 +27,7 @@ search:
   jobs:
     batchSize: 200
     batchDelayMs: 1000
+    vocabCopyBatchSize: 5000 # word list rows per batch in a rebuild's copy pass; max 50000
     backfillOnStart: false   # the lease holder requests a backfill after startup if no chain has finished
   sync:
     watch: database          # database | collections: R-05's fallback opens one stream per source collection
@@ -39,11 +41,6 @@ search:
   typo:
     maxCorrections: 8
     maxVocabRows: 50000
-  shadow:
-    maxConcurrent: 4
-    panelRound: 1            # R-18
-    panelUsers: []           # user IDs, set in tenant config, never in this repository
-    largestUserId: ''        # set in tenant config; only a boolean reaches logs
 ```
 
 Validation: `.strict()`; integers with a minimum of 1; `languages` is a plain string array, checked by the service against registered packs ([contracts/language-pack.md](language-pack.md)). A cross-field check on `backend` and `data` logs a configuration error rather than failing startup (FR-019). Each field gets a doc comment, plus an entry in `librechat.example.yaml`, which carries only neutral defaults.

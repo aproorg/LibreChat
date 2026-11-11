@@ -6,7 +6,7 @@
 
 ## Summary
 
-Replace Meilisearch per tenant with search collections in the tenant's existing database. Node computes tokens through language packs (`is`, `en`). One sync writer in the API process follows database change events. Reads go tier by tier and stop once the page can fill. Backend selection (`meilisearch`, `shadow`, `search`) and a separate search data setting let each tenant move on numeric gates, with one-setting rollback until Meilisearch is removed. With default configuration, behaviour, data and API contracts stay as today.
+Replace Meilisearch per tenant with search collections in the tenant's existing database. Node computes tokens through language packs (`is`, `en`). One sync writer in the API process follows database change events. Reads go tier by tier and stop once the page can fill. Backend selection (`meilisearch`, `search`) and a separate search data setting let each tenant move on numeric gates, with one-setting rollback until Meilisearch is removed. Owner decision, 2026-11-10: no shadow backend, detached run, probes or review panel; tenants move on the quality tests (SC-001 to SC-004) and a live trial on the sandbox tenant. With default configuration, behaviour, data and API contracts stay as today.
 
 Decisions and their reasons are in [research.md](research.md). Shapes are in [data-model.md](data-model.md) and [contracts/](contracts/). How to prove each outcome is in [quickstart.md](quickstart.md).
 
@@ -94,12 +94,10 @@ packages/api/src/search/             # all new
 ├── languages/en/index.ts
 ├── languages/is/{index,foldTable,NOTICE.md}
 ├── read/{plan,tiers,typo,rank,proximity,cursor,page,window,titles,retry,limiter}.ts
-├── shadow/{runner,route,panel,probe}.ts
 ├── sync/{lease,stream,apply,extract,record,vocab,writer,observed}.ts
 ├── jobs/{runner,backfill,reconcile,vocabRebuild,verify,drop}.ts
-└── http/{context,messages,conversations,shares,status,errors,meili}.ts
+└── http/{context,messages,conversations,shares,status,errors}.ts
 packages/api/misc/search-quality/    # new, outside public CI: runner only; queries, corpus and pack data come by path
-packages/api/misc/search-live/       # new, outside public CI: writer and read checks on the sandbox
 e2e/playwright.config.lighthouse.ts  # LIGHTHOUSE_MONGO_URI option, for FR-031's clone run
 
 packages/data-provider/src/          # config.ts (`search` block), types, keys.ts, api-endpoints.ts, data-service.ts
@@ -108,11 +106,11 @@ api/server/routes/{messages,convos,share,search}.js   # calls into packages/api 
 api/models/index.js                                   # supplies getSearchPort to createMethods
 api/server/index.js, experimental.js                  # start the sync writer; start indexSync only when Meilisearch is configured
 api/server/index.js, experimental.js                  # create the service after config loads; bind the port; app.locals.search
-config/search-job.js                                  # new operator command: status, backfill, pause, resume, reconcile, verify, probe, panel, drop
+config/search-job.js                                  # new operator command: status, backfill, pause, resume, reconcile, verify, drop
 
-client/src/routes/Search.tsx                          # load-more, busy, stop-word, panel
+client/src/routes/Search.tsx                          # load-more, busy, stop-word
 client/src/components/Nav/SettingsTabs/About/          # attribution
-client/src/components/Search/                         # new: BusyState, FailedState, PartialState, StopWordHint, LoadMore, CursorRestart, ShadowPanel
+client/src/components/Search/                         # new: BusyState, FailedState, PartialState, StopWordHint, LoadMore, CursorRestart
 client/src/components/UnifiedSidebar/ConversationsSection.tsx  # partial, stop-word, busy and failed states
 client/src/components/Nav/SettingsTabs/General/ArchivedChatsTable.tsx # same states
 client/src/data-provider/queries.ts, packages/data-provider/src/data-service.ts # pass React Query's signal
@@ -126,23 +124,23 @@ specs/001-conversation-search/runbook.md              # new, generic: no tenant 
 
 ## Delivery order
 
-Mirrors §10. Code steps can merge dark because the default configuration leaves them unused.
+Mirrors §10, except where the owner decision of 2026-11-10 replaced the separate sandbox measurement and the shadow stage with a live trial on the sandbox tenant. Stage numbers are kept, because tasks name them. Code steps can merge dark because the default configuration leaves them unused.
 
 | Stage | Work | Exit |
 |---|---|---|
-| 0. Operator prework | Message counts, Azure database, private data copy (FR-031, FR-045) | Counts recorded. No tenant image holds the data until T146, which gates stages 8 and 9 |
-| 1. Sandbox | §10 step 3 on 8.0 and 5.0 planner v2, plus [R-05](research.md#r-05-what-the-sandbox-must-also-answer)'s additions, as scripts needing no application code | FR-031 stop rules read; defaults retuned in `contracts/config.md`; [R-17](research.md#r-17-if-the-sandbox-rules-out-change-streams) decided |
+| 0. Operator prework | Message counts, Azure database, private data copy (FR-031, FR-045) | Counts recorded. No tenant image holds the data until T146, which gates stage 8 |
+| 1. Sandbox | Cut as a separate stage (owner decision, 2026-11-10). Stage 7's trial answers §10 step 3 and [R-05](research.md#r-05-what-the-sandbox-must-also-answer) on the real code | See stage 7 |
 | 2. Engine | Runbook's upgrade section first. Clone trial, compat specs, lighthouse, pre-upgrade snapshots, rollout in batches, with FR-031's halt rule | Every awake AWS tenant on one engine; a hibernating tenant upgrades on wake-up |
 | 3. Analyzer and packs | US4 contract, `is`, `en`, parity | SC-016; FR-007 parity on the corpus |
 | 4. Storage and reads | US1 and US2 on `/search`, sidebar, shared links | SC-001 to SC-004 through the real read path |
 | 5. Sync, backfill, reconcile | Writer, lease, jobs; runbook's backfill section | Replica-set tests; live DocumentDB spec on the sandbox |
 | 6. Client and status | Load-more, states, attribution, `/enable` | Component tests, lighthouse |
-| 7. Shadow harness and runbook | Detached runner, panel, probes, metrics, alarms, remaining runbook sections | Quickstart scenarios on a non-production tenant; FR-046's cost recorded; after-removal rollback timed on a clone before stage 10 needs it |
-| 8. First live backfill | Entry: T146's image; scrape on and named queries working; alarms attached; two weeks of SC-008 and SC-012 baseline; FR-046's cost recorded; SC-001 to SC-004 passing. Then search data on, backfill, reconcile | Verification passed on the shadow tenant |
-| 9. Shadow | Entry: gate terms fixed. Two weeks on one tenant | SC-005 to SC-014 decided by the owner |
+| 7. Sandbox trial and runbook | Metrics, alarms, remaining runbook sections. Then the trial: the sandbox tenant, on DocumentDB 8.0, with a backfill, the sync writer and the new search serving | Quickstart scenarios on the sandbox tenant; FR-031 stop rules and the trial gate (SC-005 to SC-012) read by the owner; defaults retuned in `contracts/config.md`; [R-17](research.md#r-17-if-the-sandbox-rules-out-change-streams) decided; after-removal rollback timed on a clone before stage 10 needs it |
+| 8. First production backfill | Entry: the trial's verdict recorded; T146's image; scrape on and named queries working; alarms attached; two weeks of SC-008 and SC-012 baseline; FR-046's cost recorded; SC-001 to SC-004 passing. Then search data on, backfill, reconcile | Verification passed on the first production tenant |
+| 9. Shadow | Cut (owner decision, 2026-11-10) | None |
 | 10. Cutover and removal | Per-tenant entry: stage 8's checks, verified backfill, and SC-001 to SC-004 rerun if the analyzer or ranking changed (FR-034). Tenant by tenant, 30-day hold, removal | SC-015, SC-017 |
 
-Stages 3 to 7 hold the application code. Stages 0, 1, 2, 8, 9 and 10 are operator work. The runbook's release checklist (FR-031, FR-034, FR-040) applies to every release from stage 2 on. §10 orders stages 1 and 2 before tenant work, and the sandbox results feed stages 4 and 5, so stage 1 runs before those start.
+Stages 3 to 7 hold the application code. Stages 0, 2, 8 and 10, and stage 7's trial, are operator work. The runbook's release checklist (FR-031, FR-034, FR-040) applies to every release from stage 2 on. The trial's results can send stages 4 and 5 back for rework, and no production tenant starts before the owner has read them.
 
 ## Requirements map
 
@@ -156,8 +154,8 @@ Stages 3 to 7 hold the application code. Stages 0, 1, 2, 8, 9 and 10 are operato
 | FR-021, FR-022, FR-029 | schemas, `sync/extract.ts`, `isIndexableSource`, `getSearchableMessages` |
 | FR-023 to FR-025 | `sync/` |
 | FR-026 to FR-028 | `analyzer/version.ts`, `jobs/` |
-| FR-031, FR-038 to FR-040 | Operator: runbook, infrastructure repository, sandbox |
-| FR-032 to FR-037 | `shadow/`, runbook, `http/status.ts` |
+| FR-031, FR-038 to FR-040 | Operator: runbook, infrastructure repository, sandbox trial |
+| FR-034 to FR-037 | Runbook, `http/status.ts`, `sync/observed.ts`. FR-032 and FR-033 are withdrawn |
 | FR-041 | [contracts/config.md](contracts/config.md) |
 | FR-042, FR-043 | `client`, `/api/search/meta` |
 | FR-044, FR-045 | [R-02](research.md#r-02-language-data-delivery), `languages/is/NOTICE.md` |
@@ -165,8 +163,8 @@ Stages 3 to 7 hold the application code. Stages 0, 1, 2, 8, 9 and 10 are operato
 
 ## Main risks
 
-1. **Unmeasured on the target database.** Latency, TTL events, `singleBatch` and hints. Stage 1 settles them for little money before tenant work.
-2. **Multi-word paging is untested** (§5). [R-07](research.md#r-07-multi-word-paging) relies on a negated filter that DocumentDB must plan acceptably; stage 1 checks it.
+1. **Unmeasured on the target database.** Latency, TTL events, `singleBatch` and hints. The sandbox trial settles them before any production tenant.
+2. **Multi-word paging is untested** (§5). [R-07](research.md#r-07-multi-word-paging) relies on a negated filter that DocumentDB must plan acceptably; the trial checks it.
 3. **Paging differs from the evidence.** The reference cursor loses same-date rows, and bulk imports make them likely. [R-06](research.md#r-06-paging-model)'s frozen plan, windows and tie reads are new, so tests start from the real first page.
 4. **Shared read must give one first page.** The read is sized for the sidebar and the page for `/search`. [R-08](research.md#r-08-shared-read) derives the page by replaying the stop rule; a test pins it at both limits.
 5. **CPU in the API process.** Analysis takes about 1.4 ms per message in the reference. Backfill yields between messages and is throttled, and SC-008 aborts it.
@@ -176,7 +174,7 @@ Stages 3 to 7 hold the application code. Stages 0, 1, 2, 8, 9 and 10 are operato
 
 | Exception | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| Encrypted paging cursor | The frozen plan holds word list expansions that may name other users, and FR-029 allows no exposure but timing | Keeping expansions on the server would need shared storage of query-derived tokens, which FR-020 and FR-033 argue against |
+| Encrypted paging cursor | The frozen plan holds word list expansions that may name other users, and FR-029 allows no exposure but timing | Keeping expansions on the server would need shared storage of query-derived tokens, which FR-020 argues against |
 | Dynamic import of the `is` pack's library | FR-045 keeps it out of the public repository, so it cannot be a static dependency, and FR-046 requires no load when search data is off | A static import breaks public builds and loads 153 MB for tenants that have it off |
 | Dynamic import of the `en` pack's stemmer | FR-030 requires no pack loaded when search data is off, and a stemmer library is a pack | A static import loads it for every tenant, including the ones with search off |
 | An `e` writer epoch on search records, which the design does not have | FR-024 requires that a paused writer that lost its turn does no harm; the design assumed one consumer | Lease checks alone leave a window between check and write |
