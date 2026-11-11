@@ -1,3 +1,4 @@
+import type { SearchReason } from 'librechat-data-provider';
 import type { Types } from 'mongoose';
 import type { IMessage } from './message';
 
@@ -111,6 +112,8 @@ export interface SharedLinksResult {
   }>;
   nextCursor?: Date | string;
   hasNextPage: boolean;
+  /** Why a search on the new backend returned nothing, for the UI's hint (FR-012). */
+  reason?: SearchReason;
 }
 
 export interface SharedMessagesResult {

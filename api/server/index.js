@@ -8,6 +8,7 @@ const cors = require('cors');
 const axios = require('axios');
 const express = require('express');
 const mongoose = require('mongoose');
+const { MeiliSearch } = require('meilisearch');
 const passport = require('passport');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
@@ -61,6 +62,8 @@ const {
   waitForKeyvRedisClient,
   warnOnUnreachableDeliveryPaths,
   createCodeApiUploadRegistry,
+  bindSearch,
+  startSearchBackground,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const {
@@ -68,6 +71,7 @@ const {
   sweepOrphanedPreviews,
   getRoleByName,
   seedDatabase,
+  setSearchPort,
 } = require('~/models');
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
@@ -231,6 +235,19 @@ const startServer = async () => {
     logger.error('[sweepOrphanedPreviews] Background sweep failed:', err);
   });
   const appConfig = await getAppConfig({ baseOnly: true });
+  bindSearch({
+    app,
+    appConfig,
+    methods: agentEventMethods,
+    setSearchPort,
+    jwtSecret: process.env.JWT_SECRET,
+    logger,
+    meili: { env: process.env, MeiliSearch, models: mongoose.models },
+  });
+  /* Hands the sync lease over at once, so the next process need not wait out the takeover time. */
+  registerShutdownTask('search background', () => app.locals.search.stopBackground(), {
+    phase: 'pre-drain',
+  });
   registerBackgroundTaskShutdown({
     interruptGraceMs: appConfig?.endpoints?.agents?.backgroundTasks?.shutdownInterruptGraceMs,
   });
@@ -485,6 +502,9 @@ const startServer = async () => {
     } else {
       logger.info(`Server listening at http://${host == '0.0.0.0' ? 'localhost' : host}:${port}`);
     }
+
+    /* Un-awaited and outside the `try` below: a search failure must not exit the process. */
+    startSearchBackground(app.locals.search);
 
     /**
      * The listen callback is async, so any rejection from these awaits would

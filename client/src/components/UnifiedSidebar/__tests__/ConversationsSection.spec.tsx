@@ -38,8 +38,16 @@ const mockUseTitleGeneration = jest.fn(() => {
  *  guarantee below depends on. */
 const mockConversationsResult = {
   data: { pages: [{ conversations: [] as unknown[], nextCursor: null }] } as
-    | { pages: Array<{ conversations: unknown[]; nextCursor: string | null }> }
+    | {
+        pages: Array<{
+          conversations: unknown[];
+          nextCursor: string | null;
+          partial?: boolean;
+          reason?: string;
+        }>;
+      }
     | undefined,
+  error: null as unknown,
   fetchNextPage: jest.fn(),
   refetch: jest.fn(),
   isFetchingNextPage: false,
@@ -80,9 +88,15 @@ jest.mock('~/hooks', () => ({
   useGetConversation: () => () => null,
 }));
 
+const mockConversationsOptions = jest.fn();
+
 jest.mock('~/data-provider', () => ({
   __esModule: true,
-  useConversationsInfiniteQuery: () => mockConversationsResult,
+  ...jest.requireActual('~/data-provider/search'),
+  useConversationsInfiniteQuery: (_params: unknown, options: unknown) => {
+    mockConversationsOptions(options);
+    return mockConversationsResult;
+  },
   usePinnedConversationsQuery: () => mockPinnedResult,
   useTitleGeneration: () => mockUseTitleGeneration(),
   useGetEndpointsQuery: () => ({ data: {}, isLoading: false }),
@@ -472,5 +486,165 @@ describe('ConversationsSection shared scroll surface', () => {
     });
 
     expect(surface!.scrollTop).toBe(0);
+  });
+});
+
+/** A failed response as axios reports it: a status and, on the new backend, a body of `{ code }`. */
+const httpError = (status: number, code?: string) => ({
+  isAxiosError: true,
+  response: { status, data: code ? { code } : 'Error' },
+});
+
+const NEW_STATE_IDS = [
+  'search-busy-state',
+  'search-failed-state',
+  'search-partial-state',
+  'search-stop-word-hint',
+  'search-cursor-restart',
+];
+
+const expectNoSearchStates = () => {
+  for (const id of NEW_STATE_IDS) {
+    expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+  }
+};
+
+describe('ConversationsSection search states', () => {
+  const initial = { ...mockConversationsResult };
+
+  afterEach(() => {
+    Object.assign(mockConversationsResult, initial);
+    mockConversationsResult.refetch.mockClear();
+    mockConversationsOptions.mockClear();
+  });
+
+  it('announces a partial search and still lists the title matches', async () => {
+    mockConversationsResult.data = {
+      pages: [
+        {
+          conversations: [{ conversationId: 'chat-1', title: 'Title match' }],
+          nextCursor: null,
+          partial: true,
+        },
+      ],
+    };
+    renderSection('harbor');
+    await settleRenders();
+
+    const partial = screen.getByTestId('search-partial-state');
+    expect(partial).toHaveAttribute('role', 'status');
+    expect(partial).toHaveAttribute('aria-live', 'polite');
+    expect(partial).toHaveTextContent('com_ui_search_partial');
+    expect(screen.getByText('Title match')).toBeInTheDocument();
+  });
+
+  it('shows the stop-word hint in place of the empty list', async () => {
+    mockConversationsResult.data = {
+      pages: [{ conversations: [], nextCursor: null, reason: 'only_stop_words' }],
+    };
+    renderSection('the');
+    await settleRenders();
+
+    const hint = screen.getByTestId('search-stop-word-hint');
+    expect(hint).toHaveAttribute('role', 'status');
+    expect(hint).toHaveAttribute('aria-live', 'polite');
+    expect(screen.queryByTestId('conversations-stub')).not.toBeInTheDocument();
+  });
+
+  it('shows the busy state in place of the list, and retries on request', async () => {
+    mockConversationsResult.data = undefined;
+    mockConversationsResult.isError = true;
+    mockConversationsResult.error = httpError(503, 'search_busy');
+    renderSection('harbor');
+    await settleRenders();
+
+    const busy = screen.getByTestId('search-busy-state');
+    expect(busy).toHaveAttribute('role', 'status');
+    expect(busy).toHaveTextContent('com_ui_search_busy');
+    expect(screen.queryByTestId('conversations-stub')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'com_ui_retry' }));
+    expect(mockConversationsResult.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the failed state as an alert, so an outage never reads as no results', async () => {
+    mockConversationsResult.data = undefined;
+    mockConversationsResult.isError = true;
+    mockConversationsResult.error = httpError(500, 'search_failed');
+    renderSection('harbor');
+    await settleRenders();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('com_ui_search_failed');
+    expect(screen.queryByTestId('conversations-stub')).not.toBeInTheDocument();
+  });
+
+  it('does not retry a busy search at the query layer', async () => {
+    renderSection('harbor');
+    await settleRenders();
+
+    const { retry } = mockConversationsOptions.mock.calls[0][0] as {
+      retry: (failureCount: number, error: unknown) => boolean;
+    };
+    expect(retry(0, httpError(503, 'search_busy'))).toBe(false);
+    expect(retry(0, httpError(500))).toBe(true);
+    expect(retry(3, httpError(500))).toBe(false);
+  });
+
+  it('shows no search state while the search is still loading', async () => {
+    mockConversationsResult.data = {
+      pages: [{ conversations: [], nextCursor: null, partial: true, reason: 'only_stop_words' }],
+    };
+    mockConversationsResult.isPreviousData = true;
+    renderSection('harbor');
+    await settleRenders();
+
+    expectNoSearchStates();
+    expect(screen.getByTestId('search-spinner')).toBeInTheDocument();
+  });
+
+  describe('on the default backend (FR-041)', () => {
+    it('shows none of them for a search with results', async () => {
+      mockConversationsResult.data = {
+        pages: [
+          { conversations: [{ conversationId: 'chat-1', title: 'Match' }], nextCursor: null },
+        ],
+      };
+      renderSection('harbor');
+      await settleRenders();
+
+      expectNoSearchStates();
+      expect(screen.getByText('Match')).toBeInTheDocument();
+    });
+
+    it('shows none of them for a search with no results', async () => {
+      renderSection('harbor');
+      await settleRenders();
+
+      expectNoSearchStates();
+      expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
+    });
+
+    it("keeps today's list error and retry when a search fails without a code", async () => {
+      mockConversationsResult.data = undefined;
+      mockConversationsResult.isError = true;
+      mockConversationsResult.error = httpError(500);
+      renderSection('harbor');
+      await settleRenders();
+
+      expectNoSearchStates();
+      expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'com_ui_retry' })).toBeInTheDocument();
+    });
+
+    it('shows none of them outside a search, even if a list fails', async () => {
+      mockConversationsResult.data = undefined;
+      mockConversationsResult.isError = true;
+      mockConversationsResult.error = httpError(503, 'search_busy');
+      renderSection();
+      await settleRenders();
+
+      expectNoSearchStates();
+      expect(screen.getByTestId('conversations-stub')).toBeInTheDocument();
+    });
   });
 });

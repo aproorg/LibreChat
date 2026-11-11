@@ -4,6 +4,7 @@ import { Constants } from 'librechat-data-provider';
 import type { TStartupConfig } from 'librechat-data-provider';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useGetStartupConfig } from '~/data-provider';
+import Attribution from './Attribution';
 import { useLocalize } from '~/hooks';
 
 const UNKNOWN_PLACEHOLDER = '—';
@@ -112,6 +113,8 @@ function About() {
           {isCopied ? localize('com_ui_copied') : ''}
         </span>
       </div>
+
+      <Attribution />
     </div>
   );
 }

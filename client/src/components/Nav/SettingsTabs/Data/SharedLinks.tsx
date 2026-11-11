@@ -21,7 +21,13 @@ import {
 import type { SharedLinkItem, SharedLinksListParams } from 'librechat-data-provider';
 import type { SortingState, Updater } from '@tanstack/react-table';
 import type { TableColumn } from '@librechat/client';
-import { useDeleteSharedLinkMutation, useSharedLinksQuery } from '~/data-provider';
+import {
+  retrySearch,
+  getSearchErrorCode,
+  useSharedLinksQuery,
+  useDeleteSharedLinkMutation,
+} from '~/data-provider';
+import { SearchErrorState, SearchStopWordHint } from '~/components/Search';
 import { NotificationSeverity } from '~/common';
 import { useLocalize } from '~/hooks';
 import { formatDate } from '~/utils';
@@ -49,14 +55,36 @@ export default function SharedLinks() {
   const [deleteRow, setDeleteRow] = useState<SharedLinkItem | null>(null);
   const [queryParams, setQueryParams] = useState<SharedLinksListParams>(DEFAULT_PARAMS);
 
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, refetch, isLoading, isFetching } =
-    useSharedLinksQuery(queryParams, {
-      enabled: isOpen,
-      staleTime: 0,
-      cacheTime: 5 * 60 * 1000,
-      refetchOnWindowFocus: false,
-      refetchOnMount: false,
-    });
+  const {
+    data,
+    error,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+    isLoading,
+    isFetching,
+    isPreviousData,
+  } = useSharedLinksQuery(queryParams, {
+    enabled: isOpen,
+    staleTime: 0,
+    cacheTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: retrySearch,
+  });
+
+  /** New search backend only: the default one sends no code or reason, so both stay unset
+   *  and the table renders as before. */
+  const isShowingSearch = Boolean(queryParams.search) && !isFetching && !isPreviousData;
+  const searchErrorCode = isShowingSearch && isError ? getSearchErrorCode(error) : undefined;
+  const isStopWordSearch =
+    isShowingSearch && !isError && data?.pages[0]?.reason === 'only_stop_words';
+
+  const handleSearchRetry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   const handleFilterChange = useCallback((value: string) => {
     setQueryParams((prev) => ({
@@ -298,6 +326,10 @@ export default function SharedLinks() {
           <OGDialogHeader>
             <OGDialogTitle>{localize('com_nav_shared_links')}</OGDialogTitle>
           </OGDialogHeader>
+          {searchErrorCode != null && (
+            <SearchErrorState code={searchErrorCode} onRetry={handleSearchRetry} />
+          )}
+          {isStopWordSearch && <SearchStopWordHint />}
           <VirtualizedDataTable
             columns={columns}
             data={allLinks}

@@ -370,6 +370,23 @@ describe('createAdminConfigHandlers', () => {
   });
 
   describe('upsertConfigOverrides', () => {
+    it('strips the base-only search section from stored overrides', async () => {
+      const upsertConfig = jest.fn().mockResolvedValue({ _id: 'c1', configVersion: 1 });
+      const { handlers } = createHandlers({ upsertConfig });
+      const req = mockReq({
+        params: { principalType: 'role', principalId: 'admin' },
+        body: {
+          overrides: { interface: { modelSelect: false }, search: { backend: 'search' } },
+        },
+      });
+      const res = mockRes();
+
+      await handlers.upsertConfigOverrides(req, res);
+
+      expect(res.statusCode).toBe(201);
+      expect(JSON.stringify(upsertConfig.mock.calls[0])).not.toContain('"search"');
+    });
+
     it('returns 201 when creating a new config (configVersion === 1)', async () => {
       const { handlers } = createHandlers({
         upsertConfig: jest.fn().mockResolvedValue({ _id: 'c1', configVersion: 1 }),
@@ -1025,6 +1042,20 @@ describe('createAdminConfigHandlers', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body!.message).toBeDefined();
+      expect(deps.tombstoneConfigField).not.toHaveBeenCalled();
+    });
+
+    it('ignores tombstones for the base-only search section', async () => {
+      const { handlers, deps } = createHandlers();
+      const req = mockReq({
+        params: { principalType: 'role', principalId: 'admin' },
+        body: { fieldPath: 'search.backend' },
+      });
+      const res = mockRes();
+
+      await handlers.tombstoneConfigField(req, res);
+
+      expect(res.statusCode).toBe(200);
       expect(deps.tombstoneConfigField).not.toHaveBeenCalled();
     });
 

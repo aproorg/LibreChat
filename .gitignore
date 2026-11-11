@@ -193,3 +193,6 @@ scripts/activity-labels/results/
 !e2e/lighthouse/librechat.yaml
 /.lighthouse/
 /e2e/lighthouse/.test-results/
+
+# Private language data (FR-045)
+vendor/search-language/

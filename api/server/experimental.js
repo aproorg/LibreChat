@@ -16,6 +16,7 @@ const cors = require('cors');
 const axios = require('axios');
 const express = require('express');
 const mongoose = require('mongoose');
+const { MeiliSearch } = require('meilisearch');
 const passport = require('passport');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
@@ -70,12 +71,17 @@ const {
 } = require('./services/Schedules');
 const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/subagentThreadStore');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
-const { updateInterfacePermissions: updateInterfacePerms } = require('@librechat/api');
+const {
+  updateInterfacePermissions: updateInterfacePerms,
+  bindSearch,
+  startSearchBackground,
+} = require('@librechat/api');
 const {
   getRoleByName,
   updateAccessPermissions,
   seedDatabase,
   sweepOrphanedPreviews,
+  setSearchPort,
 } = require('~/models');
 const { checkMigrations } = require('./services/start/migration');
 const initializeMCPs = require('./services/initializeMCPs');
@@ -501,6 +507,19 @@ if (cluster.isMaster) {
     // principal) still merges DB `__base__` overrides, which must not drive which hook
     // modules load in every worker (matches api/server/index.js's baseOnly usage).
     const baseAppConfig = await getAppConfig({ baseOnly: true });
+    bindSearch({
+      app,
+      appConfig: baseAppConfig,
+      methods: agentEventMethods,
+      setSearchPort,
+      jwtSecret: process.env.JWT_SECRET,
+      logger,
+      meili: { env: process.env, MeiliSearch, models: mongoose.models },
+    });
+    /* Hands the sync lease over at once, so the next process need not wait out the takeover time. */
+    registerShutdownTask('search background', () => app.locals.search.stopBackground(), {
+      phase: 'pre-drain',
+    });
     registerBackgroundTaskShutdown({
       interruptGraceMs: baseAppConfig?.endpoints?.agents?.backgroundTasks?.shutdownInterruptGraceMs,
       getBudgetMs: clusterShutdownBudgetMs,
@@ -701,6 +720,9 @@ if (cluster.isMaster) {
        * swallow init failures and leave the worker listening but only
        * partially initialized.
        */
+      /* Un-awaited and outside the `try` below: a search failure must not exit the worker. */
+      startSearchBackground(app.locals.search);
+
       try {
         /** Initialize MCP servers and OAuth reconnection for this worker */
         await initializeMCPs();

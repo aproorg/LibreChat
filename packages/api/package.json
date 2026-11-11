@@ -32,8 +32,8 @@
     "build:watch": "npm run openapi:copy && tsdown --watch",
     "build:watch:prod": "npm run openapi:copy && tsdown --watch",
     "openapi:copy": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('openapi/agents.openapi.json','dist/agents.openapi.json')\"",
-    "test": "jest --coverage --watch --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
-    "test:ci": "jest --coverage --ci --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
+    "test": "jest --coverage --watch --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.|/misc/\"",
+    "test:ci": "jest --coverage --ci --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.|/misc/\"",
     "test:cache-integration:core": "jest --testPathPatterns=\"src/(cache|middleware)/.*\\.cache_integration\\.(spec|test)\\.ts$\" --coverage=false",
     "test:cache-integration:cluster": "jest --testPathPatterns=\"src/cluster/.*\\.cache_integration\\.(spec|test)\\.ts$\" --coverage=false --runInBand",
     "test:cache-integration:mcp": "jest --testPathPatterns=\"src/mcp/.*\\.cache_integration\\.(spec|test)\\.ts$\" --coverage=false",
@@ -41,6 +41,7 @@
     "test:cache-integration": "npm run test:cache-integration:core && npm run test:cache-integration:cluster && npm run test:cache-integration:mcp && npm run test:cache-integration:stream",
     "test:integration": "jest --testPathPatterns=\"\\.integration\\.(spec|test)\\.ts$\" --coverage=false --runInBand --forceExit",
     "test:s3-integration": "jest --testPathPatterns=\"src/storage/s3/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand",
+    "test:search-quality": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --config misc/search-quality/jest.config.mjs --coverage=false",
     "test:agents-integration": "jest --testPathPatterns=\"src/agents/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand --forceExit",
     "verify": "npm run test:ci",
     "b:clean": "bun run rimraf dist",
@@ -185,6 +186,7 @@
     "express-rate-limit": "^8.5.1",
     "helmet": "^8.3.0",
     "proxy-from-env": "^2.1.0",
-    "re2js": "^2.8.6"
+    "re2js": "^2.8.6",
+    "snowball-stemmers": "0.6.0"
   }
 }

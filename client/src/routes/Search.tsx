@@ -1,14 +1,22 @@
-import { memo, useCallback, useEffect, useMemo, useRef, type FC } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react';
 import { useAtomValue } from 'jotai';
 import throttle from 'lodash/throttle';
 import { useRecoilValue } from 'recoil';
+import { SEARCH_PAGE_SIZE } from 'librechat-data-provider';
 import { Spinner, useToastContext } from '@librechat/client';
 import { List, CellMeasurer, CellMeasurerCache } from 'react-virtualized';
+import type { SearchErrorCode, TMessage } from 'librechat-data-provider';
 import type { Index, ListRowProps } from 'react-virtualized';
-import type { TMessage } from 'librechat-data-provider';
+import {
+  retrySearch,
+  getSearchErrorCode,
+  useMessagesInfiniteQuery,
+  refetchSinglePage,
+} from '~/data-provider';
+import { SearchErrorState, SearchStopWordHint, SearchLoadMore } from '~/components/Search';
 import { useElementSize, useLocalize, useAuthContext } from '~/hooks';
 import SearchMessage from '~/components/Chat/Messages/SearchMessage';
-import { useMessagesInfiniteQuery } from '~/data-provider';
+import { getResponseStatus } from '~/utils/errors';
 import { useFileMapContext } from '~/Providers';
 import { fontSizeAtom } from '~/store/fontSize';
 import { cn } from '~/utils';
@@ -22,6 +30,21 @@ type MeasuredCellParent = {
 /** Fixed trailing spacer so the last result clears the bottom gradient/spinner
  *  overlay instead of sitting underneath it. */
 const FOOTER_HEIGHT = 64;
+
+/** How many thinned pages in a row are followed automatically before the user is asked. */
+const MAX_AUTO_FETCHES = 3;
+
+/** A proxy answers an over-long request line with this, which only a cursor can cause. */
+const URI_TOO_LONG = 414;
+
+type AutoFetchState = {
+  query: string;
+  count: number;
+  /** The page count the last fetch started from, so one page never triggers two. */
+  pages: number;
+  /** The user has pressed the button for this query, so it stays where their focus is. */
+  byUser: boolean;
+};
 
 /** Virtualized row wrapper that reports its measured height back to the cache.
  *  A ResizeObserver on the content re-measures when a row later grows or shrinks
@@ -90,15 +113,26 @@ export default function Search() {
 
   const {
     data: searchMessages,
+    error,
     isLoading,
     isError,
+    refetch,
+    remove,
     fetchNextPage,
     isFetchingNextPage,
     hasNextPage,
     isPreviousData,
   } = useMessagesInfiniteQuery(
     { search: searchQuery || undefined },
-    { enabled: isAuthenticated && !!searchQuery, staleTime: 30000, cacheTime: 300000 },
+    {
+      enabled: isAuthenticated && !!searchQuery,
+      staleTime: 30000,
+      cacheTime: 300000,
+      retry: retrySearch,
+      refetchOnWindowFocus: refetchSinglePage,
+      refetchOnMount: refetchSinglePage,
+      refetchOnReconnect: refetchSinglePage,
+    },
   );
 
   /** Stale-results window: `isTyping` clears the moment the debounce publishes
@@ -107,21 +141,113 @@ export default function Search() {
    *  and pagination, or the outgoing results look and page like the new search. */
   const showingStale = search.isTyping || isPreviousData;
 
-  const messages = useMemo(
-    () =>
-      searchMessages?.pages.flatMap((page) =>
-        page.messages.map((message) => {
-          if (!message.files || !fileMap) {
-            return message;
-          }
-          return {
-            ...message,
-            files: message.files.map((file) => fileMap[file.file_id ?? ''] ?? file),
-          };
-        }),
-      ) ?? [],
-    [fileMap, searchMessages?.pages],
-  );
+  /** A message edited between pages can match a later tier and come back, so a repeated
+   *  `messageId` is dropped here, in the same pass that resolves file previews. */
+  const messages = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: TMessage[] = [];
+    for (const page of searchMessages?.pages ?? []) {
+      for (const message of page.messages) {
+        if (message.messageId && seen.has(message.messageId)) {
+          continue;
+        }
+        seen.add(message.messageId);
+        if (!message.files || !fileMap) {
+          unique.push(message);
+          continue;
+        }
+        unique.push({
+          ...message,
+          files: message.files.map((file) => fileMap[file.file_id ?? ''] ?? file),
+        });
+      }
+    }
+    return unique;
+  }, [fileMap, searchMessages?.pages]);
+
+  const pageCount = searchMessages?.pages.length ?? 0;
+  const firstPage = searchMessages?.pages[0];
+  const lastPage = searchMessages?.pages[pageCount - 1];
+
+  /** A failure with pages already loaded and more to come is a later page's failure: the
+   *  results stay on screen and the next fetch retries from the same cursor. */
+  const isLaterPageError = isError && pageCount > 0 && hasNextPage === true;
+
+  const errorCode = useMemo<SearchErrorCode | undefined>(() => {
+    if (!isError) {
+      return undefined;
+    }
+    const code = getSearchErrorCode(error);
+    if (code != null) {
+      return code;
+    }
+    return isLaterPageError && getResponseStatus(error) === URI_TOO_LONG
+      ? 'search_cursor_invalid'
+      : undefined;
+  }, [isError, error, isLaterPageError]);
+
+  const [autoFetch, setAutoFetch] = useState<AutoFetchState>({
+    query: '',
+    count: 0,
+    pages: 0,
+    byUser: false,
+  });
+  const autoFetchCount = autoFetch.query === searchQuery ? autoFetch.count : 0;
+  const autoFetchPages = autoFetch.query === searchQuery ? autoFetch.pages : 0;
+  const isPagerHeld = autoFetch.query === searchQuery && autoFetch.byUser;
+
+  /** A page thinned by filtering may hold too little to scroll, and scrolling is the only
+   *  thing that pages this list, so the next page is fetched for the user, a few times. */
+  const isShortPage =
+    hasNextPage === true && lastPage != null && lastPage.messages.length < SEARCH_PAGE_SIZE;
+  /** Still pending while the page count has not moved since the last fetch, so the button
+   *  does not show for the moment before that fetch reports itself as running. */
+  const isAutoFetchPending =
+    isShortPage &&
+    !isError &&
+    !showingStale &&
+    (autoFetchCount < MAX_AUTO_FETCHES || autoFetchPages === pageCount);
+
+  useEffect(() => {
+    if (!isAutoFetchPending || isFetchingNextPage || autoFetchPages === pageCount) {
+      return;
+    }
+    setAutoFetch({
+      query: searchQuery,
+      count: autoFetchCount + 1,
+      pages: pageCount,
+      byUser: isPagerHeld,
+    });
+    void fetchNextPage();
+  }, [
+    isAutoFetchPending,
+    isFetchingNextPage,
+    autoFetchPages,
+    autoFetchCount,
+    isPagerHeld,
+    pageCount,
+    searchQuery,
+    fetchNextPage,
+  ]);
+
+  /** A user's own request for more, or for the failed page again, earns a new run of
+   *  automatic fetches after it. */
+  const handleLoadMore = useCallback(() => {
+    setAutoFetch({ query: searchQuery, count: 0, pages: pageCount, byUser: true });
+    void fetchNextPage();
+  }, [searchQuery, pageCount, fetchNextPage]);
+
+  const handleRetry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
+  /** Dropping the cached pages first makes this a new search from its first page, where a
+   *  plain refetch would walk every loaded page again. */
+  const handleRestart = useCallback(() => {
+    setAutoFetch({ query: searchQuery, count: 0, pages: 0, byUser: false });
+    remove();
+    void refetch();
+  }, [searchQuery, remove, refetch]);
 
   /** keyMapper reads a ref so the cache is created once and heights stay keyed
    *  to messageId (stable across pagination/reorders), not row index. */
@@ -217,14 +343,21 @@ export default function Search() {
     ({ stopIndex }: { stopIndex: number }) => {
       /** Don't page while the outgoing results are still mounted (typing, or the
        *  new query is still fetching and previous data is shown). */
-      if (showingStale || !hasNextPage || isFetchingNextPage) {
+      if (showingStale || !hasNextPage || isFetchingNextPage || isLaterPageError) {
         return;
       }
       if (stopIndex >= messages.length - 8) {
         throttledFetchNext();
       }
     },
-    [showingStale, hasNextPage, isFetchingNextPage, messages.length, throttledFetchNext],
+    [
+      showingStale,
+      hasNextPage,
+      isFetchingNextPage,
+      isLaterPageError,
+      messages.length,
+      throttledFetchNext,
+    ],
   );
 
   const rowRenderer = useCallback(
@@ -262,11 +395,13 @@ export default function Search() {
     [cache, messages.length],
   );
 
+  /** A coded failure has a state of its own. Anything else, which is every failure of the
+   *  default backend, keeps this toast. */
   useEffect(() => {
-    if (isError && searchQuery) {
+    if (isError && searchQuery && errorCode == null) {
       showToast({ message: 'An error occurred during search', status: 'error' });
     }
-  }, [isError, searchQuery, showToast]);
+  }, [isError, searchQuery, errorCode, showToast]);
 
   const resultsCount = messages.length;
   const resultsAnnouncement = useMemo(() => {
@@ -299,6 +434,62 @@ export default function Search() {
    *  new request, which would otherwise flash a false "nothing found". */
   if ((isLoading || showingStale) && !hasResults) {
     return loadingSpinner;
+  }
+
+  /** The control under the results: a restart when the cursor was rejected, a retry when a
+   *  later page failed, and otherwise the way to the next page once nothing is fetching it. */
+  let pager: React.ReactNode = null;
+  if (isLaterPageError && errorCode === 'search_cursor_invalid') {
+    pager = <SearchErrorState code={errorCode} onRestart={handleRestart} />;
+  } else if (isLaterPageError) {
+    pager = (
+      <SearchLoadMore
+        isError
+        isBusy={errorCode === 'search_busy'}
+        isLoading={isFetchingNextPage}
+        onLoadMore={handleLoadMore}
+      />
+    );
+  } else if (hasNextPage === true && !showingStale && (!isAutoFetchPending || isPagerHeld)) {
+    /** Stays mounted while its own page loads, and through the automatic fetches a press
+     *  earns after a short page, so keyboard focus is still on it afterwards. */
+    pager = (
+      <SearchLoadMore
+        onLoadMore={handleLoadMore}
+        isLoading={isFetchingNextPage || isAutoFetchPending}
+        hint={hasResults ? undefined : localize('com_ui_search_more_available')}
+      />
+    );
+  }
+
+  if (!hasResults && errorCode != null && !isLaterPageError) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center p-6">
+        <SearchErrorState
+          code={errorCode}
+          onRetry={handleRetry}
+          onRestart={handleRestart}
+          className="max-w-md"
+        />
+      </div>
+    );
+  }
+
+  if (!hasResults && pager != null) {
+    return <div className="absolute inset-0 flex items-center justify-center p-6">{pager}</div>;
+  }
+
+  /** Thinned pages are still being followed: more may come, so this is not yet "nothing found". */
+  if (!hasResults && (isAutoFetchPending || isFetchingNextPage)) {
+    return loadingSpinner;
+  }
+
+  if (!hasResults && firstPage?.reason === 'only_stop_words') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center p-6">
+        <SearchStopWordHint className="max-w-md" />
+      </div>
+    );
   }
 
   if (!hasResults) {
@@ -340,7 +531,10 @@ export default function Search() {
           style={{ outline: 'none' }}
         />
       </div>
-      {isFetchingNextPage && (
+      {pager != null && (
+        <div className="relative z-10 flex shrink-0 justify-center px-4 py-3">{pager}</div>
+      )}
+      {isFetchingNextPage && pager == null && (
         <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex justify-center py-4">
           <Spinner className="text-text-primary" />
         </div>

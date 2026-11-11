@@ -246,7 +246,7 @@ jobs:
           # Character classes instead of backslashes: these strings cross YAML->bash->jq and
           # every escape layer is a chance to ship a filter that silently matches nothing.
           emit api api ""
-          emit pkgapi packages/api 'integration|helper|__tests__/helpers/|manual[.]spec[.]'
+          emit pkgapi packages/api 'integration|helper|__tests__/helpers/|manual[.]spec[.]|misc/'
           emit dataprovider packages/data-provider ""
           emit dataschemas packages/data-schemas 'misc/|dist/|node_modules/'
           echo "decided=true" >> "$GITHUB_OUTPUT"
@@ -648,6 +648,53 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
           overwrite: true
+
+  test-search-language-stub:
+    # Its own job: test selection drops `misc/` from `test-packages-api`, so a push touching
+    # only these suites would otherwise skip them. Uses invented data, never the private one.
+    name: 'Tests: search language pack over invented data'
+    needs: [build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use Node.js 24.16.0
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24.16.0'
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            node_modules
+            api/node_modules
+            packages/api/node_modules
+            packages/data-provider/node_modules
+            packages/data-schemas/node_modules
+          key: node-modules-backend-${{ runner.os }}-24.16.0-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Download data-provider build
+        uses: actions/download-artifact@v7
+        with:
+          name: build-data-provider
+          path: packages/data-provider/dist
+
+      - name: Download data-schemas build
+        uses: actions/download-artifact@v7
+        with:
+          name: build-data-schemas
+          path: packages/data-schemas/dist
+
+      - name: Run suite
+        run: npm run -w @librechat/api test:search-quality -- misc/search-quality/is.pack misc/search-quality/scoring
 
   test-packages-api:
     name: 'Tests: @librechat/api (shard ${{ matrix.shard }}/4)'

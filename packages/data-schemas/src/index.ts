@@ -5,6 +5,7 @@ export * from './crypto';
 export * from './schema';
 export * from './utils';
 export { createModels } from './models';
+export { isIndexableSource } from './models/plugins/indexable';
 export {
   createMethods,
   CLIENT_MESSAGE_SELECT,

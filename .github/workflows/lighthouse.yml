@@ -35,6 +35,7 @@ jobs:
           node-version: '24.16.0'
           cache: npm
       - run: npm ci
+      - run: npm run test:lighthouse-database
       - run: npm run e2e:prepare
       - run: google-chrome --version
       - name: Audit serial database latency

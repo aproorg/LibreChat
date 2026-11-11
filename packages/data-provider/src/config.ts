@@ -62,7 +62,7 @@ export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'd
 /** How long a started social login may take to return to its callback before its `state` expires. */
 export const DEFAULT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-export const BASE_ONLY_CONFIG_SECTIONS = ['filters'] as const;
+export const BASE_ONLY_CONFIG_SECTIONS = ['filters', 'search'] as const;
 /** Sections that may be stored in the tenant's base config document but must
  * not be overridden or tombstoned by role, group, or user config documents. */
 export const BASE_PRINCIPAL_CONFIG_SECTIONS = ['langfuse'] as const;
@@ -3174,6 +3174,128 @@ export const openIdDiscoverySchema = z.object({
 
 export type TOpenIdDiscoveryConfig = z.infer<typeof openIdDiscoverySchema>;
 
+const searchLimit = (defaultValue: number) => z.number().int().min(1).default(defaultValue);
+
+/**
+ * The conversation search block, read once from the base config at process
+ * start. Omitted, the app behaves as it does without this feature. The config
+ * loader keeps raw config, so `loadSearchConfig` applies these defaults.
+ */
+export const searchConfigSchema = z
+  .object({
+    /** Runs sync, backfill and language packs. Off: no pack loaded, no new records, no attribution. */
+    data: z.boolean().default(false),
+    /** Which search serves users. `search` needs `data: true`. */
+    backend: z.enum(['meilisearch', 'search']).default('meilisearch'),
+    /** Enabled language pack IDs, checked by the service against registered packs. */
+    languages: z.array(z.string()).default(['is', 'en']),
+    /** Directory holding language data delivered outside this repository. Required for `is`. */
+    languageDataDir: z.string().default(''),
+    /** Most messages the sidebar reads for one search. */
+    sidebarLimit: searchLimit(1000),
+    /** Rows ranked per read window. The cap bounds the size of a paging cursor. */
+    /* At least a page: below it, load-more degenerates into thousands of tiny windows. */
+    rankWindow: z.number().int().min(25).max(200).default(200),
+    /** Most database reads one search runs at once. */
+    readConcurrency: searchLimit(2),
+    /**
+     * Most searches a process serves at once. Above it, a search fails as busy at once.
+     * One user holds at most half of it, and at least one.
+     */
+    maxConcurrentSearches: searchLimit(4),
+    /** Most query words used, counted after stop-word removal. At most 32: the words ride in load-more's cursor. */
+    queryWordLimit: z.number().int().min(1).max(32).default(10),
+    /** Time allowed for one search, in milliseconds. */
+    searchTimeoutMs: searchLimit(10000),
+    /** Seconds before another process takes over from a silent sync writer. */
+    syncTakeoverSeconds: searchLimit(30),
+    /** Seconds between word list flushes from the sync writer. */
+    vocabFlushSeconds: searchLimit(300),
+    /** Days between automatic reconcile runs. */
+    reconcileDays: searchLimit(30),
+    /** Total bytes of finished shared reads kept in memory, across all queries in a process. */
+    sharedReadMaxBytes: searchLimit(67108864),
+    /** Seconds the search status behind `/api/search/enable` stays cached. */
+    statusCacheSeconds: searchLimit(15),
+    /** Words held in the analyzer's LRU cache. Affects speed only. */
+    analysisCacheWords: searchLimit(100000),
+    /** Rollback after Meilisearch removal: hides search until its full sync has caught up. */
+    meiliResyncPending: z.boolean().default(false),
+    /** Throttle for backfill and repair jobs. */
+    jobs: z
+      .object({
+        /** Documents read per batch. */
+        batchSize: searchLimit(200),
+        /** Pause between batches, in milliseconds. */
+        batchDelayMs: searchLimit(1000),
+        /**
+         * Word list rows settled per batch at the end of a rebuild. Far above `batchSize`
+         * because a row is a token and two counts, and each batch is one read and one write.
+         */
+        vocabCopyBatchSize: z.number().int().min(1).max(50000).default(5000),
+        /**
+         * The lease holder requests a backfill after startup if no chain exists yet, so a
+         * deploy can start it. An unfinished chain resumes and a finished one stays finished.
+         * Off, a backfill starts only when an operator requests one.
+         */
+        backfillOnStart: z.boolean().default(false),
+      })
+      .strict()
+      .default({}),
+    /** How the sync writer reads changes. Both choices depend on the engine's change streams. */
+    sync: z
+      .object({
+        /**
+         * `database` opens one change stream on the database, filtered to the two source
+         * collections. `collections` opens one per collection, for an engine whose database
+         * stream misses collections that had change streams enabled one by one.
+         */
+        watch: z.enum(['database', 'collections']).default('database'),
+        /**
+         * Drops `content` and `text` from an update's changed fields, so an edit to a large
+         * message stays under the 16 MB event limit. Off for an engine that rejects the stage.
+         */
+        dropUpdatedText: z.boolean().default(true),
+      })
+      .strict()
+      .default({}),
+    /** Ranking switches. */
+    rank: z
+      .object({
+        /** Prefers shorter messages among equal matches. */
+        lengthBucket: z.boolean().default(true),
+      })
+      .strict()
+      .default({}),
+    /** Budgets for expanding the last query word as a prefix. */
+    prefix: z
+      .object({
+        /** Most separate reads for common expansions. */
+        maxCommonReads: searchLimit(4),
+        /** Most rare expansions in one read. */
+        maxRareTokens: searchLimit(200),
+        /** Most word list rows read for one expansion. */
+        maxVocabRows: searchLimit(50000),
+      })
+      .strict()
+      .default({}),
+    /** Budgets for correcting a word that matches nothing. */
+    typo: z
+      .object({
+        /** Most corrections tried for one word. At most 16: they ride in load-more's cursor. */
+        maxCorrections: z.number().int().min(1).max(16).default(8),
+        /** Most word list rows read for one correction. */
+        maxVocabRows: searchLimit(50000),
+      })
+      .strict()
+      .default({}),
+    /** User ID whose searches are flagged as the largest. Only a boolean reaches logs. */
+    largestUserId: z.string().default(''),
+  })
+  .strict();
+
+export type ConversationSearchConfig = z.infer<typeof searchConfigSchema>;
+
 /** Maximum CAS attempts per ACL document, including the initial attempt. */
 export const permissionWriteAttemptsSchema = z.number().int().min(1).max(100).default(3);
 
@@ -3184,6 +3306,8 @@ export const configSchema = z.object({
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   langfuse: langfuseConfigSchema.optional(),
+  /** Conversation search. Base config only, so no config document can change it. */
+  search: searchConfigSchema.optional(),
   memory: memorySchema.optional(),
   summarization: summarizationConfigSchema.optional(),
   skillSync: skillSyncConfigSchema,

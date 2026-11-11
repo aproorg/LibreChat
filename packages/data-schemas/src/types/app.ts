@@ -1,4 +1,5 @@
 import type {
+  ConversationSearchConfig,
   TEndpoint,
   FileStorage,
   TFileConfig,
@@ -70,6 +71,8 @@ export interface AppConfig {
   messageFilter?: TCustomConfig['messageFilter'];
   /** Langfuse tracing configuration */
   langfuse?: TCustomConfig['langfuse'];
+  /** Conversation search configuration, with defaults applied */
+  search?: ConversationSearchConfig;
   /** Skill sync configuration */
   skillSync?: SkillSyncConfig;
   /** File storage strategy ('local', 's3', 'firebase', 'azure_blob', 'cloudfront') */

@@ -8,6 +8,7 @@ import type {
   SortOrder,
   Types,
 } from 'mongoose';
+import type { SearchReason } from 'librechat-data-provider';
 import type { SearchParams } from 'meilisearch';
 import type {
   IAgentEventActorCheckpoint,
@@ -24,6 +25,7 @@ import type {
   ISharedLink,
   ISubagentThreadReservation,
 } from '~/types';
+import type { SearchContext, SearchPort, SearchPortMatches } from '~/types/search';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type { MessageMethods } from './message';
 import {
@@ -46,6 +48,7 @@ import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/
 import { isAgentFadingTier, isAgentFadingTierEntries } from '~/utils/fading';
 import { isCompactionSemanticIndexProjection } from '~/types/compaction';
 import { withoutMeiliIndexing } from '~/models/plugins/mongoMeili';
+import { isSearchError, SearchError } from '~/utils/searchError';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { decrementTagCounts } from './conversationTag';
@@ -334,8 +337,16 @@ export interface ConversationMethods {
       sortBy?: string;
       sortDirection?: string;
       projectId?: string;
+      /** Present when a search backend may serve this request. */
+      searchContext?: SearchContext;
     },
-  ): Promise<{ conversations: IConversation[]; nextCursor: string | null }>;
+  ): Promise<{
+    conversations: IConversation[];
+    nextCursor: string | null;
+    /** Message search failed, so only title matches are included. */
+    partial?: boolean;
+    reason?: SearchReason;
+  }>;
   getConvosQueried(
     user: string,
     convoIds: Array<{ conversationId: string }> | null,
@@ -554,6 +565,8 @@ export interface ConversationMethodDeps
     user: string,
     conversationIds: string[],
   ) => Promise<void>;
+  /** Returns the search service's port, or `null` until the server has bound it after config loads. */
+  getSearchPort?: () => SearchPort | null;
 }
 
 export function createConversationMethods(
@@ -2924,6 +2937,7 @@ export function createConversationMethods(
       sortBy = 'updatedAt',
       sortDirection = 'desc',
       projectId,
+      searchContext,
     }: {
       cursor?: string | null;
       limit?: number;
@@ -2934,6 +2948,7 @@ export function createConversationMethods(
       sortBy?: string;
       sortDirection?: string;
       projectId?: string;
+      searchContext?: SearchContext;
     } = {},
   ) {
     const Conversation = mongoose.models.Conversation as Model<IConversation> &
@@ -2971,46 +2986,72 @@ export function createConversationMethods(
     filters.push(getVisibleConversationRetentionFilter());
     filters.push(getHumanConversationFilter());
 
+    let searchAdditions: Pick<SearchPortMatches, 'partial' | 'reason'> = {};
     if (search) {
       try {
-        const searchParams: SearchParams = {
-          filter: `user = "${escapeMeiliFilterValue(user)}"`,
-          limit: MEILI_SEARCH_LIMIT,
-          attributesToRetrieve: ['conversationId', 'originalConversationId'],
-        };
-        const [convoResults, messageHits] = await Promise.all([
-          Conversation.meiliSearch(search, searchParams),
-          deps?.searchMessages
-            ? deps.searchMessages(search, searchParams).then(
-                (results) => (Array.isArray(results.hits) ? results.hits : []),
-                (error) => {
-                  logger.error(
-                    '[getConvosByCursor] Message search failed, using title matches only',
-                    error,
-                  );
-                  return [];
-                },
-              )
-            : [],
-        ]);
-        const matchingIds = new Set<string>();
-        for (const hit of convoResults.hits ?? []) {
-          if (typeof hit.conversationId === 'string') {
-            matchingIds.add(hit.conversationId);
+        /* `null` from the port means Meilisearch serves, and today's code below runs unchanged. */
+        const portMatches = searchContext
+          ? await Promise.resolve(
+              (deps?.getSearchPort?.() ?? null)?.conversationMatches(searchContext, search),
+            ).catch((portError: unknown) => {
+              /* Whatever the port throws is a failed search, and its text never reaches the log below. */
+              throw isSearchError(portError) ? portError : new SearchError('search_failed');
+            })
+          : null;
+        if (portMatches) {
+          searchAdditions = {
+            ...(portMatches.partial ? { partial: true } : {}),
+            ...(portMatches.reason ? { reason: portMatches.reason } : {}),
+          };
+          if (!portMatches.conversationIds.length) {
+            return { conversations: [], nextCursor: null, ...searchAdditions };
           }
-        }
-        for (const hit of messageHits) {
-          if (typeof hit.conversationId === 'string') {
-            matchingIds.add(hit.conversationId);
+          filters.push({
+            conversationId: { $in: portMatches.conversationIds },
+          } as FilterQuery<IConversation>);
+        } else {
+          const searchParams: SearchParams = {
+            filter: `user = "${escapeMeiliFilterValue(user)}"`,
+            limit: MEILI_SEARCH_LIMIT,
+            attributesToRetrieve: ['conversationId', 'originalConversationId'],
+          };
+          const [convoResults, messageHits] = await Promise.all([
+            Conversation.meiliSearch(search, searchParams),
+            deps?.searchMessages
+              ? deps.searchMessages(search, searchParams).then(
+                  (results) => (Array.isArray(results.hits) ? results.hits : []),
+                  (error) => {
+                    logger.error(
+                      '[getConvosByCursor] Message search failed, using title matches only',
+                      error,
+                    );
+                    return [];
+                  },
+                )
+              : [],
+          ]);
+          const matchingIds = new Set<string>();
+          for (const hit of convoResults.hits ?? []) {
+            if (typeof hit.conversationId === 'string') {
+              matchingIds.add(hit.conversationId);
+            }
           }
+          for (const hit of messageHits) {
+            if (typeof hit.conversationId === 'string') {
+              matchingIds.add(hit.conversationId);
+            }
+          }
+          if (!matchingIds.size) {
+            return { conversations: [], nextCursor: null };
+          }
+          filters.push({
+            conversationId: { $in: [...matchingIds] },
+          } as FilterQuery<IConversation>);
         }
-        if (!matchingIds.size) {
-          return { conversations: [], nextCursor: null };
-        }
-        filters.push({
-          conversationId: { $in: [...matchingIds] },
-        } as FilterQuery<IConversation>);
       } catch (error) {
+        if (isSearchError(error)) {
+          throw error;
+        }
         logger.error('[getConvosByCursor] Error during meiliSearch', error);
         throw new Error('Error during meiliSearch');
       }
@@ -3157,7 +3198,7 @@ export function createConversationMethods(
 
       await attachSharedFlags(user, convos);
 
-      return { conversations: convos, nextCursor };
+      return { conversations: convos, nextCursor, ...searchAdditions };
     } catch (error) {
       logger.error('[getConvosByCursor] Error getting conversations', error);
       throw new Error('Error getting conversations');
