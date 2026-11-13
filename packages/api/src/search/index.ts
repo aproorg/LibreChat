@@ -11,3 +11,4 @@ export * from './sync/record';
 export * from './jobs/script';
 export * from './service';
 export * from './start';
+export * from './http/cursor';

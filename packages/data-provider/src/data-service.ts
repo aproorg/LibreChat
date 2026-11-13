@@ -11,6 +11,7 @@ import type { TFileConfig } from './file-config';
 import type { SearchMeta } from './types/search';
 import type * as tl from './types/tools';
 import type * as t from './types';
+import { SEARCH_CURSOR_HEADER } from './types/search';
 import * as permissions from './accessPermissions';
 import * as endpoints from './api-endpoints';
 import { uploadEventStream } from './upload';
@@ -1083,10 +1084,18 @@ export function genTitle(payload: m.TGenTitleRequest): Promise<m.TGenTitleRespon
 }
 
 export const listMessages = (
-  params?: q.MessagesListParams,
+  params: q.MessagesListParams = {},
   signal?: AbortSignal,
 ): Promise<q.MessagesListResponse> => {
-  return request.get(endpoints.messages(params ?? {}), signal ? { signal } : undefined);
+  const { cursor, ...rest } = params;
+  if (!rest.search || !cursor) {
+    return request.get(endpoints.messages(params), signal ? { signal } : undefined);
+  }
+  /* A search cursor is too long for the query string behind a WAF, so it moves to a header. */
+  return request.get(endpoints.messages(rest), {
+    signal,
+    headers: { [SEARCH_CURSOR_HEADER]: cursor },
+  });
 };
 
 export function updateMessage(payload: t.TUpdateMessageRequest): Promise<unknown> {

@@ -1,9 +1,10 @@
 import { RecoilRoot } from 'recoil';
 import { AxiosError, AxiosHeaders } from 'axios';
-import { QueryKeys, request } from 'librechat-data-provider';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
+import { QueryKeys, request, dataService, SEARCH_CURSOR_HEADER } from 'librechat-data-provider';
 import type { MessagesListResponse, ConversationListResponse } from 'librechat-data-provider';
+import type { AxiosRequestConfig } from 'axios';
 import type { ReactNode } from 'react';
 import {
   retrySearch,
@@ -32,16 +33,26 @@ const messagesPage = (ids: string[], nextCursor: string | null = null): Messages
   nextCursor,
 });
 
-/** What a request to the messages route asked for, read back from its URL. */
+type SentOptions = { signal?: AbortSignal; headers?: Record<string, string> } | undefined;
+
+/** What a request to the messages route asked for: the query from its URL, the cursor from its
+ *  header. `urlCursor` is any cursor left in the URL, which a WAF's query-string limit blocks. */
 const sent = (get: jest.SpyInstance, call: number) => {
-  const [url, options] = get.mock.calls[call] as [string, { signal?: AbortSignal } | undefined];
+  const [url, options] = get.mock.calls[call] as [string, SentOptions];
   const params = new URL(url, 'http://localhost').searchParams;
-  return { search: params.get('search'), cursor: params.get('cursor'), signal: options?.signal };
+  return {
+    search: params.get('search'),
+    cursor: options?.headers?.[SEARCH_CURSOR_HEADER] ?? null,
+    urlCursor: params.get('cursor'),
+    signal: options?.signal,
+  };
 };
 
 /** First page, then a last page for any request carrying a cursor. */
-const twoPages = async (url: string) =>
-  url.includes('cursor=') ? messagesPage(['m2']) : messagesPage(['m1'], 'cursor-1');
+const twoPages = async (_url: string, options?: AxiosRequestConfig) =>
+  options?.headers?.[SEARCH_CURSOR_HEADER]
+    ? messagesPage(['m2'])
+    : messagesPage(['m1'], 'cursor-1');
 
 let queryClient: QueryClient;
 
@@ -153,8 +164,19 @@ describe('useMessagesInfiniteQuery', () => {
     await act(async () => {
       await result.current.fetchNextPage();
     });
-    expect(sent(listMessages, 1)).toMatchObject({ search: 'é'.repeat(256), cursor: 'cursor-1' });
+    expect(sent(listMessages, 1)).toMatchObject({
+      search: 'é'.repeat(256),
+      cursor: 'cursor-1',
+      urlCursor: null,
+    });
     expect(sent(listMessages, 1).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('keeps a cursor without a search in the URL, as the plain message list pages', async () => {
+    const get = jest.spyOn(request, 'get').mockResolvedValue(messagesPage([]));
+    await dataService.listMessages({ cursor: 'plain-1', pageSize: 25 });
+    expect(sent(get, 0)).toMatchObject({ search: null, cursor: null, urlCursor: 'plain-1' });
+    expect(get.mock.calls[0][1]).toBeUndefined();
   });
 
   it('does not retry a busy search at the query layer', async () => {
@@ -204,7 +226,11 @@ describe('useMessagesInfiniteQuery', () => {
     await act(async () => {
       await result.current.fetchNextPage();
     });
-    expect(sent(listMessages, 2)).toMatchObject({ search: 'harbor', cursor: 'cursor-1' });
+    expect(sent(listMessages, 2)).toMatchObject({
+      search: 'harbor',
+      cursor: 'cursor-1',
+      urlCursor: null,
+    });
     await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
     expect(result.current.isError).toBe(false);
   });
