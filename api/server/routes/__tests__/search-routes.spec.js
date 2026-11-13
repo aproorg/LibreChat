@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const request = require('supertest');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const { SEARCH_CURSOR_HEADER, SEARCH_PAGE_SIZE } = require('librechat-data-provider');
 const { bindSearch, startSearchBackground } = require('@librechat/api');
 const { logger, loadSearchConfig } = require('@librechat/data-schemas');
 
@@ -286,6 +287,94 @@ describe('search through the real routes', () => {
         .query({ search: 'horse', cursor: 's1.forged' });
       expect(response.status).toBe(400);
       expect(response.body).toEqual({ code: 'search_cursor_invalid' });
+    });
+
+    it('rejects a header cursor it did not issue', async () => {
+      const response = await request(appFor(USER, binding))
+        .get('/api/messages')
+        .set(SEARCH_CURSOR_HEADER, 's1.forged')
+        .query({ search: 'horse' });
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ code: 'search_cursor_invalid' });
+    });
+
+    /* The cursor outgrows a WAF's 2,048-byte query-string limit, so load-more sends it in a
+     * header. An older client's `?cursor=` still works during a rolling deploy. */
+    describe('load-more cursor', () => {
+      const PAGER = 'pager-user';
+      const COUNT = SEARCH_PAGE_SIZE + 5;
+      const page = (cursor, via) => {
+        const req = request(appFor(PAGER, binding))
+          .get('/api/messages')
+          .query({ search: 'horse', ...(via === 'query' ? { cursor } : {}) });
+        return via === 'header' ? req.set(SEARCH_CURSOR_HEADER, cursor) : req;
+      };
+      const ids = (response) => response.body.messages.map(({ messageId }) => messageId);
+      let first;
+
+      beforeAll(async () => {
+        const sources = Array.from({ length: COUNT }, (_, i) => {
+          const at = new Date(Date.UTC(2026, 0, 1 + i));
+          return message({
+            user: PAGER,
+            conversationId: 'pager-convo',
+            messageId: `pager-${i}`,
+            text: 'horses ran',
+            createdAt: at,
+            updatedAt: at,
+          });
+        });
+        await mongoose.connection.db.collection('messages').insertMany(sources);
+        await mongoose.connection.db
+          .collection('conversations')
+          .insertOne(convo({ user: PAGER, conversationId: 'pager-convo' }));
+        await mongoose.connection.db.collection('msearch').insertMany(
+          sources.map((source) => ({
+            _id: source._id,
+            user: PAGER,
+            conversationId: source.conversationId,
+            messageId: source.messageId,
+            createdAt: source.createdAt,
+            n: 3,
+            h: 'h',
+            v: VERSION,
+            e: 0,
+            tokens: ['horses', 'horse', 'ran'],
+          })),
+        );
+        first = await page();
+      });
+
+      it('issues a search cursor on the first page', () => {
+        expect(first.status).toBe(200);
+        expect(first.body.messages).toHaveLength(SEARCH_PAGE_SIZE);
+        expect(first.body.nextCursor).toMatch(/^s1\./);
+      });
+
+      it('serves page 2 from the header, with no cursor in the URL', async () => {
+        const second = await page(first.body.nextCursor, 'header');
+        expect(second.status).toBe(200);
+        expect(second.req.path).not.toContain('cursor');
+        const all = [...ids(first), ...ids(second)];
+        expect(new Set(all).size).toBe(COUNT);
+        expect(second.body.nextCursor).toBeNull();
+      });
+
+      it('serves the same page 2 from an older client’s query cursor', async () => {
+        const fromHeader = await page(first.body.nextCursor, 'header');
+        const fromQuery = await page(first.body.nextCursor, 'query');
+        expect(fromQuery.status).toBe(200);
+        expect(ids(fromQuery)).toEqual(ids(fromHeader));
+      });
+
+      it('reads the header before the query parameter', async () => {
+        const response = await request(appFor(PAGER, binding))
+          .get('/api/messages')
+          .set(SEARCH_CURSOR_HEADER, first.body.nextCursor)
+          .query({ search: 'horse', cursor: 's1.forged' });
+        expect(response.status).toBe(200);
+        expect(ids(response)).toHaveLength(COUNT - SEARCH_PAGE_SIZE);
+      });
     });
   });
 

@@ -360,40 +360,42 @@ describe('Search route on the new search backend', () => {
   });
 
   describe('restart', () => {
-    it.each([
-      ['a rejected cursor', httpError(400, 'search_cursor_invalid')],
-      ['a 414 from a proxy', httpError(414)],
-    ])('offers a restart on %s and starts over from the first page', async (_name, error) => {
-      const refetch = jest.fn();
-      const remove = jest.fn();
-      const fetchNextPage = jest.fn();
-      mockUseQuery.mockReturnValue(
-        queryResult({
-          data: { pages: [{ messages: rows(25), nextCursor: 'cursor-1' }] },
-          isError: true,
-          error,
-          hasNextPage: true,
-          refetch,
-          remove,
-          fetchNextPage,
-        }),
-      );
-      render(<Search />);
+    it.each([['a rejected cursor', httpError(400, 'search_cursor_invalid')]])(
+      'offers a restart on %s and starts over from the first page',
+      async (_name, error) => {
+        const refetch = jest.fn();
+        const remove = jest.fn();
+        const fetchNextPage = jest.fn();
+        mockUseQuery.mockReturnValue(
+          queryResult({
+            data: { pages: [{ messages: rows(25), nextCursor: 'cursor-1' }] },
+            isError: true,
+            error,
+            hasNextPage: true,
+            refetch,
+            remove,
+            fetchNextPage,
+          }),
+        );
+        render(<Search />);
 
-      expect(screen.getByText('m row 0')).toBeInTheDocument();
-      expect(screen.getByTestId('search-cursor-restart')).toHaveTextContent(
-        'com_ui_search_cursor_restart',
-      );
-      expect(screen.getByTestId('search-cursor-restart')).toHaveAttribute('role', 'status');
-      expect(screen.queryByTestId('search-load-more')).not.toBeInTheDocument();
-      expect(mockShowToast).not.toHaveBeenCalled();
+        expect(screen.getByText('m row 0')).toBeInTheDocument();
+        expect(screen.getByTestId('search-cursor-restart')).toHaveTextContent(
+          'com_ui_search_cursor_restart',
+        );
+        expect(screen.getByTestId('search-cursor-restart')).toHaveAttribute('role', 'status');
+        expect(screen.queryByTestId('search-load-more')).not.toBeInTheDocument();
+        expect(mockShowToast).not.toHaveBeenCalled();
 
-      await userEvent.click(screen.getByRole('button', { name: 'com_ui_search_restart' }));
-      expect(remove).toHaveBeenCalledTimes(1);
-      expect(refetch).toHaveBeenCalledTimes(1);
-      expect(remove.mock.invocationCallOrder[0]).toBeLessThan(refetch.mock.invocationCallOrder[0]);
-      expect(fetchNextPage).not.toHaveBeenCalled();
-    });
+        await userEvent.click(screen.getByRole('button', { name: 'com_ui_search_restart' }));
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(refetch).toHaveBeenCalledTimes(1);
+        expect(remove.mock.invocationCallOrder[0]).toBeLessThan(
+          refetch.mock.invocationCallOrder[0],
+        );
+        expect(fetchNextPage).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('stop words', () => {
