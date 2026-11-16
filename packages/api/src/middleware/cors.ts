@@ -2,10 +2,11 @@ import type { RequestHandler } from 'express';
 
 /** Paths that may receive credentialed cross-origin calls, matched on segment boundaries. */
 const REFRESH_PATH = '/api/auth/refresh';
-const SKILLS_PATH = '/api/skills';
+const PREFIXES = ['/api/skills', '/api/permissions/skill'];
 
 const inScope = (path: string) =>
-  path === REFRESH_PATH || path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`);
+  path === REFRESH_PATH ||
+  PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
 /**
  * Credentialed CORS for an exact allow-list of origins on the scoped paths only.

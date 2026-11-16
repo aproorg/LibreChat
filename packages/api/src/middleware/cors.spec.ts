@@ -61,13 +61,23 @@ describe('createScopedCors', () => {
     expect(res.headers['access-control-allow-credentials']).toBeUndefined();
   });
 
-  it.each(['/api/skillsX', '/api/auth/refreshX', '/api/auth/refresh/extra'])(
-    'does not scope the look-alike %s',
-    async (path) => {
-      const res = await request(createApp()).get(path).set('Origin', ALLOWED);
-      expect(res.headers['access-control-allow-credentials']).toBeUndefined();
-    },
-  );
+  it.each([
+    '/api/skillsX',
+    '/api/auth/refreshX',
+    '/api/auth/refresh/extra',
+    '/api/permissions/skillX',
+    '/api/permissions/agent/abc',
+    '/api/permissions/search-principals',
+  ])('does not scope the look-alike %s', async (path) => {
+    const res = await request(createApp()).get(path).set('Origin', ALLOWED);
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('scopes skill sharing under /api/permissions/skill', async () => {
+    const res = await request(createApp()).put('/api/permissions/skill/abc').set('Origin', ALLOWED);
+    expect(res.headers['access-control-allow-origin']).toBe(ALLOWED);
+    expect(res.headers['access-control-allow-credentials']).toBe('true');
+  });
 
   it('scopes paths under /api/skills', async () => {
     const res = await request(createApp()).get('/api/skills/abc').set('Origin', ALLOWED);
