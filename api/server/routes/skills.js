@@ -3,6 +3,7 @@ const multer = require('multer');
 const express = require('express');
 const {
   createImportHandler,
+  createReplaceImportHandler,
   createSkillUploadHandler,
   generateCheckAccess,
   getStorageMetadata,
@@ -20,7 +21,11 @@ const {
 const {
   createSkill,
   getSkillById,
+  updateSkill,
   deleteSkill,
+  listSkillFiles,
+  deleteSkillFile,
+  getAuthorSkillByName,
   upsertSkillFile,
   getSkillFileByPath,
   getRoleByName,
@@ -116,7 +121,7 @@ function resolveSkillStorage(req, { isImage = false } = {}) {
 // ---------------------------------------------------------------------------
 // Import handler (zip/md/skill → create skill + files)
 // ---------------------------------------------------------------------------
-const importHandler = createImportHandler({
+const importDeps = {
   limits: (req) => ({
     maxZipBytes: getSkillImportSizeLimit(req),
   }),
@@ -143,6 +148,15 @@ const importHandler = createImportHandler({
     return Promise.resolve();
   },
   grantPermission,
+};
+
+const importHandler = createImportHandler(importDeps);
+const replaceImportHandler = createReplaceImportHandler({
+  ...importDeps,
+  updateSkill,
+  listSkillFiles,
+  deleteSkillFile,
+  getAuthorSkillByName,
 });
 
 // ---------------------------------------------------------------------------
@@ -177,6 +191,17 @@ router.post(
   skillUpload,
   restoreTenantContextFromReq,
   importHandler,
+);
+
+// Idempotent import: creates the caller's own skill or replaces it in place (keeps its _id)
+router.put(
+  '/import',
+  checkSkillCreate,
+  fileUploadIpLimiter,
+  fileUploadUserLimiter,
+  skillUpload,
+  restoreTenantContextFromReq,
+  replaceImportHandler,
 );
 
 router.get('/', maybeStartRequestSkillSync, handlers.list);

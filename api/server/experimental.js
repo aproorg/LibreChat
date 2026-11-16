@@ -75,6 +75,7 @@ const {
   updateInterfacePermissions: updateInterfacePerms,
   bindSearch,
   startSearchBackground,
+  createScopedCors,
 } = require('@librechat/api');
 const {
   getRoleByName,
@@ -612,7 +613,7 @@ if (cluster.isMaster) {
     });
 
     app.use(mongoSanitize());
-    app.use(cors());
+    app.use(createScopedCors({ origins: baseAppConfig?.config?.corsOrigins, fallback: cors() }));
     app.use(cookieParser());
 
     if (!isEnabled(DISABLE_COMPRESSION)) {
