@@ -3,6 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const request = require('supertest');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const { SEARCH_CURSOR_HEADER } = require('librechat-data-provider');
 const { bindSearch, startSearchBackground } = require('@librechat/api');
 const { logger, loadSearchConfig, SearchError } = require('@librechat/data-schemas');
 
@@ -458,11 +459,17 @@ describe('search failures through the real routes', () => {
     });
 
     describe('a cursor on GET /api/messages?search= (T091)', () => {
-      const served = async (binding, cursor) => {
+      /** `via: 'header'` sends the cursor as today's client does; `'query'` as an older one. */
+      const served = async (binding, cursor, via = 'query') => {
         meili.mockClear();
-        const response = await request(appFor(binding))
+        const inQuery = via === 'query' && cursor !== undefined;
+        const req = request(appFor(binding))
           .get('/api/messages')
-          .query({ search: 'horse', ...(cursor === undefined ? {} : { cursor }) });
+          .query({ search: 'horse', ...(inQuery ? { cursor } : {}) });
+        if (via === 'header' && cursor !== undefined) {
+          req.set(SEARCH_CURSOR_HEADER, cursor);
+        }
+        const response = await req;
         return { status: response.status, text: response.text, searched: meili.mock.calls.length };
       };
 
@@ -471,11 +478,13 @@ describe('search failures through the real routes', () => {
         async (_name, makeBinding) => {
           const binding = await makeBinding();
 
-          for (const cursor of ['s1.', 's1.anything', `s1.${'A'.repeat(400)}`]) {
-            const { status, text, searched } = await served(binding, cursor);
-            expect(status).toBe(400);
-            expect(text).toBe('{"code":"search_cursor_invalid"}');
-            expect(searched).toBe(0);
+          for (const via of ['header', 'query']) {
+            for (const cursor of ['s1.', 's1.anything', `s1.${'A'.repeat(400)}`]) {
+              const { status, text, searched } = await served(binding, cursor, via);
+              expect(status).toBe(400);
+              expect(text).toBe('{"code":"search_cursor_invalid"}');
+              expect(searched).toBe(0);
+            }
           }
         },
       );
@@ -486,11 +495,13 @@ describe('search failures through the real routes', () => {
           const binding = await makeBinding();
           const cursors = [undefined, '', '2026-01-01T00:00:00.000Z', 'not-a-cursor', 's1', 'S1.x'];
 
-          for (const cursor of cursors) {
-            const today = await served(undefined, cursor);
-            const bound = await served(binding, cursor);
-            expect(bound).toEqual(today);
-            expect(bound.searched).toBe(1);
+          for (const via of ['header', 'query']) {
+            for (const cursor of cursors) {
+              const today = await served(undefined, cursor, via);
+              const bound = await served(binding, cursor, via);
+              expect(bound).toEqual(today);
+              expect(bound.searched).toBe(1);
+            }
           }
         },
       );

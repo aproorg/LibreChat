@@ -2,10 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type FC } from
 import { useAtomValue } from 'jotai';
 import throttle from 'lodash/throttle';
 import { useRecoilValue } from 'recoil';
-import { mergeMessageFile, SEARCH_PAGE_SIZE } from 'librechat-data-provider';
 import { Search as SearchIcon, SearchX } from 'lucide-react';
 import { getMessageRowWidthClass } from '@librechat/chat/components';
 import { List, CellMeasurer, CellMeasurerCache } from 'react-virtualized';
+import { mergeMessageFile, SEARCH_PAGE_SIZE } from 'librechat-data-provider';
 import { EmptyState, Spinner, useRemScale, useToastContext } from '@librechat/client';
 import type { SearchErrorCode, TMessage } from 'librechat-data-provider';
 import type { Index, ListRowProps } from 'react-virtualized';
@@ -18,7 +18,6 @@ import {
 import { SearchErrorState, SearchStopWordHint, SearchLoadMore } from '~/components/Search';
 import { useElementSize, useLocalize, useAuthContext } from '~/hooks';
 import SearchMessage from '~/components/Chat/Messages/SearchMessage';
-import { getResponseStatus } from '~/utils/errors';
 import { useFileMapContext } from '~/Providers';
 import { fontSizeAtom } from '~/store/fontSize';
 import { cn } from '~/utils';
@@ -36,9 +35,6 @@ const FOOTER_HEIGHT = 64;
 
 /** How many thinned pages in a row are followed automatically before the user is asked. */
 const MAX_AUTO_FETCHES = 3;
-
-/** A proxy answers an over-long request line with this, which only a cursor can cause. */
-const URI_TOO_LONG = 414;
 
 type AutoFetchState = {
   query: string;
@@ -181,14 +177,8 @@ export default function Search() {
     if (!isError) {
       return undefined;
     }
-    const code = getSearchErrorCode(error);
-    if (code != null) {
-      return code;
-    }
-    return isLaterPageError && getResponseStatus(error) === URI_TOO_LONG
-      ? 'search_cursor_invalid'
-      : undefined;
-  }, [isError, error, isLaterPageError]);
+    return getSearchErrorCode(error);
+  }, [isError, error]);
 
   const [autoFetch, setAutoFetch] = useState<AutoFetchState>({
     query: '',

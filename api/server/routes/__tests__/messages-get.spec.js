@@ -69,6 +69,8 @@ jest.mock('@librechat/api', () => {
     stripPrivateMessageFields: jest.requireActual(
       '../../../../packages/api/src/protection/private/view',
     ).stripPrivateMessageFields,
+    readSearchCursor: jest.requireActual('../../../../packages/api/src/search/http/cursor.ts')
+      .readSearchCursor,
     createContentFilter: jest.fn(() => (req, res, next) => next()),
     inspectContent,
     extractChatContent,

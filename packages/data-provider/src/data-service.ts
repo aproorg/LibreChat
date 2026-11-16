@@ -47,6 +47,7 @@ import {
 } from './types/responseReview';
 import { codeSetupAttemptSchema, codeSetupApprovalRequestSchema } from './codeSetup';
 import { TOOL_CALL_PREVIEWS_PARAM, TOOL_CALL_PREVIEWS_VERSION } from './previews';
+import { SEARCH_CURSOR_HEADER } from './types/search';
 import * as permissions from './accessPermissions';
 import { setClientLimits } from './clientLimits';
 import * as endpoints from './api-endpoints';
@@ -1437,10 +1438,18 @@ export function genTitle(payload: m.TGenTitleRequest): Promise<m.TGenTitleRespon
 }
 
 export const listMessages = (
-  params?: q.MessagesListParams,
+  params: q.MessagesListParams = {},
   signal?: AbortSignal,
 ): Promise<q.MessagesListResponse> => {
-  return request.get(endpoints.messages(params ?? {}), signal ? { signal } : undefined);
+  const { cursor, ...rest } = params;
+  if (!rest.search || !cursor) {
+    return request.get(endpoints.messages(params), signal ? { signal } : undefined);
+  }
+  /* A search cursor is too long for the query string behind a WAF, so it moves to a header. */
+  return request.get(endpoints.messages(rest), {
+    signal,
+    headers: { [SEARCH_CURSOR_HEADER]: cursor },
+  });
 };
 
 export function updateMessage(payload: t.TUpdateMessageRequest): Promise<unknown> {
