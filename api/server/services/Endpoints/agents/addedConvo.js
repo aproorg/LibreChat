@@ -57,6 +57,7 @@ const loadAddedAgent = (params) =>
  * @param {boolean} [params.ephemeralSkillsToggle] - Per-request ephemeral Skills badge state
  * @param {boolean} [params.skillCreateAllowed] - Whether the user can create Skills
  * @param {Record<string, boolean>} [params.skillStates] - Per-user Skill active overrides
+ * @param {import('@librechat/api').Access | null} [params.access] - YAML `allowedFor` limits for the caller
  * @param {boolean} [params.defaultActiveOnShare] - Default active state for shared Skills
  * @param {boolean} [params.codeEnvAvailable] - `execute_code` capability flag;
  *   forwarded verbatim to the added agent's `initializeAgent`. @see
@@ -74,6 +75,7 @@ const processAddedConvo = async ({
   res,
   endpointOption,
   modelsConfig,
+  access,
   logViolation,
   loadTools,
   requestFiles,
@@ -123,9 +125,13 @@ const processAddedConvo = async ({
       res,
       modelsConfig,
       logViolation,
+      access,
       agent: addedAgent,
     });
 
+    if (addedValidation.refused) {
+      throw addedValidation.refused;
+    }
     if (!addedValidation.isValid) {
       logger.warn(
         `[processAddedConvo] Added agent validation failed: ${addedValidation.error?.message}`,

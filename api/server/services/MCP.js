@@ -34,6 +34,7 @@ const {
   getMissingCustomUserVars,
   getUserMCPAuthMap,
   getServerCustomUserVars,
+  filterServersByAccess,
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
   hasRuntimeUrlPlaceholders,
@@ -75,6 +76,7 @@ const {
   getMCPServerTools,
   cacheMCPServerTools,
   invalidateCachedTools,
+  getAccessForUser,
 } = require('./Config');
 const { getLogStores } = require('~/cache');
 const {
@@ -521,11 +523,10 @@ async function resolveAllMcpConfigs(userId, user) {
   } catch {
     logger.warn('[resolveAllMcpConfigs] Config server resolution failed; continuing without');
   }
-  if (user?.role) {
-    return await registry.getAllServerConfigs(userId, configServers, user.role);
-  }
-
-  return await registry.getAllServerConfigs(userId, configServers);
+  const configs = user?.role
+    ? await registry.getAllServerConfigs(userId, configServers, user.role)
+    : await registry.getAllServerConfigs(userId, configServers);
+  return filterServersByAccess(configs, await getAccessForUser(userId, user));
 }
 
 /**
@@ -1664,9 +1665,13 @@ async function getMCPSetupData(userId, options = {}) {
 
   const appConfig = options.appConfig ?? (await getAppConfig({ role, tenantId, userId }));
   const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
-  const mcpConfig = role
+  const allConfigs = role
     ? await registry.getAllServerConfigs(userId, configServers, role)
     : await registry.getAllServerConfigs(userId, configServers);
+  const mcpConfig = filterServersByAccess(
+    allConfigs,
+    await getAccessForUser(userId, options.user ?? { tenantId }),
+  );
   const mcpManager = getMCPManager(userId);
   /** @type {Map<string, import('@librechat/api').MCPConnection>} */
   let appConnections = new Map();

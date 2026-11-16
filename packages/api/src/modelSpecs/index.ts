@@ -10,6 +10,7 @@ import {
   type TSpecsConfig,
   type TUser,
 } from 'librechat-data-provider';
+import type { Access } from '~/access';
 
 export const PRIVATE_MODEL_SPEC_PRESET_FIELDS: readonly [
   'promptPrefix',
@@ -236,6 +237,28 @@ export function excludeHiddenModelSpecs<T extends Partial<TSpecsConfig> | null |
   } as T;
 }
 
+/** Drops specs the caller may not use: the spec's own rule, its endpoint, or any MCP server it names. */
+export function filterModelSpecsByAccess<T extends Partial<TSpecsConfig> | null | undefined>(
+  modelSpecs: T,
+  access: Access | null,
+): T {
+  if (!access || !modelSpecs?.list || !Array.isArray(modelSpecs.list)) {
+    return modelSpecs;
+  }
+
+  return {
+    ...modelSpecs,
+    list: modelSpecs.list.filter(
+      (spec) =>
+        access.check({
+          spec: spec?.name,
+          endpoint: spec?.preset?.endpoint,
+          mcpServers: spec?.mcpServers,
+        }) === null,
+    ),
+  } as T;
+}
+
 export function sanitizeModelSpecs<T extends Partial<TSpecsConfig> | null | undefined>(
   modelSpecs: T,
 ): T {
@@ -253,6 +276,7 @@ export function sanitizeModelSpecs<T extends Partial<TSpecsConfig> | null | unde
       const preset = modelSpec?.preset;
       const sanitizedModelSpec = { ...modelSpec };
       delete (sanitizedModelSpec as { skills?: unknown }).skills;
+      delete (sanitizedModelSpec as { allowedFor?: unknown }).allowedFor;
       const subagents = sanitizedModelSpec.subagents;
       if (subagents && typeof subagents === 'object') {
         const sanitizedSubagents: TModelSpec['subagents'] = {};

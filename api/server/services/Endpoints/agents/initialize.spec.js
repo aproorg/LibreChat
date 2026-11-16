@@ -18,6 +18,7 @@ const mockGetAppConfig = jest.fn();
 jest.mock('~/server/services/Config', () => ({
   ...jest.requireActual('~/server/services/Config'),
   getAppConfig: (...args) => mockGetAppConfig(...args),
+  getAccess: jest.fn().mockResolvedValue(null),
 }));
 
 function deferred() {

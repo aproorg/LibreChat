@@ -102,7 +102,7 @@ const {
 } = require('./backgroundCompletion');
 const { logViolation } = require('~/cache');
 const db = require('~/models');
-const { getAppConfig } = require('~/server/services/Config');
+const { getAppConfig, getAccess } = require('~/server/services/Config');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
@@ -344,26 +344,30 @@ const initializeClientWithProvider = async ({
   );
   const primaryAgentPromise = endpointOption.agent;
   const modelsConfigPromise = getModelsConfig(req);
-  const validatedPrimaryAgentPromise = Promise.all([primaryAgentPromise, modelsConfigPromise]).then(
-    async ([primaryAgent, modelsConfig]) => {
-      if (!primaryAgent) {
-        throw new Error('Agent not found');
-      }
+  const accessPromise = getAccess(req);
+  const validatedPrimaryAgentPromise = Promise.all([
+    primaryAgentPromise,
+    modelsConfigPromise,
+    accessPromise,
+  ]).then(async ([primaryAgent, modelsConfig, access]) => {
+    if (!primaryAgent) {
+      throw new Error('Agent not found');
+    }
 
-      const validationResult = await validateAgentModel({
-        req,
-        res,
-        modelsConfig,
-        logViolation,
-        agent: primaryAgent,
-      });
-      if (!validationResult.isValid) {
-        throw new Error(validationResult.error?.message);
-      }
+    const validationResult = await validateAgentModel({
+      req,
+      res,
+      modelsConfig,
+      logViolation,
+      access,
+      agent: primaryAgent,
+    });
+    if (!validationResult.isValid) {
+      throw validationResult.refused ?? new Error(validationResult.error?.message);
+    }
 
-      return { primaryAgent, modelsConfig };
-    },
-  );
+    return { primaryAgent, modelsConfig };
+  });
 
   /**
    * Agent context store - populated after initialization, accessed by callback via closure.
@@ -787,6 +791,7 @@ const initializeClientWithProvider = async ({
     buildAgentToolContext({ agent: primaryAgent, config: primaryConfig }),
   );
 
+  const access = await accessPromise;
   const {
     agentConfigs: discoveredConfigs,
     edges: discoveredEdges,
@@ -802,6 +807,7 @@ const initializeClientWithProvider = async ({
       endpointOption,
       allowedProviders,
       modelsConfig,
+      access,
       loadTools,
       requestFiles,
       conversationId,
@@ -898,6 +904,7 @@ const initializeClientWithProvider = async ({
     loadTools,
     logViolation,
     modelsConfig,
+    access,
     requestFiles,
     agentConfigs,
     primaryAgent,
@@ -1266,12 +1273,15 @@ const initializeClientWithProvider = async ({
       throw new Error(`You no longer have access to subagent ${agentId}.`);
     }
     const validation = await waitForAbort(
-      validateAgentModel({ req, res, agent, modelsConfig, logViolation }),
+      validateAgentModel({ req, res, agent, modelsConfig, logViolation, access }),
       context.signal,
     );
     throwIfAborted(context.signal);
     if (!validation.isValid) {
-      throw new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`);
+      throw (
+        validation.refused ??
+        new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`)
+      );
     }
     const scopedSkillIds = resolveAgentScopedSkillIds({
       agent,

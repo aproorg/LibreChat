@@ -59,6 +59,7 @@ const {
 
 jest.mock('./Config', () => ({
   loadCustomConfig: jest.fn(),
+  getAccessForUser: jest.fn().mockResolvedValue(null),
   get getAppConfig() {
     return mockGetAppConfig;
   },

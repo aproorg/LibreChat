@@ -19,7 +19,9 @@ import type {
 } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { Request, Response } from 'express';
+import type { Access } from '~/access';
 import { filterManagedEndpoints } from '~/endpoints/config/availability';
+import { AgentAccessRefusedError, checkAgentAccess } from './access';
 
 /**
  * Permissive Request alias used by {@link validateAgentModel}. Accepts either
@@ -938,6 +940,8 @@ export interface ValidateAgentModelParams {
   res: Response;
   agent: Agent;
   modelsConfig: TModelsConfig;
+  /** YAML `allowedFor` limits for the caller; null or omitted means no limits. */
+  access?: Access | null;
   logViolation: (
     req: LooseRequest,
     res: Response,
@@ -952,6 +956,8 @@ interface ValidateAgentModelResult {
   error?: {
     message: string;
   };
+  /** Set when the caller is refused; throw it as-is so it carries status 403 and the stable code. */
+  refused?: AgentAccessRefusedError;
 }
 
 /**
@@ -965,8 +971,14 @@ interface ValidateAgentModelResult {
 export async function validateAgentModel(
   params: ValidateAgentModelParams,
 ): Promise<ValidateAgentModelResult> {
-  const { req, res, agent, modelsConfig, logViolation } = params;
+  const { req, res, agent, modelsConfig, logViolation, access } = params;
   const { model, provider: endpoint } = agent;
+
+  const refusal = checkAgentAccess(agent, access);
+  if (refusal) {
+    const refused = new AgentAccessRefusedError(refusal);
+    return { isValid: false, error: { message: refused.message }, refused };
+  }
 
   if (!model) {
     return {

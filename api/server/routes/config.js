@@ -10,6 +10,7 @@ const {
   resolveTitleTiming,
   sanitizeModelSpecs,
   excludeHiddenModelSpecs,
+  filterModelSpecsByAccess,
   isFileSnapshotEnabled,
   getEndpointsDropParamsMap,
   resolveCodeEnvironmentDecisionVersion,
@@ -22,6 +23,7 @@ const { hasCapability, hasConfigCapability } = require('~/server/middleware/role
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
+const { getAccess } = require('~/server/services/Config/access');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 
 const router = express.Router();
@@ -299,7 +301,10 @@ router.get('/', async function (req, res) {
     const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
 
     const modelsConfig = await getModelsConfig(req);
-    const visibleModelSpecs = excludeHiddenModelSpecs(appConfig?.modelSpecs);
+    const visibleModelSpecs = filterModelSpecsByAccess(
+      excludeHiddenModelSpecs(appConfig?.modelSpecs),
+      await getAccess(req),
+    );
     const filteredModelSpecs = filterModelSpecsByAvailability(visibleModelSpecs, modelsConfig);
 
     const balanceConfig = getBalanceConfig(appConfig);

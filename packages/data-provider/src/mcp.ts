@@ -194,7 +194,17 @@ export const MCP_SERVER_TITLE_PATTERN = new RegExp(
 export const MCP_SERVER_TITLE_ERROR =
   'Title must start with a letter or number and can include spaces, hyphens, and apostrophes';
 
+/** Who may use a thing, written next to it in librechat.yaml. Read only from the YAML file. */
+export const allowedForSchema = z.object({
+  groups: z.array(z.string()).optional(),
+  users: z.array(z.string()).optional(),
+});
+
+export type TAllowedFor = z.infer<typeof allowedForSchema>;
+
 const BaseOptionsSchema = z.object({
+  /** Limits the server to the named groups and users. Server-side only; never sent to clients. */
+  allowedFor: allowedForSchema.optional(),
   /** Display name for the MCP server */
   title: z.string().regex(MCP_SERVER_TITLE_PATTERN, MCP_SERVER_TITLE_ERROR).optional(),
   /** Description of the MCP server */

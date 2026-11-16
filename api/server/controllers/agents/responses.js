@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
 const { Callback, formatAgentMessages } = require('@librechat/agents');
 const {
+  ErrorTypes,
   EModelEndpoint,
   ResourceType,
   PermissionBits,
@@ -84,6 +85,7 @@ const {
   stripUnusableSummaryParts,
   CHILD_THREAD_READ_ONLY_ERROR,
   executeAgentRun,
+  checkAgentAccess,
   waitForAgentExecutionWrites,
   resolveToolRoleGrants,
   resolveAdmittedCodeEnvironmentDecision,
@@ -118,6 +120,7 @@ const {
 const { createProvisionFilesCallback } = require('~/server/services/Files/provisionCallback');
 const { checkSessionsAlive, loadCodeApiKey } = require('~/server/services/Files/provision');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
+const { getAccess } = require('~/server/services/Config');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { resolveConfigServers, getAccessibleMcpServerNames } = require('~/server/services/MCP');
 const { resolveConversationTitle } = require('~/server/services/Endpoints/titlePolicy');
@@ -627,6 +630,17 @@ const executeResponse = async (envelope, { req, res }) => {
     );
   }
 
+  const access = await getAccess(req);
+  if (checkAgentAccess(agent, access)) {
+    return sendResponsesErrorResponse(
+      res,
+      403,
+      'Access to this agent is refused.',
+      'invalid_request',
+      ErrorTypes.ACCESS_REFUSED,
+    );
+  }
+
   // Generate IDs
   const responseId = generateResponseId();
   const terminalRunError = createTerminalRunErrorObserver({
@@ -932,6 +946,7 @@ const executeResponse = async (envelope, { req, res }) => {
         const discoveryParams = {
           req,
           res,
+          access,
           signal: execution.signal,
           primaryConfig,
           endpointOption,
@@ -1746,16 +1761,19 @@ const listModels = async (req, res) => {
     }
 
     // Convert to models format
-    const models = agents.map((agent) => ({
-      id: agent.id,
-      object: 'model',
-      created: Math.floor(new Date(agent.createdAt).getTime() / 1000),
-      owned_by: agent.author ?? 'librechat',
-      // Additional metadata
-      name: agent.name,
-      description: agent.description,
-      provider: agent.provider,
-    }));
+    const access = await getAccess(req);
+    const models = agents
+      .filter((agent) => !checkAgentAccess(agent, access))
+      .map((agent) => ({
+        id: agent.id,
+        object: 'model',
+        created: Math.floor(new Date(agent.createdAt).getTime() / 1000),
+        owned_by: agent.author ?? 'librechat',
+        // Additional metadata
+        name: agent.name,
+        description: agent.description,
+        provider: agent.provider,
+      }));
 
     res.json({
       object: 'list',
