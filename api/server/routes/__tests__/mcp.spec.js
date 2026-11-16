@@ -132,6 +132,7 @@ jest.mock('~/models', () => ({
 }));
 
 jest.mock('~/server/services/Config', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
   setCachedTools: jest.fn(),
   getCachedTools: jest.fn(),
   cacheMCPServerTools: jest.fn(),

@@ -196,7 +196,12 @@ jest.mock('@librechat/agents', () => ({
   }),
 }));
 
+jest.mock('~/server/services/Config', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('@librechat/api', () => ({
+  checkAgentAccess: jest.fn(() => false),
   getAgentErrorMetadata: (...args) =>
     jest.requireActual('@librechat/api').getAgentErrorMetadata(...args),
   /* Provisioning moved into this package; the controllers build the callback from it. */
@@ -801,7 +806,7 @@ describe('createResponse controller', () => {
     );
 
     const request = createResponse(req, res);
-    await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
     res.once.mock.calls[0][1]();
     finishEnrollment(mockExecution);
     await request;

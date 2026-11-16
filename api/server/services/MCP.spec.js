@@ -59,6 +59,7 @@ const {
 
 jest.mock('./Config', () => ({
   loadCustomConfig: jest.fn(),
+  getAccessForUser: jest.fn().mockResolvedValue(null),
   get getAppConfig() {
     return mockGetAppConfig;
   },
@@ -1516,6 +1517,8 @@ describe('User parameter passing tests', () => {
         config: { type: 'stdio' },
       });
 
+      /** The access check runs first, so the reinit starts a tick later. */
+      await new Promise((resolve) => setImmediate(resolve));
       abortController.abort();
       resolveReinit({ tools: [], availableTools: {} });
       await createToolsPromise;

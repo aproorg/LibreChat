@@ -1,3 +1,4 @@
+export * from './access';
 export * from './app';
 export * from './acl/accessControlService';
 export * from './acl/insightsPermissions';
@@ -40,6 +41,7 @@ export * from './mcp/request';
 export * from './mcp/reinitialize';
 export * from './mcp/icons';
 /* Utilities */
+export * from './mcp/access';
 export * from './mcp/utils';
 export * from './mcp/domainValidation';
 export * from './mcp/context';

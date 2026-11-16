@@ -19,6 +19,7 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('~/server/services/Config', () => ({
   getAppConfig: jest.fn(),
+  getAccessForUser: jest.fn().mockResolvedValue(null),
   setCachedTools: jest.fn(),
   getCachedTools: jest.fn(),
   getMCPServerTools: jest.fn(),
@@ -603,8 +604,6 @@ describe('resolveElicitationFlow', () => {
     });
   });
 });
-
-
 
 describe('healMcpToolNames', () => {
   beforeEach(() => jest.clearAllMocks());

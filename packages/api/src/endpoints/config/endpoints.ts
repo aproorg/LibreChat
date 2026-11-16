@@ -10,6 +10,7 @@ import type { AgentCapabilities, TEndpointsConfig, TConfig } from 'librechat-dat
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, TCustomEndpointsConfig } from '~/types';
 import type { GetAppConfigOptions } from '~/app/service';
+import type { Access } from '~/access';
 import { loadCustomEndpointsConfig as defaultLoadCustomEndpoints } from '~/endpoints/custom';
 import { getAppConfigOptionsFromUser } from '~/app/service';
 import { getCodeDefaultProfile } from '~/code/config';
@@ -23,6 +24,8 @@ export interface EndpointsConfigDeps {
   getAppConfig: (params: GetAppConfigOptions) => Promise<AppConfig>;
   loadDefaultEndpointsConfig: (appConfig: AppConfig) => Promise<DefaultEndpointsResult>;
   loadCustomEndpointsConfig?: (custom: unknown) => TCustomEndpointsConfig | undefined;
+  /** Endpoints the caller may not use are dropped. Omitted: no filtering. */
+  getAccess?: (req: ServerRequest) => Promise<Access | null>;
 }
 
 export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
@@ -33,6 +36,7 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     getAppConfig,
     loadDefaultEndpointsConfig,
     loadCustomEndpointsConfig = defaultLoadCustomEndpoints,
+    getAccess,
   } = deps;
 
   async function getEndpointsConfig(req: ServerRequest): Promise<TEndpointsConfig> {
@@ -170,6 +174,15 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
         userProvideSessionToken: process.env.BEDROCK_AWS_SESSION_TOKEN === AuthType.USER_PROVIDED,
         userProvideBearerToken: process.env.BEDROCK_AWS_BEARER_TOKEN === AuthType.USER_PROVIDED,
       };
+    }
+
+    const access = await getAccess?.(req);
+    if (access) {
+      for (const name of Object.keys(mergedConfig)) {
+        if (!access.allowsEndpoint(name)) {
+          delete mergedConfig[name];
+        }
+      }
     }
 
     return orderEndpointsConfig(mergedConfig as TEndpointsConfig);

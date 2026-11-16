@@ -4,12 +4,13 @@ const {
   defaultAssistantsVersion,
 } = require('librechat-data-provider');
 const { logger, SystemCapabilities } = require('@librechat/data-schemas');
+const { assertEndpointAccess } = require('@librechat/api');
 const {
   initializeClient: initAzureClient,
 } = require('~/server/services/Endpoints/azureAssistants');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
-const { getEndpointsConfig } = require('~/server/services/Config');
+const { getEndpointsConfig, getAccess } = require('~/server/services/Config');
 
 /**
  * @param {ServerRequest} req
@@ -191,6 +192,7 @@ async function getOpenAIClient({ req, res, endpointOption, initAppClient, overri
   if (!endpoint) {
     throw new Error(`[${req.baseUrl}] Endpoint is required`);
   }
+  assertEndpointAccess(await getAccess(req), endpoint);
 
   let result;
   if (endpoint === EModelEndpoint.assistants) {

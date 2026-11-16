@@ -15,6 +15,7 @@ import {
   agentSubagentsSchema,
   validateAgentModel,
 } from './validation';
+import { createAccess } from '~/access';
 
 describe('agent Git identity validation', () => {
   const base = { provider: 'openAI', model: 'gpt-4o-mini', tools: [] };
@@ -451,6 +452,56 @@ describe('validateAgentModel', () => {
     expect(result.isValid).toBe(false);
     expect(result.error?.message).toContain('illegal_model_request');
     expect(logViolation).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('validateAgentModel - access limits', () => {
+  const req = {} as Request<unknown, unknown, unknown>;
+  const res = {} as Response;
+  const refusedAccess = createAccess(
+    {
+      specs: new Map(),
+      endpoints: new Map([['agents', { users: ['x@y.is'] }]]),
+      mcpServers: new Map(),
+    },
+    { email: 'a@b.is', groups: new Set() },
+  );
+  const agent = { provider: 'openai', model: 'gpt-4o' } as Agent;
+
+  it('refuses before any model lookup or violation', async () => {
+    const logViolation = jest.fn();
+    const modelsConfig = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('looked up models');
+        },
+      },
+    );
+    const result = await validateAgentModel({
+      req,
+      res,
+      agent,
+      modelsConfig: modelsConfig as never,
+      logViolation,
+      access: refusedAccess,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.error?.message).toBe(ErrorTypes.ACCESS_REFUSED);
+    expect(result.refused?.status).toBe(403);
+    expect(logViolation).not.toHaveBeenCalled();
+  });
+
+  it('behaves as before with no access or null access', async () => {
+    const params = {
+      req,
+      res,
+      agent,
+      modelsConfig: { openai: ['gpt-4o'] },
+      logViolation: jest.fn(),
+    };
+    expect(await validateAgentModel(params)).toEqual({ isValid: true });
+    expect(await validateAgentModel({ ...params, access: null })).toEqual({ isValid: true });
   });
 });
 

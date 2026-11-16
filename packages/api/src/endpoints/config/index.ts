@@ -1,4 +1,5 @@
 export { filterManagedEndpoints, withholdEmptyEndpoints } from './availability';
+export { filterModelsByAccess } from './access';
 export { createEndpointsConfigService } from './endpoints';
 export { createLoadConfigModels } from './models';
 export * from './providers';

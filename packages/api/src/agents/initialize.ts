@@ -67,6 +67,7 @@ import type { TextContentFragment } from '../protection/types';
 import type { CheckAccessParams } from '../middleware/access';
 import type { MCPToolAlias } from '~/tools/classification';
 import type { AgentExecutionContext } from './runtime';
+import type { Access } from '~/access';
 import {
   injectSkillCatalog,
   resolveSkillCatalog,
@@ -140,6 +141,7 @@ import { applyBackgroundToolCalls } from './background';
 import { applyTurnDelivery } from './files/delivery';
 import { generateArtifactsPrompt } from '~/prompts';
 import { getProviderConfig } from '~/endpoints';
+import { assertAgentAccess } from './access';
 import { primeResources } from './resources';
 
 /**
@@ -854,6 +856,8 @@ export function optsOutOfAttachedCodeEnvironment(
  * Matches the CJS signature from api/server/services/Endpoints/agents/agent.js
  */
 export interface InitializeAgentParams {
+  /** YAML `allowedFor` limits for the caller; null or absent when the file has none. */
+  access?: Access | null;
   /** Cancellation signal owned by the run performing initialization. */
   signal?: AbortSignal;
   /** Explicit transport-free execution state. */
@@ -2015,6 +2019,9 @@ export async function initializeAgent(
   const baseToolNames = agent.tools ?? [];
   const requestedToolNames =
     extraAllowedToolNames.length > 0 ? [...baseToolNames, ...extraAllowedToolNames] : baseToolNames;
+
+  /** Skills add tool keys after the agent-level check; the whole list is checked before loading. */
+  assertAgentAccess({ provider: agent.provider, tools: requestedToolNames }, params.access);
 
   /**
    * `loadTools` failures take two forms:

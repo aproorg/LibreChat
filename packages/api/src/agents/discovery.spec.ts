@@ -24,6 +24,8 @@ jest.mock('./validation', () => ({
   validateAgentModel: (...args: unknown[]) => mockValidateAgentModel(...args),
 }));
 
+import { AgentAccessRefusedError } from './access';
+import { createAccess } from '~/access';
 import { discoverConnectedAgents, resolveSubagentGraphs } from './discovery';
 
 const makeReq = (userId = 'u1', role = 'USER'): ServerRequest =>
@@ -58,6 +60,39 @@ describe('discoverConnectedAgents', () => {
     mockInitializeAgent.mockImplementation(async ({ agent }: { agent: Agent }) =>
       makeConfig(agent.id),
     );
+  });
+
+  it('refuses the whole run when a handoff target fails its access check', async () => {
+    const refused = new AgentAccessRefusedError({ kind: 'endpoint', name: 'Mistral' });
+    mockValidateAgentModel.mockResolvedValue({
+      isValid: false,
+      error: { message: refused.message },
+      refused,
+    });
+    const access = createAccess(
+      { specs: new Map(), endpoints: new Map(), mcpServers: new Map() },
+      { email: 'a@b.is', groups: new Set() },
+    );
+    const run = discoverConnectedAgents(
+      {
+        req: makeReq(),
+        res: makeRes(),
+        primaryConfig: makeConfig('A', [{ from: 'A', to: 'B', edgeType: 'handoff' }]),
+        allowedProviders: new Set(),
+        modelsConfig: { openai: ['gpt-4o'] },
+        loadTools: jest.fn(),
+        access,
+      },
+      {
+        getAgent: jest.fn(async () => makeAgent('B')),
+        checkPermission: jest.fn().mockResolvedValue(true),
+        logViolation: jest.fn(),
+        db: {} as never,
+      },
+    );
+    await expect(run).rejects.toBe(refused);
+    expect(mockValidateAgentModel).toHaveBeenCalledWith(expect.objectContaining({ access }));
+    expect(mockInitializeAgent).not.toHaveBeenCalled();
   });
 
   it('returns empty configs and no edges for a single agent with no edges', async () => {

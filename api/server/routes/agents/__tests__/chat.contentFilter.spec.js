@@ -15,6 +15,7 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('@librechat/api', () => ({
   createMessageFilterPii: mockCreateMessageFilterPii,
   generateCheckAccess: jest.fn(() => (_req, _res, next) => next()),
+  createCheckSendAccess: jest.fn(() => (_req, _res, next) => next()),
   skipAgentCheck: jest.fn(),
   applyResumeContext: jest.fn(),
   GenerationJobManager: {
@@ -28,6 +29,10 @@ jest.mock('~/server/middleware', () => ({
   validateConvoAccess: (_req, _res, next) => next(),
   buildEndpointOption: (_req, _res, next) => next(),
   canAccessAgentFromBody: jest.fn(() => (_req, _res, next) => next()),
+}));
+
+jest.mock('~/server/services/Config', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock('~/server/middleware/validate/subagentThreadTurn', () => (_req, _res, next) => next());

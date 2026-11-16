@@ -61,6 +61,7 @@ const {
   startCodeEnvironmentLifecycleReconciler,
   waitForKeyvRedisClient,
   warnOnUnreachableDeliveryPaths,
+  warnOnAccessLimits,
   createCodeApiUploadRegistry,
   bindSearch,
   startSearchBackground,
@@ -253,6 +254,9 @@ const startServer = async () => {
   });
   configureAgentEventRuntime(appConfig?.endpoints?.agents?.eventDriven);
   warnOnUnreachableDeliveryPaths(appConfig);
+  await runAsSystem(() =>
+    warnOnAccessLimits(appConfig.config, (name) => agentEventMethods.findGroupByQuery({ name })),
+  );
   initializeFileStorage(appConfig);
   const projectRoot = path.resolve(__dirname, '../..');
   // Plugin hooks execute only when the operator opts in via DEPLOYMENT_PLUGIN_HOOKS;
