@@ -15,6 +15,13 @@ export const SEARCH_PAGE_SIZE = 25;
  */
 export const SEARCH_CURSOR_QUERY_CHARS = 256;
 
+/**
+ * Carries `/api/messages?search=`'s load-more cursor. The cursor is a fixed ~2.9 KB, past the
+ * query-string size limit common WAF rules enforce, so it travels in this header instead of the
+ * URL. The server still accepts a `cursor` query parameter from older clients.
+ */
+export const SEARCH_CURSOR_HEADER = 'X-Search-Cursor';
+
 /** Why a successful search came back empty, when that needs its own message. */
 export const SEARCH_REASONS = ['only_stop_words'] as const;
 export type SearchReason = (typeof SEARCH_REASONS)[number];

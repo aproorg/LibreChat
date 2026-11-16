@@ -10,6 +10,7 @@ const {
 const {
   unescapeLaTeX,
   countTokens,
+  readSearchCursor,
   sendFeedbackScore,
   traceIdForMessage,
   mergeQuotedTextForCount,
@@ -151,7 +152,8 @@ router.get('/', async (req, res) => {
       }
       response = messageResult.value;
     } else if (search) {
-      const searched = await req.app.locals.search?.messages(req, res, search, cursor);
+      const searchCursor = readSearchCursor(req);
+      const searched = await req.app.locals.search?.messages(req, res, search, searchCursor);
       if (searched) {
         return res.status(searched.status).json(searched.body);
       }
@@ -167,7 +169,7 @@ router.get('/', async (req, res) => {
 
       const messages = searchResults.hits || [];
 
-      const result = await db.getConvosQueried(req.user.id, messages, cursor, pageSize);
+      const result = await db.getConvosQueried(req.user.id, messages, searchCursor, pageSize);
 
       const messageIds = [];
       const cleanedMessages = [];
