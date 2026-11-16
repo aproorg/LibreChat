@@ -128,6 +128,12 @@ describe('search config schema', () => {
     expect(BASE_ONLY_CONFIG_SECTIONS).toContain('search');
     expect(BASE_ONLY_CONFIG_SECTIONS).toContain('filters');
   });
+
+  it('keeps openidGroupsClaim off by default and base-only', () => {
+    expect(configSchema.parse({ version: '1.0.0' }).openidGroupsClaim).toBeUndefined();
+    expect(configSchema.safeParse({ version: '1.0.0', openidGroupsClaim: '' }).success).toBe(false);
+    expect(BASE_ONLY_CONFIG_SECTIONS).toContain('openidGroupsClaim');
+  });
 });
 
 describe('search API types', () => {

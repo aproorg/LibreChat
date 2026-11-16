@@ -21,6 +21,7 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), debug: jest.fn(), warn: jest.fn(), info: jest.fn() },
   runAsSystem: (fn) => mockRunAsSystem(fn),
   tenantStorage: { run: (context, fn) => mockTenantStorageRun(context, fn) },
+  getTenantId: () => undefined,
 }));
 jest.mock('~/server/services/GraphTokenService', () => ({
   getGraphApiToken: jest.fn(),
@@ -38,7 +39,11 @@ jest.mock('~/server/services/AuthService', () => ({
 }));
 jest.mock('~/strategies', () => ({ getOpenIdConfig: jest.fn(), getOpenIdEmail: jest.fn() }));
 jest.mock('openid-client', () => ({ refreshTokenGrant: jest.fn() }));
+jest.mock('~/server/services/Config', () => ({
+  getAppConfig: jest.fn().mockResolvedValue({ config: {} }),
+}));
 jest.mock('~/models', () => ({
+  syncUserOidcGroups: jest.fn().mockResolvedValue({ added: 0, removed: 0 }),
   deleteSession: jest.fn(),
   deleteAllUserSessions: jest.fn(),
   getUserById: jest.fn(),
@@ -1423,6 +1428,38 @@ describe('refreshController – OpenID path', () => {
         openidIssuer: baseClaims.iss,
       }),
     );
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('does not sync oidc groups unless openidGroupsClaim is set', async () => {
+    const { syncUserOidcGroups } = require('~/models');
+    await refreshController(req, res);
+    expect(syncUserOidcGroups).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('syncs oidc groups from the refreshed claims when openidGroupsClaim is set', async () => {
+    const { getAppConfig } = require('~/server/services/Config');
+    const { syncUserOidcGroups } = require('~/models');
+    getAppConfig.mockResolvedValueOnce({ config: { openidGroupsClaim: 'cognito:groups' } });
+    mockTokenset.claims.mockReturnValue({
+      ...baseClaims,
+      iat: Math.floor(Date.now() / 1000),
+      'cognito:groups': ['G1'],
+    });
+    await refreshController(req, res);
+    expect(syncUserOidcGroups).toHaveBeenCalledWith({
+      memberId: expect.any(String),
+      groupIds: ['G1'],
+      tenantId: 'tenant-1',
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('still answers 200 when the config read for the group sync fails', async () => {
+    const { getAppConfig } = require('~/server/services/Config');
+    getAppConfig.mockRejectedValueOnce(new Error('config down'));
+    await refreshController(req, res);
     expect(res.status).toHaveBeenCalledWith(200);
   });
 

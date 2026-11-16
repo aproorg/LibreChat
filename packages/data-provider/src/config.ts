@@ -62,7 +62,12 @@ export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'd
 /** How long a started social login may take to return to its callback before its `state` expires. */
 export const DEFAULT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-export const BASE_ONLY_CONFIG_SECTIONS = ['filters', 'search', 'corsOrigins'] as const;
+export const BASE_ONLY_CONFIG_SECTIONS = [
+  'filters',
+  'search',
+  'corsOrigins',
+  'openidGroupsClaim',
+] as const;
 /** Sections that may be stored in the tenant's base config document but must
  * not be overridden or tombstoned by role, group, or user config documents. */
 export const BASE_PRINCIPAL_CONFIG_SECTIONS = ['langfuse'] as const;
@@ -3332,6 +3337,12 @@ export const configSchema = z.object({
   skillSync: skillSyncConfigSchema,
   /** Origins allowed credentialed CORS on the skills paths. Base config only. */
   corsOrigins: z.array(corsOriginSchema).default([]),
+  /**
+   * Token claim listing the user's group ids, synced at OpenID login and refresh into 'oidc'
+   * groups. Off when unset. Base config only. Unsetting it later stops the sync but does not
+   * remove memberships already stored: delete the 'oidc' groups to revoke them.
+   */
+  openidGroupsClaim: z.string().min(1).optional(),
   secureImageLinks: z.boolean().optional(),
   imageOutputType: z.nativeEnum(EImageOutputType).default(EImageOutputType.PNG),
   includedTools: z.array(z.string()).optional(),

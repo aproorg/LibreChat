@@ -285,12 +285,12 @@ export function createPrincipalSearch(deps: PrincipalSearchDeps): PrincipalSearc
         _searchScore: deps.calculateRelevanceScore(item, query),
       }));
 
-      const sources = { local: 0, entra: 0 };
+      const sources: TPrincipalSearchResponse['sources'] = { local: 0, entra: 0 };
       const results = deps
         .sortPrincipalsByRelevance(scoredResults)
         .slice(0, searchLimit)
         .map(({ _searchScore, ...result }) => {
-          sources[result.source] += 1;
+          sources[result.source] = (sources[result.source] ?? 0) + 1;
           return result;
         });
 

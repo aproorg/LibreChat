@@ -288,6 +288,8 @@ function blockUninspectableImportFile(req: ServerRequest, res: Response): boolea
   return true;
 }
 
+type ImportHandler = (req: ServerRequest, res: Response) => Promise<Response>;
+
 /**
  * `POST /api/skills/import`
  *
@@ -295,7 +297,7 @@ function blockUninspectableImportFile(req: ServerRequest, res: Response): boolea
  * Creates the skill, then processes additional files individually.
  * Grants SKILL_OWNER to the uploader.
  */
-export function createImportHandler(deps: ImportSkillDeps) {
+export function createImportHandler(deps: ImportSkillDeps): ImportHandler {
   return buildImportHandler(deps);
 }
 
@@ -306,11 +308,13 @@ export function createImportHandler(deps: ImportSkillDeps) {
  * imported name, that skill is replaced in place (same `_id`) instead of a new
  * one being created, so the call is safe to repeat.
  */
-export function createReplaceImportHandler(deps: ImportSkillDeps & ReplaceSkillDeps) {
+export function createReplaceImportHandler(
+  deps: ImportSkillDeps & ReplaceSkillDeps,
+): ImportHandler {
   return buildImportHandler(deps, deps);
 }
 
-function buildImportHandler(deps: ImportSkillDeps, replace?: ReplaceSkillDeps) {
+function buildImportHandler(deps: ImportSkillDeps, replace?: ReplaceSkillDeps): ImportHandler {
   return async function importSkillHandler(req: ServerRequest, res: Response): Promise<Response> {
     const { file } = req;
     if (!file) {
