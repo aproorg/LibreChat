@@ -64,6 +64,22 @@ describe('checkAgentAccess', () => {
 });
 
 describe('checkAgentAccess spellings', () => {
+  it('refuses a tool of a limited server whose own name contains the delimiter', () => {
+    const access = limited({ mcpServers: new Map([['acme_mcp_hub', only]]) });
+    expect(
+      checkAgentAccess(
+        { provider: 'openai', tools: [`search${Constants.mcp_delimiter}acme_mcp_hub`] },
+        access,
+      )?.kind,
+    ).toBe('mcpServer');
+    expect(
+      checkAgentAccess(
+        { provider: 'openai', tools: [`search${Constants.mcp_delimiter}other`] },
+        access,
+      ),
+    ).toBeNull();
+  });
+
   it('refuses a normalized MCP tool key of a limited server with a raw name', () => {
     const access = limited({ mcpServers: new Map([['Jira Cloud', only]]) });
     expect(

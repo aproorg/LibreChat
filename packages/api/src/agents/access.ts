@@ -19,17 +19,13 @@ export function checkAgentAccess(
   if (!access) {
     return null;
   }
-  const servers = new Set<string>();
-  for (const tool of agent.tools ?? []) {
-    const server = typeof tool === 'string' ? splitMCPToolKey(tool)[1] : undefined;
-    if (server) {
-      servers.add(server);
-    }
-  }
-  return (
-    access.check({ endpoint: 'agents', mcpServers: [...servers] }) ??
-    access.check({ endpoint: agent.provider })
+  const tool = (agent.tools ?? []).find(
+    (key) => typeof key === 'string' && !access.allowsMcpTool(key),
   );
+  if (typeof tool === 'string') {
+    return { kind: 'mcpServer', name: splitMCPToolKey(tool)[1] ?? tool };
+  }
+  return access.check({ endpoint: 'agents' }) ?? access.check({ endpoint: agent.provider });
 }
 
 /** Throws {@link AgentAccessRefusedError} (fatal at initialization) when {@link checkAgentAccess} refuses. */

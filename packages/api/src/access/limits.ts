@@ -1,4 +1,9 @@
-import { ErrorTypes, normalizeEndpointName, normalizeServerName } from 'librechat-data-provider';
+import {
+  Constants,
+  ErrorTypes,
+  normalizeServerName,
+  normalizeEndpointName,
+} from 'librechat-data-provider';
 import type { TAllowedFor, TCustomConfig } from 'librechat-data-provider';
 
 export interface AccessCaller {
@@ -118,6 +123,8 @@ export interface Access {
   /** The name is normalized inside. */
   allowsEndpoint(name: string): boolean;
   allowsMcpServer(name: string): boolean;
+  /** A combined tool key (`tool_mcp_server`); false when it ends in a limited server's name. */
+  allowsMcpTool(toolKey: string): boolean;
   /** First refusal in the order spec, endpoint, mcpServers; null when all pass. */
   check(target: AccessTarget): AccessRefusal | null;
 }
@@ -160,6 +167,11 @@ export function createAccess(limits: AccessLimits, caller: AccessCaller): Access
       );
     },
     allowsMcpServer: (name) => passes(serverRules.get(name)),
+    /** Suffix match, so a server name that itself contains the delimiter cannot be mis-split. */
+    allowsMcpTool: (toolKey) =>
+      [...serverRules].every(
+        ([name, rules]) => !toolKey.endsWith(`${Constants.mcp_delimiter}${name}`) || passes(rules),
+      ),
     check({ spec, endpoint, mcpServers }) {
       if (spec && !access.allowsSpec(spec)) {
         return { kind: 'spec', name: spec };
@@ -172,4 +184,14 @@ export function createAccess(limits: AccessLimits, caller: AccessCaller): Access
     },
   };
   return access;
+}
+
+/** Throws {@link AccessRefusedError} when the caller may not use the endpoint. Null access allows all. */
+export function assertEndpointAccess(
+  access: Access | null | undefined,
+  endpoint: string | null | undefined,
+): void {
+  if (access && endpoint && !access.allowsEndpoint(endpoint)) {
+    throw new AccessRefusedError({ kind: 'endpoint', name: endpoint });
+  }
 }

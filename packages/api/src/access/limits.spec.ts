@@ -1,7 +1,13 @@
 import { configSchema } from 'librechat-data-provider';
 import type { TCustomConfig } from 'librechat-data-provider';
 import type { AccessCaller, AccessLimits } from './limits';
-import { collectLimits, createAccess, permits } from './limits';
+import {
+  permits,
+  createAccess,
+  collectLimits,
+  AccessRefusedError,
+  assertEndpointAccess,
+} from './limits';
 
 const caller = (email: string, ...groups: string[]): AccessCaller => ({
   email,
@@ -213,5 +219,23 @@ describe('configSchema', () => {
         .safeParse({ version: '1.3.0', cache: true, endpoints: { agents: { allowedFor: 'x' } } })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('assertEndpointAccess', () => {
+  const limits = collectLimits({
+    endpoints: { assistants: { allowedFor: { users: ['jon@apro.is'] } } },
+  } as unknown as Parameters<typeof collectLimits>[0]);
+  const outsider = createAccess(limits!, { email: 'a@b.is', groups: new Set() });
+  const insider = createAccess(limits!, { email: 'jon@apro.is', groups: new Set() });
+
+  it('throws the coded refusal for a caller off the list', () => {
+    expect(() => assertEndpointAccess(outsider, 'assistants')).toThrow(AccessRefusedError);
+  });
+
+  it('passes a permitted caller, an open endpoint and a file without limits', () => {
+    expect(() => assertEndpointAccess(insider, 'assistants')).not.toThrow();
+    expect(() => assertEndpointAccess(outsider, 'openAI')).not.toThrow();
+    expect(() => assertEndpointAccess(null, 'assistants')).not.toThrow();
   });
 });
