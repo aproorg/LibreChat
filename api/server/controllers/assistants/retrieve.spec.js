@@ -1,7 +1,10 @@
 jest.mock('~/server/services/Endpoints/azureAssistants', () => ({ initializeClient: jest.fn() }));
 jest.mock('~/server/services/Endpoints/assistants', () => ({ initializeClient: jest.fn() }));
 jest.mock('~/server/middleware/roles/capabilities', () => ({ hasCapability: jest.fn() }));
-jest.mock('~/server/services/Config', () => ({ getEndpointsConfig: jest.fn() }));
+jest.mock('~/server/services/Config', () => ({
+  getEndpointsConfig: jest.fn(),
+  getAccess: jest.fn().mockResolvedValue(null),
+}));
 
 const { SystemCapabilities } = require('@librechat/data-schemas');
 const { createAssistantRetriever } = require('../../../../packages/api/src/assistants/retrieve');

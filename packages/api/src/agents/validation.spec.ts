@@ -16,12 +16,12 @@ import {
   agentSubagentsSchema,
   validateAgentModel,
 } from './validation';
-
 import {
   MAX_TOOL_OPTION_KEY_LENGTH,
   MAX_TOOL_OPTION_ENTRIES,
   MAX_TOOL_OPTION_KEY_BYTES,
 } from './options';
+import { createAccess } from '~/access';
 
 const validGroupId = '507f1f77bcf86cd799439011';
 const validPromptId = '507f191e810c19729de860ea';
@@ -985,5 +985,51 @@ describe('tool_options user_toggle', () => {
   it('treats a missing toggle as locked', () => {
     const parsed = agentCreateSchema.parse({ ...base, tool_options: { web_search: {} } });
     expect(parsed.tool_options?.web_search.user_toggle).toBeUndefined();
+  });
+});
+
+describe('validateAgentModel - access limits', () => {
+  const req = {} as Request<unknown, unknown, unknown>;
+  const res = {} as Response;
+  const refusedAccess = createAccess(
+    {
+      specs: new Map(),
+      endpoints: new Map([['agents', { users: ['x@y.is'] }]]),
+      mcpServers: new Map(),
+    },
+    { email: 'a@b.is', groups: new Set() },
+  );
+  const agent = { provider: 'openai', model: 'gpt-4o' } as Agent;
+
+  it('refuses before any model lookup or violation', async () => {
+    const logViolation = jest.fn();
+    const getEndpointModels = jest.fn(async () => {
+      throw new Error('looked up models');
+    });
+    const result = await validateAgentModel({
+      req,
+      res,
+      agent,
+      getEndpointModels,
+      logViolation,
+      access: refusedAccess,
+    });
+    expect(result.isValid).toBe(false);
+    expect(result.error?.message).toBe(ErrorTypes.ACCESS_REFUSED);
+    expect(result.refused?.status).toBe(403);
+    expect(getEndpointModels).not.toHaveBeenCalled();
+    expect(logViolation).not.toHaveBeenCalled();
+  });
+
+  it('behaves as before with no access or null access', async () => {
+    const params = {
+      req,
+      res,
+      agent,
+      getEndpointModels: async () => ({ openai: ['gpt-4o'] }),
+      logViolation: jest.fn(),
+    };
+    expect(await validateAgentModel(params)).toEqual({ isValid: true });
+    expect(await validateAgentModel({ ...params, access: null })).toEqual({ isValid: true });
   });
 });

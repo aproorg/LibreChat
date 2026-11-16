@@ -19,6 +19,7 @@ import AgentError from './AgentError';
  */
 export const errorCopy: Record<string, TranslationKeys> = {
   [ErrorTypes.MODERATION]: 'com_error_moderation',
+  [ErrorTypes.ACCESS_REFUSED]: 'com_error_access_refused',
   [ErrorTypes.INVALID_ACTION]: 'com_error_invalid_action_error',
   [ErrorTypes.MODELS_NOT_LOADED]: 'com_error_models_not_loaded',
   [ErrorTypes.GOOGLE_TOOL_CONFLICT]: 'com_error_google_tool_conflict',

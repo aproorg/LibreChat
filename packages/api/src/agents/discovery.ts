@@ -19,6 +19,7 @@ import type {
 } from './initialize';
 import type { ValidateAgentModelParams } from './validation';
 import type { ServerRequest } from '~/types';
+import type { Access } from '~/access';
 import { validateAgentModel as defaultValidateAgentModel } from './validation';
 import { initializeAgent as defaultInitializeAgent } from './initialize';
 import { createEdgeCollector, resolveReachableGraph } from './edges';
@@ -69,6 +70,8 @@ export interface DiscoverConnectedAgentsParams {
   allowedProviders: Set<string>;
   /** Each referenced agent's provider is known only once it is loaded, so its models load then. */
   getEndpointModels: ValidateAgentModelParams['getEndpointModels'];
+  /** YAML `allowedFor` limits for the caller; any referenced agent they exclude refuses the run. */
+  access?: Access | null;
   loadTools: InitializeAgentParams['loadTools'];
   requestFiles?: InitializeAgentParams['requestFiles'];
   conversationId?: string | null;
@@ -248,11 +251,12 @@ async function initializeReferencedAgent(
       agent,
       getEndpointModels: params.getEndpointModels,
       logViolation: deps.logViolation,
+      access: params.access,
     }),
     params.signal,
   );
   if (!validation.isValid) {
-    throw new Error(validation.error?.message);
+    throw validation.refused ?? new Error(validation.error?.message);
   }
 
   const scopedSkillIds = params.computeAccessibleSkillIds?.(agent);
@@ -263,6 +267,7 @@ async function initializeReferencedAgent(
         req: params.req,
         res: params.res,
         agent,
+        access: params.access,
         loadTools: params.loadTools,
         requestFiles: params.requestFiles,
         conversationId: params.conversationId,

@@ -83,7 +83,7 @@ import type { PullRequestProvider } from './types/pullRequest';
 import { isActionTool } from './types/tools';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
-import { MCPServersSchema } from './mcp';
+import { MCPServersSchema, allowedForSchema } from './mcp';
 export {
   MAX_SUBAGENTS,
   MAX_SUBAGENTS_CEILING,
@@ -951,6 +951,8 @@ export const defaultAssistantsVersion = {
 };
 
 export const baseEndpointSchema = z.object({
+  /** Limits the endpoint to the named groups and users. Server-side only; never sent to clients. */
+  allowedFor: allowedForSchema.optional(),
   /**
    * Milliseconds between visible streamed chunks. Agents SDK-backed
    * providers (openAI, custom, anthropic, google, bedrock, agents) smooth
@@ -2737,6 +2739,7 @@ export const azureEndpointSchema = z
      */
     endpointSchema
       .pick({
+        allowedFor: true,
         streamRate: true,
         titleConvo: true,
         titleMethod: true,
@@ -5290,7 +5293,7 @@ export const configSchema = z.object({
        * `.pick()`). Resolution order at read sites is `all` > the named
        * endpoint > a custom endpoint's own config.
        */
-      all: baseEndpointSchema.omit({ baseURL: true }).optional(),
+      all: baseEndpointSchema.omit({ baseURL: true, allowedFor: true }).optional(),
       [EModelEndpoint.openAI]: modelListEndpointSchema.optional(),
       [EModelEndpoint.google]: googleEndpointSchema.optional(),
       [EModelEndpoint.anthropic]: anthropicEndpointSchema.optional(),
@@ -5914,6 +5917,10 @@ export enum ViolationTypes {
  * Enum for error message types that are not "violations" as above, used to identify client-facing errors.
  */
 export enum ErrorTypes {
+  /**
+   * The caller is not named in the `allowedFor` limit of the spec, endpoint or MCP server.
+   */
+  ACCESS_REFUSED = 'access_refused',
   /**
    * No User-provided Key.
    */

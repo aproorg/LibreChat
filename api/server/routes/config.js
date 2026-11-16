@@ -14,6 +14,7 @@ const {
   getConversationTitleCapabilities,
   sanitizeModelSpecs,
   excludeHiddenModelSpecs,
+  filterModelSpecsByAccess,
   isFileSnapshotEnabled,
   getEndpointsDropParamsMap,
   resolveCodeEnvironmentDecisionVersion,
@@ -40,6 +41,7 @@ const { hasCapability, getHeldCapabilities } = require('~/server/middleware/role
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
+const { getAccess } = require('~/server/services/Config/access');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 
 const router = express.Router();
@@ -311,10 +313,14 @@ router.get('/', async function (req, res) {
     const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
     const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
 
-    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
+    const access = await getAccess(req);
+    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints, access);
 
     const modelsConfig = await getModelsConfig(req);
-    const visibleModelSpecs = excludeHiddenModelSpecs(appConfig?.modelSpecs);
+    const visibleModelSpecs = filterModelSpecsByAccess(
+      excludeHiddenModelSpecs(appConfig?.modelSpecs),
+      access,
+    );
     const filteredModelSpecs = filterModelSpecsByAvailability(visibleModelSpecs, modelsConfig);
 
     const balanceConfig = getBalanceConfig(appConfig);

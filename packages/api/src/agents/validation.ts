@@ -23,7 +23,9 @@ import type {
 } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { Request, Response } from 'express';
+import type { Access } from '~/access';
 import { filterManagedEndpoints } from '~/endpoints/config/availability';
+import { AgentAccessRefusedError, checkAgentAccess } from './access';
 import { getToolOptionsLimitError } from './options';
 
 /**
@@ -551,6 +553,8 @@ export interface ValidateAgentModelParams {
    * so a request never loads the model lists of endpoints none of its agents use.
    */
   getEndpointModels: (endpoint: string) => Promise<TModelsConfig>;
+  /** YAML `allowedFor` limits for the caller; null or omitted means no limits. */
+  access?: Access | null;
   logViolation: (
     req: LooseRequest,
     res: Response,
@@ -565,6 +569,8 @@ interface ValidateAgentModelResult {
   error?: {
     message: string;
   };
+  /** Set when the caller is refused; throw it as-is so it carries status 403 and the stable code. */
+  refused?: AgentAccessRefusedError;
 }
 
 /**
@@ -578,8 +584,14 @@ interface ValidateAgentModelResult {
 export async function validateAgentModel(
   params: ValidateAgentModelParams,
 ): Promise<ValidateAgentModelResult> {
-  const { req, res, agent, getEndpointModels, logViolation } = params;
+  const { req, res, agent, getEndpointModels, logViolation, access } = params;
   const { model, provider: endpoint } = agent;
+
+  const refusal = checkAgentAccess(agent, access);
+  if (refusal) {
+    const refused = new AgentAccessRefusedError(refusal);
+    return { isValid: false, error: { message: refused.message }, refused };
+  }
 
   if (!model) {
     return {

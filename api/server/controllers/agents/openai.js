@@ -5,6 +5,7 @@ const {
   createOpenAIToolCallStream: createAcceptedToolCallStream,
 } = require('@librechat/agents/openai');
 const {
+  ErrorTypes,
   EModelEndpoint,
   ResourceType,
   PermissionBits,
@@ -14,6 +15,7 @@ const {
 } = require('librechat-data-provider');
 const {
   writeSSE,
+  checkAgentAccess,
   createRun,
   createChunk,
   applyContextToAgent,
@@ -112,6 +114,7 @@ const {
   getLinkedInstructionsResolver,
 } = require('~/server/services/Endpoints/agents/linkedInstructions');
 const { getEndpointModelsConfig } = require('~/server/controllers/ModelController');
+const { getAccess } = require('~/server/services/Config');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { resolveConfigServers } = require('~/server/services/MCP');
 const { getMCPManager } = require('~/config');
@@ -484,6 +487,17 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
         );
       }
 
+      const access = await getAccess(req);
+      if (checkAgentAccess(agent, access)) {
+        return sendErrorResponse(
+          res,
+          403,
+          'Access to this agent is refused.',
+          'invalid_request_error',
+          ErrorTypes.ACCESS_REFUSED,
+        );
+      }
+
       req.turnStartedAt = envelope.receivedAt;
       const { decision: codeEnvironmentDecision, conversation: admittedConversation } =
         await resolveAdmittedCodeEnvironmentDecision({
@@ -635,6 +649,7 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
       const primaryConfig = await initializeAgent(
         {
           runtime: agentRuntime,
+          access,
           loadTools,
           requestFiles: [],
           conversationId,
@@ -703,6 +718,7 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
         const discoveryParams = {
           req,
           res,
+          access,
           signal: execution.signal,
           primaryConfig,
           endpointOption,
@@ -1321,19 +1337,22 @@ const ListModelsController = async (req, res) => {
       agents = await db.getAgentModelSummaries(accessibleAgentIds);
     }
 
-    const models = agents.map((agent) => ({
-      id: agent.id,
-      object: 'model',
-      created: Math.floor(new Date(agent.createdAt || Date.now()).getTime() / 1000),
-      owned_by: 'librechat',
-      permission: [],
-      root: agent.id,
-      parent: null,
-      // LibreChat extensions
-      name: agent.name,
-      description: agent.description,
-      provider: agent.provider,
-    }));
+    const access = await getAccess(req);
+    const models = agents
+      .filter((agent) => !checkAgentAccess(agent, access))
+      .map((agent) => ({
+        id: agent.id,
+        object: 'model',
+        created: Math.floor(new Date(agent.createdAt || Date.now()).getTime() / 1000),
+        owned_by: 'librechat',
+        permission: [],
+        root: agent.id,
+        parent: null,
+        // LibreChat extensions
+        name: agent.name,
+        description: agent.description,
+        provider: agent.provider,
+      }));
 
     res.json({
       object: 'list',
@@ -1382,8 +1401,9 @@ const GetModelController = async (req, res) => {
     });
 
     const hasAccess = accessibleAgentIds.some((id) => id.toString() === agent._id.toString());
+    const refused = hasAccess && checkAgentAccess(agent, await getAccess(req));
 
-    if (!hasAccess) {
+    if (!hasAccess || refused) {
       return sendErrorResponse(
         res,
         403,

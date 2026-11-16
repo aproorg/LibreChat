@@ -12,6 +12,7 @@ const {
   primeInvokedSkillsForProfiles,
   createWorkspaceAttachmentPrimer,
   validateAgentModel,
+  assertAgentAccess,
   extractManualSkills,
   GenerationJobManager,
   getCustomEndpointConfig,
@@ -122,7 +123,7 @@ const {
 const { logViolation } = require('~/cache');
 const db = require('~/models');
 const { getFileStorage } = require('~/server/services/Files/operations');
-const { getAppConfig } = require('~/server/services/Config');
+const { getAppConfig, getAccess } = require('~/server/services/Config');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
@@ -368,8 +369,9 @@ const initializeClientWithProvider = async ({
   const primaryAgentPromise = endpointOption.agent;
   /** Each validation, including handoff and subagents, loads only its agent's provider models. */
   const getEndpointModels = (endpoint) => getEndpointModelsConfig(req, endpoint);
-  const validatedPrimaryAgentPromise = Promise.resolve(primaryAgentPromise).then(
-    async (primaryAgent) => {
+  const accessPromise = getAccess(req);
+  const validatedPrimaryAgentPromise = Promise.all([primaryAgentPromise, accessPromise]).then(
+    async ([primaryAgent, access]) => {
       if (!primaryAgent) {
         throw new Error('Agent not found');
       }
@@ -379,10 +381,11 @@ const initializeClientWithProvider = async ({
         res,
         getEndpointModels,
         logViolation,
+        access,
         agent: primaryAgent,
       });
       if (!validationResult.isValid) {
-        throw new Error(validationResult.error?.message);
+        throw validationResult.refused ?? new Error(validationResult.error?.message);
       }
 
       return primaryAgent;
@@ -795,6 +798,7 @@ const initializeClientWithProvider = async ({
       useChatProjectContext: true,
       req,
       res,
+      access: await accessPromise,
       loadTools,
       requestFiles,
       conversationId,
@@ -861,6 +865,7 @@ const initializeClientWithProvider = async ({
     buildAgentToolContext({ agent: primaryAgent, config: primaryConfig }),
   );
 
+  const access = await accessPromise;
   const {
     agentConfigs: discoveredConfigs,
     edges: discoveredEdges,
@@ -876,6 +881,7 @@ const initializeClientWithProvider = async ({
       endpointOption,
       allowedProviders,
       getEndpointModels,
+      access,
       loadTools,
       requestFiles,
       conversationId,
@@ -977,6 +983,7 @@ const initializeClientWithProvider = async ({
     loadTools,
     logViolation,
     getEndpointModels,
+    access,
     requestFiles,
     agentConfigs,
     primaryAgent,
@@ -1308,6 +1315,7 @@ const initializeClientWithProvider = async ({
           skippedAgentIds.add(agentId);
           return null;
         }
+        assertAgentAccess(agent, access);
         const metadata = await toLazySubagentMetadata(agent);
         lazyMetadataByAgentId.set(agentId, metadata);
         return metadata;
@@ -1382,12 +1390,15 @@ const initializeClientWithProvider = async ({
       throw new Error(`You no longer have access to subagent ${agentId}.`);
     }
     const validation = await waitForAbort(
-      validateAgentModel({ req, res, agent, getEndpointModels, logViolation }),
+      validateAgentModel({ req, res, agent, getEndpointModels, logViolation, access }),
       context.signal,
     );
     throwIfAborted(context.signal);
     if (!validation.isValid) {
-      throw new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`);
+      throw (
+        validation.refused ??
+        new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`)
+      );
     }
     const placement = await waitForAbort(
       subagentCodeRouting.place({
@@ -1420,6 +1431,7 @@ const initializeClientWithProvider = async ({
             req,
             res,
             agent: routedAgent,
+            access,
             loadTools: createToolLoader(
               req,
               res,

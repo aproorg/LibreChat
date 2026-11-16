@@ -75,6 +75,7 @@ import type { CodeContextEntry } from '~/files/code/priming';
 import type { MCPToolAlias } from '~/tools/classification';
 import type { CodeExecutionContext } from './execution';
 import type { AgentExecutionContext } from './runtime';
+import type { Access } from '~/access';
 import {
   injectSkillCatalog,
   resolveSkillCatalog,
@@ -84,6 +85,12 @@ import {
   unionPrimeAllowedTools,
   MAX_PRIMED_SKILLS_PER_TURN,
 } from './skills';
+import {
+  assertAgentAttachmentLimits,
+  isModelBoundAttachmentFile,
+  planInlineAttachmentBudget,
+  INLINE_ATTACHMENT_CONTEXT_SHARE,
+} from './attachments';
 import {
   resolveChatProjectFiles,
   resolveChatProjectPolicyFiles,
@@ -131,12 +138,6 @@ import { assertChatProjectInstructions, ChatProjectResourcesChangedError } from 
 import { extractAgentContent, extractSkillContent } from '../protection/adapters/submissions';
 import { selectCodeFileGenerations, planCodeSnapshotMounts } from '~/files/code/destinations';
 import { createConfiguredContentInspector, inspectContent } from '../protection/runtime';
-import {
-  assertAgentAttachmentLimits,
-  isModelBoundAttachmentFile,
-  planInlineAttachmentBudget,
-  INLINE_ATTACHMENT_CONTEXT_SHARE,
-} from './attachments';
 import { assertModelBoundContent } from '../middleware/modelBoundContent';
 import { resolveAttachedWorkspaceReadFileLines } from '~/code/workspace';
 import { isValidInstructionsPromptLink } from './instructions/linked';
@@ -164,6 +165,7 @@ import { applyTurnDelivery } from './files/delivery';
 import { generateArtifactsPrompt } from '~/prompts';
 import { getAgentInferencePolicy } from './input';
 import { getProviderConfig } from '~/endpoints';
+import { assertAgentAccess } from './access';
 import { primeResources } from './resources';
 import { pinAgentModel } from './pin';
 
@@ -989,6 +991,8 @@ export const DEFAULT_MAX_CONTEXT_TOKENS = 32000;
  * Matches the CJS signature from api/server/services/Endpoints/agents/agent.js
  */
 export interface InitializeAgentParams {
+  /** YAML `allowedFor` limits for the caller; null or absent when the file has none. */
+  access?: Access | null;
   /** Cancellation signal owned by the run performing initialization. */
   signal?: AbortSignal;
   /** Explicit transport-free execution state. */
@@ -1600,6 +1604,9 @@ export async function initializeAgent(
   const effectiveToolNames =
     extraAllowedToolNames.length > 0 ? [...baseToolNames, ...extraAllowedToolNames] : baseToolNames;
   const requestedToolNames = effectiveToolNames;
+
+  /** Skills add tool keys after the agent-level check; the whole list is checked before loading. */
+  assertAgentAccess({ provider: agent.provider, tools: requestedToolNames }, params.access);
   const provider = agent.provider;
   agent.endpoint = provider;
 

@@ -146,6 +146,8 @@ import { initializeAgent } from '../initialize';
 import { createProvisionFilesCallback } from '~/files/provision/callback';
 import { createFileProvisionRecovery } from '~/files/operations';
 import { selectCodeFiles } from '~/files/code/priming';
+import { AgentAccessRefusedError } from '../access';
+import { createAccess } from '~/access';
 import { primeResources } from '../resources';
 import { isFatalAgentInitializationError } from '../errors';
 import { canAgentGraphPause } from '../hitl/admission';
@@ -3209,6 +3211,46 @@ describe('initializeAgent — skill `allowed-tools` union (Phase 6)', () => {
     expect(definedNames).toEqual(
       expect.arrayContaining(['web_search', 'execute_code', 'read_file']),
     );
+  });
+
+  it('refuses the run before loading tools when a skill adds a tool of a limited MCP server', async () => {
+    const { agent, req, res, loadTools, db } = createMocks();
+    agent.tools = ['web_search'];
+    const { Types } = await import('mongoose');
+    const skillId = new Types.ObjectId();
+    const getSkillByName = buildGetSkillByName(
+      'tool-skill',
+      [`search${Constants.mcp_delimiter}sindri`],
+      skillId,
+      req.user!.id,
+    );
+    const access = createAccess(
+      {
+        specs: new Map(),
+        endpoints: new Map(),
+        mcpServers: new Map([['sindri', { users: ['other@x.is'] }]]),
+      },
+      { email: 'a@x.is', groups: new Set() },
+    );
+
+    await expect(
+      initializeAgent(
+        {
+          req,
+          res,
+          agent,
+          loadTools,
+          access,
+          endpointOption: { endpoint: EModelEndpoint.agents },
+          allowedProviders: new Set([Providers.OPENAI]),
+          isInitialAgent: true,
+          accessibleSkillIds: [skillId],
+          manualSkills: ['tool-skill'],
+        },
+        { ...db, listSkillsByAccess: emptyListSkillsByAccess, getSkillByName },
+      ),
+    ).rejects.toBeInstanceOf(AgentAccessRefusedError);
+    expect(loadTools).not.toHaveBeenCalled();
   });
 
   it('does not call loadTools twice when the skill declares no allowed-tools', async () => {

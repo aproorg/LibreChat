@@ -1,5 +1,7 @@
 const express = require('express');
+const { createCheckEndpointAccess } = require('@librechat/api');
 const { uaParser, checkBan, requireJwtAuth, configMiddleware } = require('~/server/middleware');
+const { getAccess } = require('~/server/services/Config');
 const router = express.Router();
 
 const { v1 } = require('./v1');
@@ -11,6 +13,7 @@ router.use(requireJwtAuth);
 router.use(checkBan);
 router.use(uaParser);
 router.use(configMiddleware);
+router.use(createCheckEndpointAccess({ getAccess }));
 router.use('/v1/', v1);
 router.use('/v1/chat', chatV1);
 router.use('/v2/', v2);

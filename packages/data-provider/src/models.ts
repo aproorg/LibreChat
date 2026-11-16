@@ -10,6 +10,7 @@ import {
   authTypeSchema,
 } from './schemas';
 import { getMaxSubagents } from './limits';
+import { allowedForSchema } from './mcp';
 
 type ModelSpecSubagentsConfig = Omit<AgentSubagentsConfig, 'graphs'>;
 
@@ -200,6 +201,8 @@ export function materializeModelSpecEndpoints<
 
 export const tModelSpecSchema = z.object({
   name: z.string(),
+  /** Limits the spec to the named groups and users. Server-side only; never sent to clients. */
+  allowedFor: allowedForSchema.optional(),
   label: z.string(),
   preset: tModelSpecPresetSchema,
   order: z.number().optional(),
