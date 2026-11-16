@@ -298,12 +298,13 @@ router.get('/', async function (req, res) {
     const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
     const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
 
-    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
+    const access = await getAccess(req);
+    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints, access);
 
     const modelsConfig = await getModelsConfig(req);
     const visibleModelSpecs = filterModelSpecsByAccess(
       excludeHiddenModelSpecs(appConfig?.modelSpecs),
-      await getAccess(req),
+      access,
     );
     const filteredModelSpecs = filterModelSpecsByAvailability(visibleModelSpecs, modelsConfig);
 

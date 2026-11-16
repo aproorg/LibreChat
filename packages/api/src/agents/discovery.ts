@@ -255,6 +255,7 @@ async function initializeReferencedAgent(
         req: params.req,
         res: params.res,
         agent,
+        access: params.access,
         loadTools: params.loadTools,
         requestFiles: params.requestFiles,
         conversationId: params.conversationId,

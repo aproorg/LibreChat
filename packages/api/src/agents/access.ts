@@ -31,3 +31,14 @@ export function checkAgentAccess(
     access.check({ endpoint: agent.provider })
   );
 }
+
+/** Throws {@link AgentAccessRefusedError} (fatal at initialization) when {@link checkAgentAccess} refuses. */
+export function assertAgentAccess(
+  agent: Pick<Agent, 'provider' | 'tools'>,
+  access: Access | null | undefined,
+): void {
+  const refusal = checkAgentAccess(agent, access);
+  if (refusal) {
+    throw new AgentAccessRefusedError(refusal);
+  }
+}

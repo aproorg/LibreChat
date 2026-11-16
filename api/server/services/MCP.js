@@ -35,6 +35,7 @@ const {
   getUserMCPAuthMap,
   getServerCustomUserVars,
   filterServersByAccess,
+  isServerAllowed,
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
   hasRuntimeUrlPlaceholders,
@@ -410,6 +411,7 @@ async function healMcpToolNames({ req, tools, toolDefinitions, accessibleServerN
 async function getAssistantToolDefinitions({ req, res, tools }) {
   const registry = getMCPServersRegistry();
   const appConfig = await getAppConfigForRequest(req);
+  const access = await getAccessForUser(req.user?.id, req.user);
   const oboIdentityContext = createAuthIdentityContext({
     user: req.user,
     tenantId: getTenantId(),
@@ -426,12 +428,15 @@ async function getAssistantToolDefinitions({ req, res, tools }) {
       user: req.user,
       tools,
       staticTools: (await getCachedTools()) ?? {},
-      mcpConfig: appConfig?.mcpConfig ?? {},
+      mcpConfig: filterServersByAccess(appConfig?.mcpConfig ?? {}, access),
     },
     {
       ensureConfigServers: (mcpConfig) => registry.ensureConfigServers(mcpConfig),
-      getAllServerConfigs: (userId, configServers, role) =>
-        registry.getAllServerConfigs(userId, configServers, role),
+      getAllServerConfigs: async (userId, configServers, role) =>
+        filterServersByAccess(
+          await registry.getAllServerConfigs(userId, configServers, role),
+          access,
+        ),
       getMCPServerTools,
       getServerToolFunctionsSnapshot: async (userId, serverName, serverConfig, options) =>
         (await getMCPManager()?.getServerToolFunctionsSnapshot(
@@ -1061,6 +1066,9 @@ async function createMCPTools({
   streamId = null,
   jobCreatedAt,
 }) {
+  if (!isServerAllowed(await getAccessForUser(user?.id, user), serverName)) {
+    return [];
+  }
   let recoveryPolicy;
   const serverConfig =
     config ?? (await getMCPServersRegistry().getServerConfig(serverName, user?.id, configServers));
@@ -1234,6 +1242,9 @@ async function createMCPTool({
         serverName = aliasedName;
       }
     }
+  }
+  if (!isServerAllowed(await getAccessForUser(user?.id, user), serverName)) {
+    return undefined;
   }
   const requestScopedTools = serverConfig ? requiresEphemeralUserConnection(serverConfig) : false;
   const useMissingToolCache = !requestScopedTools;

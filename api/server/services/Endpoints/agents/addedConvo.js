@@ -184,6 +184,7 @@ const processAddedConvo = async ({
       {
         req,
         res,
+        access,
         loadTools,
         requestFiles,
         conversationId,

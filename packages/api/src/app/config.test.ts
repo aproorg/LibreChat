@@ -14,6 +14,7 @@ import {
   getTransactionsConfig,
   getEndpointsDropParamsMap,
 } from './config';
+import { createAccess } from '~/access';
 
 // Helper function to create a minimal AppConfig for testing
 const createTestAppConfig = (overrides: Partial<AppConfig> = {}): AppConfig => {
@@ -415,6 +416,41 @@ describe('getCustomEndpointConfig', () => {
       const result = getCustomEndpointConfig({ endpoint: 'customai', appConfig });
       expect(result).toBeUndefined();
     });
+  });
+});
+
+describe('getEndpointsDropParamsMap with access', () => {
+  const access = createAccess(
+    {
+      specs: new Map(),
+      endpoints: new Map([
+        ['Secret', { users: ['boss@x.is'] }],
+        [EModelEndpoint.azureOpenAI, { users: ['boss@x.is'] }],
+      ]),
+      mcpServers: new Map(),
+    },
+    { email: 'a@x.is', groups: new Set() },
+  );
+  const endpoints: AppConfig['endpoints'] = {
+    [EModelEndpoint.custom]: [
+      { name: 'Secret', dropParams: ['stop'] } as TEndpoint,
+      { name: 'Open', dropParams: ['top_p'] } as TEndpoint,
+    ],
+    [EModelEndpoint.azureOpenAI]: createAzureConfig(createAzureGroupMap({ groupA: ['stop'] }), {
+      'model-a': { group: 'groupA' },
+    }),
+  };
+
+  it('skips custom endpoints and azureOpenAI the caller may not use', () => {
+    expect(getEndpointsDropParamsMap(endpoints, access)).toEqual({ Open: ['top_p'] });
+  });
+
+  it('keeps everything without access', () => {
+    expect(Object.keys(getEndpointsDropParamsMap(endpoints, null)).sort()).toEqual([
+      'Open',
+      'Secret',
+      EModelEndpoint.azureOpenAI,
+    ]);
   });
 });
 

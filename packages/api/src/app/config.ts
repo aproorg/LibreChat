@@ -11,6 +11,7 @@ import type {
   TTransactionsConfig,
 } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
+import type { Access } from '~/access';
 import { resolveCustomEndpointSecrets } from '~/admin/secrets';
 import { isEnabled } from '~/utils';
 
@@ -85,6 +86,7 @@ export const getCustomEndpointConfig = ({
  */
 export function getEndpointsDropParamsMap(
   endpoints: AppConfig['endpoints'],
+  access?: Access | null,
 ): EndpointsDropParamsMap {
   const result: EndpointsDropParamsMap = {};
   if (!endpoints) {
@@ -92,13 +94,20 @@ export function getEndpointsDropParamsMap(
   }
 
   endpoints[EModelEndpoint.custom]?.forEach((endpoint) => {
+    if (access && !access.allowsEndpoint(endpoint?.name ?? '')) {
+      return;
+    }
     if (endpoint?.dropParams && endpoint.dropParams.length > 0) {
       result[normalizeEndpointName(endpoint.name ?? '')] = endpoint.dropParams;
     }
   });
 
   const azureConfig = endpoints[EModelEndpoint.azureOpenAI];
-  if (azureConfig?.groupMap && azureConfig?.modelGroupMap) {
+  if (
+    azureConfig?.groupMap &&
+    azureConfig?.modelGroupMap &&
+    (!access || access.allowsEndpoint(EModelEndpoint.azureOpenAI))
+  ) {
     const { groupMap, modelGroupMap } = azureConfig;
     const modelDropParams: Record<string, string[]> = {};
     Object.entries(modelGroupMap).forEach(([modelName, modelConfig]) => {

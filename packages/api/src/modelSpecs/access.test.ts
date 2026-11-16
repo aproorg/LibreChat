@@ -39,6 +39,14 @@ describe('filterModelSpecsByAccess', () => {
     expect(filterModelSpecsByAccess({ list }, allowed).list).toHaveLength(4);
   });
 
+  it('drops added endpoints the caller may not use', () => {
+    const result = filterModelSpecsByAccess(
+      { list, addedEndpoints: ['openAI', 'mistral', 'Mistral'] },
+      access,
+    );
+    expect(result.addedEndpoints).toEqual(['openAI']);
+  });
+
   it('returns the same object for null access', () => {
     const specs = { list };
     expect(filterModelSpecsByAccess(specs, null)).toBe(specs);

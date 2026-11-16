@@ -15,6 +15,11 @@ export function filterServersByAccess<T>(
   );
 }
 
+/** A server the caller may not use behaves like one that does not exist. Null access allows all. */
+export function isServerAllowed(access: Access | null | undefined, serverName?: string): boolean {
+  return !access || !serverName || access.allowsMcpServer(serverName);
+}
+
 /** Refuses a `:serverName` route with 403 before the handler runs. Place after auth. */
 export function createCheckMcpServerAccess({
   getAccess,

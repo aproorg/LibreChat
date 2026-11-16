@@ -35,6 +35,19 @@ describe('createAccessService', () => {
     expect(getAppConfig).toHaveBeenCalledWith({ baseOnly: true, tenantId: 't' });
   });
 
+  it('looks groups up once for repeated run-time calls with the same user object', async () => {
+    const { service, getUserGroups } = setup(limited, [{ name: 'Þjónusta' }]);
+    const user = { id: '1', email: 'a@b.is' };
+    const results = await Promise.all([
+      service.getAccessForUser('1', user),
+      service.getAccessForUser('1', user),
+    ]);
+    expect(results[0]).toBe(results[1]);
+    expect(getUserGroups).toHaveBeenCalledTimes(1);
+    await service.getAccessForUser('1', { ...user });
+    expect(getUserGroups).toHaveBeenCalledTimes(2);
+  });
+
   it('refuses a caller outside the group', async () => {
     const { service } = setup(limited, [{ name: 'Annað' }]);
     const access = await service.getAccess({ user: { id: '1', email: 'a@b.is' } });

@@ -1,6 +1,6 @@
 import { configSchema } from 'librechat-data-provider';
 import type { TCustomConfig } from 'librechat-data-provider';
-import type { AccessCaller } from './limits';
+import type { AccessCaller, AccessLimits } from './limits';
 import { collectLimits, createAccess, permits } from './limits';
 
 const caller = (email: string, ...groups: string[]): AccessCaller => ({
@@ -124,6 +124,58 @@ describe('createAccess', () => {
     expect(
       access.check({ spec: 'fjarmal', endpoint: 'agents', mcpServers: ['sindri'] }),
     ).toBeNull();
+  });
+});
+
+describe('createAccess spellings', () => {
+  const only = { users: ['boss@x.is'] };
+  const mk = (parts: Partial<AccessLimits>, email = 'a@x.is') =>
+    createAccess(
+      { specs: new Map(), endpoints: new Map(), mcpServers: new Map(), ...parts },
+      caller(email),
+    );
+  const boss = (parts: Partial<AccessLimits>) => mk(parts, 'boss@x.is');
+
+  it('matches an MCP server by its raw and its normalized name', () => {
+    const mcpServers = new Map([['Jira Cloud', only]]);
+    expect(mk({ mcpServers }).allowsMcpServer('Jira Cloud')).toBe(false);
+    expect(mk({ mcpServers }).allowsMcpServer('Jira_Cloud')).toBe(false);
+    expect(boss({ mcpServers }).allowsMcpServer('Jira Cloud')).toBe(true);
+    expect(boss({ mcpServers }).allowsMcpServer('Jira_Cloud')).toBe(true);
+  });
+
+  it('needs every rule when two server names normalize alike', () => {
+    const mcpServers = new Map([
+      ['Jira Cloud', only],
+      ['Jira_Cloud', { users: ['other@x.is'] }],
+    ]);
+    expect(boss({ mcpServers }).allowsMcpServer('Jira_Cloud')).toBe(false);
+    expect(boss({ mcpServers }).allowsMcpServer('Jira Cloud')).toBe(true);
+  });
+
+  it('matches endpoints case-insensitively', () => {
+    const endpoints = new Map([
+      ['anthropic', only],
+      ['OpenRouter', only],
+    ]);
+    expect(mk({ endpoints }).allowsEndpoint('Anthropic')).toBe(false);
+    expect(mk({ endpoints }).allowsEndpoint('openrouter')).toBe(false);
+    expect(boss({ endpoints }).allowsEndpoint('openrouter')).toBe(true);
+  });
+
+  it('needs every rule when endpoint names differ only by case', () => {
+    const endpoints = new Map([
+      ['OpenRouter', only],
+      ['OPENROUTER', { users: ['other@x.is'] }],
+    ]);
+    expect(boss({ endpoints }).allowsEndpoint('openrouter')).toBe(false);
+  });
+
+  it('resolves the vertexai alias to the google endpoint', () => {
+    const endpoints = new Map([['google', only]]);
+    expect(mk({ endpoints }).allowsEndpoint('vertexai')).toBe(false);
+    expect(mk({ endpoints }).allowsEndpoint('VertexAI')).toBe(false);
+    expect(boss({ endpoints }).allowsEndpoint('vertexai')).toBe(true);
   });
 });
 

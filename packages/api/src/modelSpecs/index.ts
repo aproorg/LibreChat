@@ -256,6 +256,9 @@ export function filterModelSpecsByAccess<T extends Partial<TSpecsConfig> | null 
           mcpServers: spec?.mcpServers,
         }) === null,
     ),
+    ...(modelSpecs.addedEndpoints && {
+      addedEndpoints: modelSpecs.addedEndpoints.filter((name) => access.allowsEndpoint(name)),
+    }),
   } as T;
 }
 

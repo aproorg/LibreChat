@@ -9,6 +9,7 @@ const {
   initializeAgent,
   primeInvokedSkillsForProfiles,
   validateAgentModel,
+  assertAgentAccess,
   extractManualSkills,
   GenerationJobManager,
   getCustomEndpointConfig,
@@ -730,6 +731,7 @@ const initializeClientWithProvider = async ({
     {
       req,
       res,
+      access: await accessPromise,
       loadTools,
       requestFiles,
       conversationId,
@@ -1201,6 +1203,7 @@ const initializeClientWithProvider = async ({
           skippedAgentIds.add(agentId);
           return null;
         }
+        assertAgentAccess(agent, access);
         const metadata = await toLazySubagentMetadata(agent);
         lazyMetadataByAgentId.set(agentId, metadata);
         return metadata;
@@ -1301,6 +1304,7 @@ const initializeClientWithProvider = async ({
           req,
           res,
           agent,
+          access,
           loadTools: createToolLoader(
             req,
             res,

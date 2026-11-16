@@ -1,4 +1,4 @@
-import { ErrorTypes, normalizeEndpointName } from 'librechat-data-provider';
+import { ErrorTypes, normalizeEndpointName, normalizeServerName } from 'librechat-data-provider';
 import type { TAllowedFor, TCustomConfig } from 'librechat-data-provider';
 
 export interface AccessCaller {
@@ -122,13 +122,44 @@ export interface Access {
   check(target: AccessTarget): AccessRefusal | null;
 }
 
+/** Rules indexed under each spelling a caller may use; one name can match several rules. */
+function indexRules(
+  map: ReadonlyMap<string, TAllowedFor>,
+  spellings: (key: string) => string[],
+): Map<string, TAllowedFor[]> {
+  const index = new Map<string, TAllowedFor[]>();
+  for (const [key, rule] of map) {
+    for (const spelling of spellings(key)) {
+      const rules = index.get(spelling) ?? [];
+      if (!rules.includes(rule)) {
+        rules.push(rule);
+      }
+      index.set(spelling, rules);
+    }
+  }
+  return index;
+}
+
+const endpointKey = (name: string): string => normalizeEndpointName(name).toLowerCase();
+
+/** Provider aliases that `getProviderConfig` (endpoints/config/providers.ts) resolves to a built-in endpoint. */
+const ENDPOINT_ALIASES: Record<string, string> = { vertexai: 'google' };
+
 export function createAccess(limits: AccessLimits, caller: AccessCaller): Access {
-  const allows = (map: ReadonlyMap<string, TAllowedFor>, key: string): boolean =>
-    !map.has(key) || permits(map.get(key), caller);
+  const endpointRules = indexRules(limits.endpoints, (key) => [endpointKey(key)]);
+  const serverRules = indexRules(limits.mcpServers, (key) => [key, normalizeServerName(key)]);
+  /** Every matching rule must permit the caller: several rules fail closed. */
+  const passes = (rules: TAllowedFor[] | undefined): boolean =>
+    (rules ?? []).every((rule) => permits(rule, caller));
   const access: Access = {
-    allowsSpec: (name) => allows(limits.specs, name),
-    allowsEndpoint: (name) => allows(limits.endpoints, normalizeEndpointName(name)),
-    allowsMcpServer: (name) => allows(limits.mcpServers, name),
+    allowsSpec: (name) => !limits.specs.has(name) || permits(limits.specs.get(name), caller),
+    allowsEndpoint(name) {
+      const key = endpointKey(name);
+      return [key, ENDPOINT_ALIASES[key]].every(
+        (k) => k === undefined || passes(endpointRules.get(k)),
+      );
+    },
+    allowsMcpServer: (name) => passes(serverRules.get(name)),
     check({ spec, endpoint, mcpServers }) {
       if (spec && !access.allowsSpec(spec)) {
         return { kind: 'spec', name: spec };

@@ -879,6 +879,7 @@ const executeResponse = async (envelope, { req, res }) => {
       const primaryConfig = await initializeAgent(
         {
           runtime: agentRuntime,
+          access,
           loadTools,
           requestFiles: [],
           conversationId,

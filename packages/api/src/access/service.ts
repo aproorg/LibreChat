@@ -23,7 +23,7 @@ export interface AccessRequest {
 
 export interface AccessService {
   getAccess(req: AccessRequest): Promise<Access | null>;
-  /** For run-time seams that carry a user id and maybe no email. Not memoized. */
+  /** For run-time seams that carry a user id and maybe no email. Memoized per user object. */
   getAccessForUser(userId: string | undefined, user?: AccessUser | null): Promise<Access | null>;
 }
 
@@ -34,6 +34,7 @@ export interface AccessService {
 export function createAccessService(deps: AccessServiceDeps): AccessService {
   const limitsByConfig = new WeakMap<object, AccessLimits | null>();
   const accessByRequest = new WeakMap<object, Promise<Access | null>>();
+  const accessByUser = new WeakMap<object, Promise<Access | null>>();
 
   async function resolve(user: AccessUser | null | undefined): Promise<Access | null> {
     const appConfig = await deps.getAppConfig({ baseOnly: true, tenantId: user?.tenantId });
@@ -67,6 +68,16 @@ export function createAccessService(deps: AccessServiceDeps): AccessService {
       }
       return pending;
     },
-    getAccessForUser: (userId, user) => resolve({ ...user, id: userId }),
+    getAccessForUser(userId, user) {
+      if (!user || (user.id !== undefined && user.id !== userId)) {
+        return resolve({ ...user, id: userId });
+      }
+      let pending = accessByUser.get(user);
+      if (!pending) {
+        pending = resolve({ ...user, id: userId });
+        accessByUser.set(user, pending);
+      }
+      return pending;
+    },
   };
 }

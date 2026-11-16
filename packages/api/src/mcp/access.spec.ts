@@ -1,7 +1,7 @@
 import { ErrorTypes } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
 import type { Access } from '~/access';
-import { createCheckMcpServerAccess, filterServersByAccess } from './access';
+import { createCheckMcpServerAccess, filterServersByAccess, isServerAllowed } from './access';
 import { redactServerSecrets } from './utils';
 
 const access = {
@@ -27,6 +27,18 @@ describe('filterServersByAccess', () => {
     } as Parameters<typeof redactServerSecrets>[0]);
     expect(JSON.stringify(redacted)).not.toContain('allowedFor');
     expect(JSON.stringify(redacted)).not.toContain('jon@apro.is');
+  });
+});
+
+describe('isServerAllowed', () => {
+  it('refuses a limited server and allows others', () => {
+    expect(isServerAllowed(access, 'sindri')).toBe(false);
+    expect(isServerAllowed(access, 'open')).toBe(true);
+  });
+
+  it('allows everything without access', () => {
+    expect(isServerAllowed(null, 'sindri')).toBe(true);
+    expect(isServerAllowed(undefined, 'sindri')).toBe(true);
   });
 });
 

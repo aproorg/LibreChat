@@ -1,6 +1,7 @@
 import { Constants, ErrorTypes } from 'librechat-data-provider';
 import type { AccessLimits } from '~/access';
-import { checkAgentAccess, AgentAccessRefusedError } from './access';
+import { checkAgentAccess, assertAgentAccess, AgentAccessRefusedError } from './access';
+import { isFatalAgentInitializationError } from './errors';
 import { createAccess } from '~/access';
 
 const limited = (parts: Partial<AccessLimits>) =>
@@ -59,6 +60,49 @@ describe('checkAgentAccess', () => {
     expect(checkAgentAccess({ provider: 'openai', tools: [mcpTool, 'web_search'] }, access)).toBe(
       null,
     );
+  });
+});
+
+describe('checkAgentAccess spellings', () => {
+  it('refuses a normalized MCP tool key of a limited server with a raw name', () => {
+    const access = limited({ mcpServers: new Map([['Jira Cloud', only]]) });
+    expect(
+      checkAgentAccess(
+        { provider: 'openai', tools: [`search${Constants.mcp_delimiter}Jira_Cloud`] },
+        access,
+      ),
+    ).toEqual({ kind: 'mcpServer', name: 'Jira_Cloud' });
+  });
+
+  it.each([
+    ['Anthropic', 'anthropic'],
+    ['openrouter', 'OpenRouter'],
+    ['vertexai', 'google'],
+    ['VertexAI', 'google'],
+  ])('refuses provider %s when %s is limited', (provider, key) => {
+    const access = limited({ endpoints: new Map([[key, only]]) });
+    expect(checkAgentAccess({ provider, tools: [] }, access)).toEqual({
+      kind: 'endpoint',
+      name: provider,
+    });
+  });
+});
+
+describe('assertAgentAccess', () => {
+  it('throws a fatal AgentAccessRefusedError for a sub-agent on a limited server', () => {
+    const access = limited({ mcpServers: new Map([['sindri', only]]) });
+    const run = () => assertAgentAccess({ provider: 'openai', tools: [mcpTool] }, access);
+    expect(run).toThrow(AgentAccessRefusedError);
+    try {
+      run();
+    } catch (error) {
+      expect(isFatalAgentInitializationError(error)).toBe(true);
+    }
+  });
+
+  it('does nothing without access or when everything is allowed', () => {
+    expect(() => assertAgentAccess({ provider: 'openai', tools: [mcpTool] }, null)).not.toThrow();
+    expect(() => assertAgentAccess({ provider: 'openai', tools: [] }, limited({}))).not.toThrow();
   });
 });
 
