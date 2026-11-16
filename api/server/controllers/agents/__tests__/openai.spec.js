@@ -174,9 +174,14 @@ jest.mock('@librechat/agents', () => ({
   }),
 }));
 
+jest.mock('~/server/services/Config', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('@librechat/api', () => ({
   createFileProvisionRecovery: () =>
     jest.requireActual('@librechat/api').createFileProvisionRecovery(),
+  checkAgentAccess: jest.fn(() => false),
   getAgentErrorMetadata: (...args) =>
     jest.requireActual('@librechat/api').getAgentErrorMetadata(...args),
   loadSkillAccess: (...args) => jest.requireActual('@librechat/api').loadSkillAccess(...args),
@@ -787,7 +792,7 @@ describe('OpenAIChatCompletionController', () => {
     );
 
     const request = OpenAIChatCompletionController(req, res);
-    await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
     res.once.mock.calls[0][1]();
     finishEnrollment(mockExecution);
     await request;

@@ -1,3 +1,4 @@
+const access = require('./access');
 const appConfig = require('./app');
 const mcpToolsCache = require('./mcp');
 const { config } = require('./EndpointService');
@@ -16,6 +17,7 @@ module.exports = {
   loadDefaultModels,
   getModelsConfig,
   loadAsyncEndpoints,
+  ...access,
   ...appConfig,
   ...getCachedTools,
   ...mcpToolsCache,

@@ -206,6 +206,10 @@ jest.mock('@librechat/agents', () => ({
   }),
 }));
 
+jest.mock('~/server/services/Config', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('@librechat/api', () => ({
   captureResponseAccountingUsage: (...args) =>
     jest.requireActual('@librechat/api').captureResponseAccountingUsage(...args),
@@ -235,6 +239,7 @@ jest.mock('@librechat/api', () => ({
     jest.requireActual('@librechat/api').createResponseExecutionRuntime(...args),
   GenerationJobManager: jest.requireActual('@librechat/api').GenerationJobManager,
   getPluginHookSource: () => jest.requireActual('@librechat/api').getPluginHookSource(),
+  checkAgentAccess: jest.fn(() => false),
   getAgentErrorMetadata: (...args) =>
     jest.requireActual('@librechat/api').getAgentErrorMetadata(...args),
   loadSkillAccess: (...args) => jest.requireActual('@librechat/api').loadSkillAccess(...args),

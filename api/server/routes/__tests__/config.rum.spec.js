@@ -5,6 +5,10 @@ jest.mock('~/server/services/Config/app', () => ({
   getAppConfig: (...args) => mockGetAppConfig(...args),
 }));
 
+jest.mock('~/server/services/Config/access', () => ({
+  getAccess: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('~/server/services/Config/ldap', () => ({
   getLdapConfig: jest.fn(() => null),
 }));

@@ -1,3 +1,5 @@
+const { filterModelsByAccess } = require('@librechat/api');
+const { getAccess } = require('./access');
 const loadConfigModels = require('./loadConfigModels');
 const loadDefaultModels = require('./loadDefaultModels');
 
@@ -19,7 +21,8 @@ const inFlight = new WeakMap();
 async function resolveModelsConfig(req) {
   const defaultModelsConfig = await loadDefaultModels(req);
   const customModelsConfig = await loadConfigModels(req);
-  return { ...defaultModelsConfig, ...customModelsConfig };
+  const access = await getAccess(req);
+  return filterModelsByAccess({ ...defaultModelsConfig, ...customModelsConfig }, access);
 }
 
 /**

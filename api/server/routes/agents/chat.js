@@ -5,6 +5,7 @@ const {
   getPreinspectedPrivateText,
   reportLocatorTraversalFailure,
   generateCheckAccess,
+  createCheckSendAccess,
   skipAgentCheck,
   createChatResumeContext,
   GenerationJobManager,
@@ -19,6 +20,7 @@ const {
   buildEndpointOption,
   canAccessAgentFromBody,
 } = require('~/server/middleware');
+const { getAccess } = require('~/server/services/Config');
 const { initializeClient } = require('~/server/services/Endpoints/agents');
 const guardSubagentThreadTurn = require('~/server/middleware/validate/subagentThreadTurn');
 const AgentController = require('~/server/controllers/agents/request');
@@ -58,6 +60,7 @@ router.use(
 router.use(moderateText);
 router.use(checkAgentAccess);
 router.use(checkAgentResourceAccess);
+router.use(createCheckSendAccess({ getAccess }));
 router.use(validateConvoAccess);
 router.use(guardSubagentThreadTurn);
 router.use(buildEndpointOption);

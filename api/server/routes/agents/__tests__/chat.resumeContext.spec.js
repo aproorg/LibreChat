@@ -13,6 +13,7 @@ jest.mock('@librechat/api', () => ({
   validateChatMessageIds: (...args) => mockPass(...args),
   generateCheckAccess: () => mockPass,
   createMessageFilterPii: () => mockFollowingMiddleware,
+  createCheckSendAccess: () => mockPass,
 }));
 jest.mock('~/server/middleware', () => ({
   moderateText: (...args) => mockPass(...args),
@@ -26,6 +27,7 @@ jest.mock(
     (...args) =>
       mockPass(...args),
 );
+jest.mock('~/server/services/Config', () => ({ getAccess: jest.fn().mockResolvedValue(null) }));
 jest.mock('~/server/services/Endpoints/agents', () => ({ initializeClient: jest.fn() }));
 jest.mock('~/server/services/Endpoints/agents/title', () => jest.fn());
 jest.mock('~/models', () => ({ getFiles: jest.fn(), getRoleByName: jest.fn() }));

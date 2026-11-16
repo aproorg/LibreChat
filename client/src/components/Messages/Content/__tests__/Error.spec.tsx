@@ -219,6 +219,14 @@ describe('Error — reader-facing provider and fallback copy', () => {
     expectReadable();
   });
 
+  it('renders the localized copy for a refused send', () => {
+    renderError({ type: ErrorTypes.ACCESS_REFUSED, kind: 'spec', message: 'raw server text' });
+
+    expect(screen.getByText(catalog.com_error_access_refused)).toBeInTheDocument();
+    expect(screen.queryByText('raw server text')).not.toBeInTheDocument();
+    expectReadable();
+  });
+
   it.each([
     ['MODEL_NOT_FOUND', 'com_error_model_not_found'],
     ['MODEL_RATE_LIMIT', 'com_error_model_rate_limit'],

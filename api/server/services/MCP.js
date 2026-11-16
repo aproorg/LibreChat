@@ -37,6 +37,8 @@ const {
   getMissingCustomUserVars,
   getUserMCPAuthMap,
   getServerCustomUserVars,
+  filterServersByAccess,
+  isServerAllowed,
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
   hasRuntimeUrlPlaceholders,
@@ -87,6 +89,7 @@ const {
   getMCPServerTools,
   cacheMCPServerTools,
   invalidateCachedTools,
+  getAccessForUser,
 } = require('./Config');
 const { getLogStores } = require('~/cache');
 const {
@@ -431,6 +434,7 @@ async function getAssistantToolDefinitions({ req, res, tools }) {
     appConfig?.mcpAppSandbox?.operationLimits,
   );
   const capabilityProfile = resolveMCPClientCapabilityProfile(mcpApps);
+  const access = await getAccessForUser(req.user?.id, req.user);
   const oboIdentityContext = createAuthIdentityContext({
     user: req.user,
     tenantId: getTenantId(),
@@ -447,12 +451,15 @@ async function getAssistantToolDefinitions({ req, res, tools }) {
       user: req.user,
       tools,
       staticTools: (await getCachedTools()) ?? {},
-      mcpConfig: appConfig?.mcpConfig ?? {},
+      mcpConfig: filterServersByAccess(appConfig?.mcpConfig ?? {}, access),
     },
     {
       ensureConfigServers: (mcpConfig) => registry.ensureConfigServers(mcpConfig),
-      getAllServerConfigs: (userId, configServers, role) =>
-        registry.getAllServerConfigs(userId, configServers, role),
+      getAllServerConfigs: async (userId, configServers, role) =>
+        filterServersByAccess(
+          await registry.getAllServerConfigs(userId, configServers, role),
+          access,
+        ),
       getMCPServerTools: (userId, serverName, serverConfig) =>
         getMCPServerTools(userId, serverName, serverConfig, capabilityProfile),
       getServerToolFunctionsSnapshot: async (userId, serverName, serverConfig, options) =>
@@ -545,11 +552,10 @@ async function resolveAllMcpConfigs(userId, user) {
     logger.warn('[resolveAllMcpConfigs] Config server resolution failed; continuing without');
   }
   const lookup = { idOnTheSource: user?.idOnTheSource };
-  if (user?.role) {
-    return await registry.getAllServerConfigs(userId, configServers, user.role, lookup);
-  }
-
-  return await registry.getAllServerConfigs(userId, configServers, undefined, lookup);
+  const configs = user?.role
+    ? await registry.getAllServerConfigs(userId, configServers, user.role, lookup)
+    : await registry.getAllServerConfigs(userId, configServers, undefined, lookup);
+  return filterServersByAccess(configs, await getAccessForUser(userId, user));
 }
 
 /**
@@ -1040,6 +1046,9 @@ async function createMCPToolsImpl({
   jobCreatedAt,
   unattended,
 }) {
+  if (!isServerAllowed(await getAccessForUser(user?.id, user), serverName)) {
+    return [];
+  }
   let recoveryPolicy;
   const serverConfig =
     config ??
@@ -1247,6 +1256,9 @@ async function createMCPToolImpl({
         serverName = aliasedName;
       }
     }
+  }
+  if (!isServerAllowed(await getAccessForUser(user?.id, user), serverName)) {
+    return undefined;
   }
   const requestScopedTools = serverConfig ? requiresEphemeralUserConnection(serverConfig) : false;
   const useMissingToolCache = !requestScopedTools;
@@ -1755,9 +1767,13 @@ async function getMCPSetupData(userId, options = {}) {
     ),
   );
   const configServers = await registry.ensureConfigServers(appConfig?.mcpConfig || {});
-  const mcpConfig = await registry.getAllServerConfigs(userId, configServers, role || undefined, {
+  const allConfigs = await registry.getAllServerConfigs(userId, configServers, role || undefined, {
     idOnTheSource,
   });
+  const mcpConfig = filterServersByAccess(
+    allConfigs,
+    await getAccessForUser(userId, options.user ?? { tenantId }),
+  );
   const mcpManager = getMCPManager(userId);
   /** @type {Map<string, import('@librechat/api').MCPConnection>} */
   let appConnections = new Map();
