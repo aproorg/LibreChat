@@ -353,6 +353,58 @@ describe('PermissionService', () => {
         ),
       ).rejects.toThrow('Group principal not found');
     });
+
+    describe('oidc group principals', () => {
+      const principal = (overrides = {}) => ({
+        type: PrincipalType.GROUP,
+        source: 'oidc',
+        idOnTheSource: 'Finance',
+        ...overrides,
+      });
+
+      test('feature off: oidc is treated like an unknown source', async () => {
+        await expect(ensureGroupPrincipalExists(principal({ name: 'Finance' }))).rejects.toThrow(
+          'Unsupported group principal source: oidc',
+        );
+        expect(await Group.countDocuments({ source: 'oidc' })).toBe(0);
+      });
+
+      test('creates an empty group named by id, ignoring the body name, and reuses it', async () => {
+        const id = await ensureGroupPrincipalExists(
+          principal({ name: 'Restricted', email: 'x@y.z', description: 'd' }),
+          null,
+          'cognito:groups',
+        );
+        const again = await ensureGroupPrincipalExists(principal(), null, 'cognito:groups');
+        expect(again).toBe(id);
+        const group = await Group.findById(id).lean();
+        expect(group).toMatchObject({ name: 'Finance', source: 'oidc', memberIds: [] });
+        expect(group.email).toBeUndefined();
+        expect(group.description).toBeUndefined();
+      });
+
+      test('ignores a body id and rejects invalid ids', async () => {
+        const local = await Group.create({ name: 'Local', source: 'local' });
+        const id = await ensureGroupPrincipalExists(
+          principal({ id: local._id.toString() }),
+          null,
+          'cognito:groups',
+        );
+        expect(id).not.toBe(local._id.toString());
+        for (const bad of [undefined, '', '  ', 'x'.repeat(257), 'a\nb', 5]) {
+          await expect(
+            ensureGroupPrincipalExists(principal({ idOnTheSource: bad }), null, 'cognito:groups'),
+          ).rejects.toThrow('valid idOnTheSource');
+        }
+      });
+
+      test('keeps an admin-given name', async () => {
+        const id = await ensureGroupPrincipalExists(principal(), null, 'cognito:groups');
+        await Group.updateOne({ _id: id }, { name: 'Finance Team' });
+        await ensureGroupPrincipalExists(principal({ name: 'Other' }), null, 'cognito:groups');
+        expect((await Group.findById(id).lean()).name).toBe('Finance Team');
+      });
+    });
   });
 
   describe('checkPermission', () => {

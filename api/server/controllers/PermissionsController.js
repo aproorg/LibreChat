@@ -13,6 +13,7 @@ const {
   getInsightsPrincipalState,
   maskAgentInsightsBit,
   sanitizeInsightsPermissionPrincipals,
+  sanitizeOidcSharePrincipal,
   validateInsightsPermissionUpdates,
 } = require('@librechat/api');
 const {
@@ -131,7 +132,11 @@ const updateResourcePermissions = async (req, res) => {
           principalId = await ensurePrincipalExists(principal);
         } else if (principal.type === PrincipalType.GROUP) {
           // Pass authContext to enable member fetching for Entra ID groups when available
-          principalId = await ensureGroupPrincipalExists(principal, authContext);
+          principalId = await ensureGroupPrincipalExists(
+            principal,
+            authContext,
+            req.config?.config?.openidGroupsClaim,
+          );
         } else {
           logger.error(`Unsupported principal type: ${principal.type}`);
           continue; // Skip invalid principal types
@@ -139,7 +144,7 @@ const updateResourcePermissions = async (req, res) => {
 
         // Update the principal with the validated ID for ACL operations
         validatedPrincipals.push({
-          ...principal,
+          ...sanitizeOidcSharePrincipal(principal, req.config?.config?.openidGroupsClaim),
           id: principalId,
         });
       } catch (error) {

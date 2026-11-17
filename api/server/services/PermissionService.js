@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
-const { AccessControlService, isEnabled, ensureDirectoryPrincipalUser } = require('@librechat/api');
+const {
+  isEnabled,
+  ensureOidcSharedGroup,
+  AccessControlService,
+  ensureDirectoryPrincipalUser,
+} = require('@librechat/api');
 const {
   tenantStorage,
   getTenantId,
@@ -377,9 +382,22 @@ const ensurePrincipalExists = async function (principal) {
  * @param {string} [authContext.sub] - Subject identifier
  * @returns {Promise<string>} Returns the groupId for database operations
  */
-const ensureGroupPrincipalExists = async function (principal, authContext = null) {
+const ensureGroupPrincipalExists = async function (
+  principal,
+  authContext = null,
+  openidGroupsClaim = undefined,
+) {
   if (principal.type !== PrincipalType.GROUP) {
     throw new Error(`Invalid principal type: ${principal.type}. Expected '${PrincipalType.GROUP}'`);
+  }
+
+  /** Only with `openidGroupsClaim` set; name and any body id are ignored, members are never written. */
+  if (principal.source === 'oidc' && openidGroupsClaim) {
+    return await ensureOidcSharedGroup({
+      principal,
+      tenantId: getTenantId(),
+      ensureOidcGroup: db.ensureOidcGroup,
+    });
   }
 
   if (principal.id && principal.source !== 'entra') {

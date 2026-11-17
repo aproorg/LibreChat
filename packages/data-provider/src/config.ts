@@ -62,7 +62,12 @@ export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'd
 /** How long a started social login may take to return to its callback before its `state` expires. */
 export const DEFAULT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-export const BASE_ONLY_CONFIG_SECTIONS = ['filters', 'search'] as const;
+export const BASE_ONLY_CONFIG_SECTIONS = [
+  'filters',
+  'search',
+  'corsOrigins',
+  'openidGroupsClaim',
+] as const;
 /** Sections that may be stored in the tenant's base config document but must
  * not be overridden or tombstoned by role, group, or user config documents. */
 export const BASE_PRINCIPAL_CONFIG_SECTIONS = ['langfuse'] as const;
@@ -3302,6 +3307,22 @@ export type ConversationSearchConfig = z.infer<typeof searchConfigSchema>;
 /** Maximum CAS attempts per ACL document, including the initial attempt. */
 export const permissionWriteAttemptsSchema = z.number().int().min(1).max(100).default(3);
 
+/** An exact http(s) origin: no path, trailing slash, wildcard or `null`. */
+export const corsOriginSchema = z.string().refine(
+  (value) => {
+    try {
+      const url = new URL(value);
+      return ['http:', 'https:'].includes(url.protocol) && url.origin === value;
+    } catch {
+      return false;
+    }
+  },
+  {
+    message:
+      'Must be an exact http(s) origin such as https://skills.example.com (no path or trailing slash)',
+  },
+);
+
 export const configSchema = z.object({
   version: z.string(),
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
@@ -3314,6 +3335,14 @@ export const configSchema = z.object({
   memory: memorySchema.optional(),
   summarization: summarizationConfigSchema.optional(),
   skillSync: skillSyncConfigSchema,
+  /** Origins allowed credentialed CORS on the skills paths. Base config only. */
+  corsOrigins: z.array(corsOriginSchema).default([]),
+  /**
+   * Token claim listing the user's group ids, synced at OpenID login and refresh into 'oidc'
+   * groups. Off when unset. Base config only. Unsetting it later stops the sync but does not
+   * remove memberships already stored: delete the 'oidc' groups to revoke them.
+   */
+  openidGroupsClaim: z.string().min(1).optional(),
   secureImageLinks: z.boolean().optional(),
   imageOutputType: z.nativeEnum(EImageOutputType).default(EImageOutputType.PNG),
   includedTools: z.array(z.string()).optional(),

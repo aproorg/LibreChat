@@ -4,6 +4,9 @@ const mockIsAdminPanelRedirect = jest.fn();
 const mockGenerateAdminExchangeCode = jest.fn();
 const mockSyncUserEntraGroupMemberships = jest.fn();
 const mockSetAuthTokens = jest.fn();
+const mockGetAppConfig = jest.fn();
+const mockSyncOidcGroups = jest.fn();
+const mockSyncUserOidcGroups = jest.fn();
 const mockSendOpenIDAuthResponse = jest.fn();
 const mockGetLogStores = jest.fn();
 const mockCheckBan = jest.fn();
@@ -21,6 +24,7 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('@librechat/api', () => ({
   isEnabled: (...args) => mockIsEnabled(...args),
+  syncOidcGroupsFromConfig: (...args) => mockSyncOidcGroups(...args),
   getAdminPanelUrl: (...args) => mockGetAdminPanelUrl(...args),
   isAdminPanelRedirect: (...args) => mockIsAdminPanelRedirect(...args),
   generateAdminExchangeCode: (...args) => mockGenerateAdminExchangeCode(...args),
@@ -28,6 +32,10 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('~/server/services/PermissionService', () => ({
   syncUserEntraGroupMemberships: (...args) => mockSyncUserEntraGroupMemberships(...args),
+}));
+
+jest.mock('~/server/services/Config', () => ({
+  getAppConfig: (...args) => mockGetAppConfig(...args),
 }));
 
 jest.mock('~/server/services/AuthService', () => ({
@@ -51,6 +59,7 @@ jest.mock('~/server/middleware', () => ({
 
 jest.mock('~/models', () => ({
   generateToken: (...args) => mockGenerateToken(...args),
+  syncUserOidcGroups: (...args) => mockSyncUserOidcGroups(...args),
 }));
 
 const { createOAuthHandler } = require('./oauth');
@@ -96,10 +105,27 @@ describe('createOAuthHandler', () => {
     mockGenerateToken.mockResolvedValue('jwt-token');
     mockGenerateAdminExchangeCode.mockResolvedValue('exchange-code');
     mockSendOpenIDAuthResponse.mockResolvedValue('app-token');
+    mockGetAppConfig.mockResolvedValue({ config: {} });
   });
 
   afterAll(() => {
     process.env = ORIGINAL_ENV;
+  });
+
+  it('hands the verified id-token claims and the configured claim name to the group sync', async () => {
+    mockGetAppConfig.mockResolvedValue({ config: { openidGroupsClaim: 'cognito:groups' } });
+    const claims = { sub: 's', 'cognito:groups': ['A'] };
+    const req = buildReq();
+    req.user.tokenset.claims = () => claims;
+
+    await createOAuthHandler('http://localhost:3080')(req, buildRes(), jest.fn());
+
+    expect(mockSyncOidcGroups).toHaveBeenCalledWith({
+      getAppConfig: expect.any(Function),
+      claims,
+      user: req.user,
+      syncUserOidcGroups: expect.any(Function),
+    });
   });
 
   it('omits refresh token from admin exchange when OPENID_REUSE_TOKENS is disabled', async () => {

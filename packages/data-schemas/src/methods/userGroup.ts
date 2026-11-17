@@ -176,18 +176,18 @@ export function createUserGroupMethods(
   ) => Promise<IGroup | null>;
   findGroupByExternalId: (
     idOnTheSource: string,
-    source?: 'entra' | 'local',
+    source?: 'entra' | 'local' | 'oidc',
     projection?: Record<string, 0 | 1>,
     session?: ClientSession,
   ) => Promise<IGroup | null>;
   findGroupsByExternalIds: (
     idsOnTheSource: string[],
-    source?: 'entra' | 'local',
+    source?: 'entra' | 'local' | 'oidc',
     session?: ClientSession,
   ) => Promise<IGroup[]>;
   findGroupsByNamePattern: (
     namePattern: string,
-    source?: 'entra' | 'local' | null,
+    source?: 'entra' | 'local' | 'oidc' | null,
     limit?: number,
     session?: ClientSession,
   ) => Promise<IGroup[]>;
@@ -198,7 +198,7 @@ export function createUserGroupMethods(
   createGroup: (groupData: Partial<IGroup>, session?: ClientSession) => Promise<IGroup>;
   upsertGroupByExternalId: (
     idOnTheSource: string,
-    source: 'entra' | 'local',
+    source: 'entra' | 'local' | 'oidc',
     updateData: Partial<IGroup>,
     session?: ClientSession,
   ) => Promise<IGroup | null>;
@@ -245,6 +245,12 @@ export function createUserGroupMethods(
     addedGroups: IGroup[];
     removedGroups: IGroup[];
   }>;
+  ensureOidcGroup: (idOnTheSource: string, tenantId?: string) => Promise<string>;
+  syncUserOidcGroups: (params: {
+    memberId: string;
+    groupIds: string[];
+    tenantId?: string;
+  }) => Promise<{ added: number; removed: number }>;
   searchPrincipals: (
     searchPattern: string,
     limitPerType?: number,
@@ -259,7 +265,7 @@ export function createUserGroupMethods(
   ) => T[];
   listGroups: (
     filter?: {
-      source?: 'local' | 'entra';
+      source?: 'local' | 'entra' | 'oidc';
       search?: string;
       limit?: number;
       offset?: number;
@@ -267,7 +273,7 @@ export function createUserGroupMethods(
     session?: ClientSession,
   ) => Promise<IGroup[]>;
   countGroups: (
-    filter?: { source?: 'local' | 'entra'; search?: string },
+    filter?: { source?: 'local' | 'entra' | 'oidc'; search?: string },
     session?: ClientSession,
   ) => Promise<number>;
   deleteGroup: (
@@ -575,7 +581,7 @@ export function createUserGroupMethods(
    */
   async function findGroupByExternalId(
     idOnTheSource: string,
-    source: 'entra' | 'local' = 'entra',
+    source: 'entra' | 'local' | 'oidc' = 'entra',
     projection: Record<string, 0 | 1> = {},
     session?: ClientSession,
   ): Promise<IGroup | null> {
@@ -596,7 +602,7 @@ export function createUserGroupMethods(
    */
   async function findGroupsByExternalIds(
     idsOnTheSource: string[],
-    source: 'entra' | 'local' = 'entra',
+    source: 'entra' | 'local' | 'oidc' = 'entra',
     session?: ClientSession,
   ): Promise<IGroup[]> {
     const Group = mongoose.models.Group as Model<IGroup>;
@@ -620,7 +626,7 @@ export function createUserGroupMethods(
    */
   async function findGroupsByNamePattern(
     namePattern: string,
-    source: 'entra' | 'local' | null = null,
+    source: 'entra' | 'local' | 'oidc' | null = null,
     limit: number = 20,
     session?: ClientSession,
   ): Promise<IGroup[]> {
@@ -699,7 +705,7 @@ export function createUserGroupMethods(
    */
   async function upsertGroupByExternalId(
     idOnTheSource: string,
-    source: 'entra' | 'local',
+    source: 'entra' | 'local' | 'oidc',
     updateData: Partial<IGroup>,
     session?: ClientSession,
   ): Promise<IGroup | null> {
@@ -1303,7 +1309,7 @@ export function createUserGroupMethods(
   }
 
   function buildGroupQuery(filter: {
-    source?: 'local' | 'entra';
+    source?: 'local' | 'entra' | 'oidc';
     search?: string;
   }): FilterQuery<IGroup> {
     const query: FilterQuery<IGroup> = {};
@@ -1325,7 +1331,7 @@ export function createUserGroupMethods(
    */
   async function listGroups(
     filter: {
-      source?: 'local' | 'entra';
+      source?: 'local' | 'entra' | 'oidc';
       search?: string;
       limit?: number;
       offset?: number;
@@ -1350,7 +1356,7 @@ export function createUserGroupMethods(
    * @param session - Optional MongoDB session for transactions
    */
   async function countGroups(
-    filter: { source?: 'local' | 'entra'; search?: string } = {},
+    filter: { source?: 'local' | 'entra' | 'oidc'; search?: string } = {},
     session?: ClientSession,
   ): Promise<number> {
     const Group = mongoose.models.Group as Model<IGroup>;
@@ -1397,7 +1403,74 @@ export function createUserGroupMethods(
     return group;
   }
 
+  /**
+   * Returns the id of the 'oidc' group for a claim value, creating it empty if missing.
+   * The name is set only on insert and always equals the id, so no later caller renames it.
+   * Scoped to the explicit `tenantId` (tenant-less when omitted), never to ambient context alone:
+   * a tenant-less user or a SYSTEM-scope refresh must not reach another tenant's groups.
+   * The unique (idOnTheSource, source, tenantId) index makes a concurrent insert fail with
+   * E11000, which is retried as a plain lookup.
+   */
+  async function ensureOidcGroup(idOnTheSource: string, tenantId?: string): Promise<string> {
+    const Group = mongoose.models.Group as Model<IGroup>;
+    const run = () =>
+      Group.findOneAndUpdate(
+        { idOnTheSource, source: 'oidc', tenantId: tenantId ?? { $exists: false } },
+        {
+          $setOnInsert: {
+            name: idOnTheSource,
+            source: 'oidc',
+            idOnTheSource,
+            memberIds: [],
+            ...(tenantId ? { tenantId } : {}),
+          },
+        },
+        { new: true, upsert: true },
+      ).lean<IGroup>();
+    let group: IGroup | null;
+    try {
+      group = await run();
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) {
+        throw error;
+      }
+      group = await run();
+    }
+    if (!group) {
+      throw new Error('Failed to ensure oidc group');
+    }
+    return group._id.toString();
+  }
+
+  /**
+   * Makes `memberId` a member of exactly the 'oidc' groups in `groupIds` (creating missing ones)
+   * and removes it from every other 'oidc' group. Other sources are never touched.
+   * Both writes go through bulkUpdateGroups, which invalidates the principals cache.
+   */
+  async function syncUserOidcGroups(params: {
+    memberId: string;
+    groupIds: string[];
+    tenantId?: string;
+  }): Promise<{ added: number; removed: number }> {
+    const { memberId, groupIds, tenantId } = params;
+    const scope = { source: 'oidc', tenantId: tenantId ?? { $exists: false } };
+    await Promise.all(groupIds.map((id) => ensureOidcGroup(id, tenantId)));
+    const [added, removed] = await Promise.all([
+      bulkUpdateGroups(
+        { ...scope, idOnTheSource: { $in: groupIds }, memberIds: { $ne: memberId } },
+        { $addToSet: { memberIds: memberId } },
+      ),
+      bulkUpdateGroups(
+        { ...scope, idOnTheSource: { $nin: groupIds }, memberIds: memberId },
+        { $pullAll: { memberIds: [memberId] } },
+      ),
+    ]);
+    return { added: added.modifiedCount, removed: removed.modifiedCount };
+  }
+
   return {
+    ensureOidcGroup,
+    syncUserOidcGroups,
     findGroupById,
     findGroupByExternalId,
     findGroupsByExternalIds,

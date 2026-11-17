@@ -1,6 +1,7 @@
 export * from './binary';
 export * from './handlers';
 export * from './import';
+export * from './replace';
 export * from './path';
 export * from './protection';
 export * from './limits';
