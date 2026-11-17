@@ -309,3 +309,187 @@ describe('PUT /api/skills/import (replace)', () => {
     expect(blobs.size).toBe(2);
   });
 });
+
+describe('import stores the structured SKILL.md frontmatter', () => {
+  const md = (extra: string, body = 'Body text') =>
+    `---\nname: my-skill\ndescription: Does the thing\n${extra}---\n${body}`;
+  const flags = [
+    'disable-model-invocation: true\n',
+    'user-invocable: false\n',
+    'allowed-tools: [a, b]\n',
+  ].join('');
+  const volatile = ['_id', 'version', 'createdAt', 'updatedAt', 'author', 'authorName'];
+  const comparable = (skill: Skill) =>
+    Object.fromEntries(Object.entries(skill).filter(([key]) => !volatile.includes(key)));
+
+  it('persists disable-model-invocation, user-invocable and allowed-tools on create', async () => {
+    const res = await send(createImportHandler(importDeps()), alice, await rawArchive(md(flags)));
+    expect(res.status).toBe(201);
+    const { skill } = await stored(String(res.body._id));
+    expect(skill.disableModelInvocation).toBe(true);
+    expect(skill.userInvocable).toBe(false);
+    expect(skill.allowedTools).toEqual(['a', 'b']);
+    expect(skill.frontmatter).toMatchObject({ 'allowed-tools': ['a', 'b'] });
+  });
+
+  it('is excluded from the model catalog filter and keeps always-apply working', async () => {
+    const res = await send(
+      createImportHandler(importDeps()),
+      alice,
+      await rawArchive(md(`${flags}always-apply: true\n`)),
+    );
+    const { skill } = await stored(String(res.body._id));
+    expect([skill].filter((s) => s.disableModelInvocation !== true)).toHaveLength(0);
+    expect(skill.alwaysApply).toBe(true);
+  });
+
+  it('stores the same fields for a single .md as for a zip', async () => {
+    const handler = createImportHandler(importDeps());
+    const zip = await send(handler, alice, await rawArchive(md(flags)));
+    const res = {} as MockResponse;
+    res.status = ((code: number) => ((res.statusCode = code), res)) as MockResponse['status'];
+    res.json = ((body: unknown) => ((res.body = body), res)) as MockResponse['json'];
+    await handler(
+      {
+        user: { id: bob.toString(), _id: bob, name: 'U' },
+        file: { originalname: 'my-skill.md', buffer: Buffer.from(md(flags)) },
+        config: {},
+      } as unknown as ImportRequest,
+      res,
+    );
+    expect(res.statusCode).toBe(201);
+    const a = (await stored(String(zip.body._id))).skill;
+    const b = (await stored(String((res.body as Body)._id))).skill;
+    expect(comparable(b)).toEqual(comparable(a));
+  });
+
+  it('rejects invalid frontmatter with 400 and stores nothing', async () => {
+    const handler = replaceHandler();
+    for (const extra of [
+      'user-invocable: "yes"\n',
+      'user-invocable: false\nUser-Invocable: false\n',
+      `meta: ${'x'.repeat(2100)}\n`,
+    ]) {
+      const res = await send(handler, alice, await rawArchive(md(extra)));
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Validation failed');
+      expect(Array.isArray(res.body.issues)).toBe(true);
+    }
+    expect(await db.getAuthorSkillByName({ name: 'my-skill', author: alice })).toBeNull();
+    expect(blobs.size).toBe(0);
+  });
+
+  it('keeps the existing always-apply 400 body', async () => {
+    const res = await send(
+      createImportHandler(importDeps()),
+      alice,
+      await rawArchive(md('always-apply: maybe\n')),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'Validation failed',
+      issues: [
+        {
+          field: 'frontmatter.always-apply',
+          code: 'INVALID_TYPE',
+          message: '"always-apply" must be a boolean (true or false)',
+        },
+      ],
+    });
+  });
+
+  it('rejects invalid frontmatter on replace and leaves the skill alone', async () => {
+    const handler = replaceHandler();
+    const first = await send(handler, alice, await rawArchive(md(flags)));
+    const id = String(first.body._id);
+    const before = await stored(id);
+    const res = await send(handler, alice, await rawArchive(md('user-invocable: "yes"\n')));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Validation failed');
+    expect(await stored(id)).toEqual(before);
+  });
+
+  it('clears flags absent from the replacing file and equals a fresh import', async () => {
+    const handler = replaceHandler();
+    const first = await send(handler, alice, await rawArchive(md(flags)));
+    const id = String(first.body._id);
+    const second = await send(handler, alice, await rawArchive(md('')));
+    expect(second.status).toBe(200);
+    const replaced = (await stored(id)).skill;
+    expect(replaced.disableModelInvocation).toBeFalsy();
+    expect(replaced.userInvocable).toBeUndefined();
+    expect(replaced.allowedTools).toBeUndefined();
+    expect([replaced].filter((s) => s.disableModelInvocation !== true)).toHaveLength(1);
+
+    const fresh = await send(createImportHandler(importDeps()), bob, await rawArchive(md('')));
+    const freshSkill = (await stored(String(fresh.body._id))).skill;
+    /** A fresh create persists the schema defaults and a replace unsets the columns; both read as the default. */
+    const withDefaults = (skill: Skill) => ({
+      disableModelInvocation: false,
+      userInvocable: true,
+      displayTitle: '',
+      frontmatter: {},
+      ...comparable(skill),
+    });
+    expect(withDefaults(replaced)).toEqual(withDefaults(freshSkill));
+  });
+
+  it('applies flags on replace and reports frontmatter warnings like the create API', async () => {
+    const handler = replaceHandler();
+    await send(handler, alice, await rawArchive(md('')));
+    const res = await send(handler, alice, await rawArchive(md(`${flags}custom-key: 1\n`)));
+    expect(res.status).toBe(200);
+    expect(res.body.warnings).toEqual([
+      expect.objectContaining({
+        field: 'frontmatter.custom-key',
+        code: 'UNKNOWN_KEY',
+        severity: 'warning',
+      }),
+    ]);
+    const { skill } = await stored(String(res.body._id));
+    expect(skill.disableModelInvocation).toBe(true);
+    expect(skill.userInvocable).toBe(false);
+    expect(skill.frontmatter).toMatchObject({ 'custom-key': 1 });
+  });
+
+  describe.each([
+    ['quoted always-apply', 'always-apply: "true"\n', true],
+    ['quoted alias', 'alwaysApply: "False"\n', false],
+    ['empty always-apply placeholder', 'always-apply:\n', false],
+  ])('tolerated YAML spelling: %s', (_label, line, expected) => {
+    it('is accepted on create and replace', async () => {
+      const handler = replaceHandler();
+      const created = await send(handler, alice, await rawArchive(md(line)));
+      expect(created.status).toBe(201);
+      const id = String(created.body._id);
+      expect((await stored(id)).skill.alwaysApply ?? undefined).toBe(expected);
+      const replaced = await send(handler, alice, await rawArchive(md(line, 'New body')));
+      expect(replaced.status).toBe(200);
+      expect((await stored(id)).skill.alwaysApply ?? undefined).toBe(expected);
+    });
+  });
+
+  it('accepts dates, empty values, numeric version and numeric name on create and replace', async () => {
+    const extra =
+      'created: 2024-01-01\nlicense:\nversion: 1.0\nmetadata:\n  on: 2024-02-02\n  gone:\n';
+    const handler = replaceHandler();
+    const created = await send(handler, alice, await rawArchive(md(extra)));
+    expect(created.status).toBe(201);
+    const id = String(created.body._id);
+    const replaced = await send(handler, alice, await rawArchive(md(extra, 'New body')));
+    expect(replaced.status).toBe(200);
+    const { skill } = await stored(id);
+    expect(skill.frontmatter).toMatchObject({
+      created: '2024-01-01T00:00:00.000Z',
+      version: '1',
+      metadata: { on: '2024-02-02T00:00:00.000Z' },
+    });
+    expect(skill.frontmatter).not.toHaveProperty('license');
+    const numeric = await send(
+      createImportHandler(importDeps()),
+      bob,
+      await rawArchive('---\nname: 123\ndescription: Does the thing\n---\nBody'),
+    );
+    expect(numeric.status).toBe(201);
+  });
+});
