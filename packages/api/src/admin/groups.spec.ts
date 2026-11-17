@@ -1992,4 +1992,44 @@ describe('createAdminGroupsHandlers', () => {
       expect(recordAuditEntry).not.toHaveBeenCalled();
     });
   });
+
+  describe('oidc groups', () => {
+    const oidcGroup = () => mockGroup({ source: 'oidc' });
+
+    it('lists oidc groups by source', async () => {
+      const deps = createDeps();
+      const { req, res } = createReqRes({ query: { source: 'oidc' } });
+      await createAdminGroupsHandlers(deps).listGroups(req, res);
+      expect(deps.listGroups).toHaveBeenCalledWith(expect.objectContaining({ source: 'oidc' }));
+    });
+
+    it('refuses to create an oidc group', async () => {
+      const deps = createDeps();
+      const { req, res, status } = createReqRes({ body: { name: 'X', source: 'oidc' } });
+      await createAdminGroupsHandlers(deps).createGroup(req, res);
+      expect(status).toHaveBeenCalledWith(400);
+      expect(deps.createGroup).not.toHaveBeenCalled();
+    });
+
+    it('allows renaming an oidc group', async () => {
+      const deps = createDeps({ findGroupById: jest.fn().mockResolvedValue(oidcGroup()) });
+      const { req, res, status } = createReqRes({ params: { id: validId }, body: { name: 'New' } });
+      await createAdminGroupsHandlers(deps).updateGroup(req, res);
+      expect(status).toHaveBeenCalledWith(200);
+      expect(deps.updateGroupFieldsTracked).toHaveBeenCalledWith(validId, { name: 'New' });
+    });
+
+    it('refuses member writes on an oidc group', async () => {
+      const deps = createDeps({ findGroupById: jest.fn().mockResolvedValue(oidcGroup()) });
+      const handlers = createAdminGroupsHandlers(deps);
+      const add = createReqRes({ params: { id: validId }, body: { userId: validUserId } });
+      await handlers.addGroupMember(add.req, add.res);
+      const remove = createReqRes({ params: { id: validId, userId: validUserId } });
+      await handlers.removeGroupMember(remove.req, remove.res);
+      expect(add.status).toHaveBeenCalledWith(409);
+      expect(remove.status).toHaveBeenCalledWith(409);
+      expect(deps.addUserToGroup).not.toHaveBeenCalled();
+      expect(deps.removeUserFromGroup).not.toHaveBeenCalled();
+    });
+  });
 });

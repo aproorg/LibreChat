@@ -4,6 +4,7 @@ const {
   math,
   isEnabled,
   createResetPasswordController,
+  syncOidcGroupsFromConfig,
   createAuthIdentityContext,
   createOpenIDRefreshOwnershipError,
   createOpenIDResponseDelivery,
@@ -31,6 +32,8 @@ const {
   setAuthTokens,
   registerUser,
 } = require('~/server/services/AuthService');
+const { getAppConfig } = require('~/server/services/Config');
+const db = require('~/models');
 const {
   deleteAllUserSessions,
   deletePasskeysByUser,
@@ -383,6 +386,13 @@ const refreshController = async (req, res) => {
           delete req.session.openidTokens;
         }
 
+        /** Concurrent with the response work; the sync swallows its own errors. */
+        const groupsSync = syncOidcGroupsFromConfig({
+          getAppConfig,
+          claims,
+          user: refreshUser,
+          syncUserOidcGroups: db.syncUserOidcGroups,
+        });
         const token = await sendOpenIDAuthResponse({
           tokenset,
           user,
@@ -398,6 +408,7 @@ const refreshController = async (req, res) => {
           req,
           res,
         });
+        await groupsSync;
         return await withOpenIDResponseDelivery(
           {
             res,
