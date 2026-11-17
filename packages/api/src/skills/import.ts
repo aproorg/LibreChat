@@ -1,7 +1,13 @@
 import path from 'path';
 import JSZip from 'jszip';
 import crypto from 'crypto';
-import { logger, validateRelativePath } from '@librechat/data-schemas';
+import {
+  logger,
+  partitionIssues,
+  validateSkillBody,
+  validateRelativePath,
+  validateSkillDescription,
+} from '@librechat/data-schemas';
 import {
   ResourceType,
   DEFAULT_SKILL_IMPORT_CLEANUP_CONCURRENCY,
@@ -17,6 +23,7 @@ import type {
   CreateSkillInput,
   CreateSkillResult,
   DeleteSkillResult,
+  UpdateSkillInput,
   UpsertSkillFileInput,
 } from '@librechat/data-schemas';
 import type { SkillImportFailureReason, TSkillImportFailedResponse } from 'librechat-data-provider';
@@ -29,6 +36,7 @@ import type {
 } from '~/protection';
 import type { SkillBlobReservation } from './reservation';
 import type { SkillUploadIntentDeps } from './intent';
+import type { ReplaceSkillDeps, StagedSkillFile } from './replace';
 import type { ImportLimits } from './limits';
 import {
   inspectContent,
@@ -48,6 +56,8 @@ import { resolveRequestTenantId } from '~/middleware/tenant';
 import { createConcurrencyLimiter } from '~/utils/promise';
 import { DEFAULT_SKILL_IMPORT_LIMITS } from './limits';
 import { withSkillUploadIntent } from './intent';
+import { assertSavedSkillBlobMatchesReservation } from './reservation';
+import { commitReplacement } from './replace';
 import { parseSkillMarkdown } from './parse';
 import { isBinaryBuffer } from './binary';
 
@@ -280,6 +290,8 @@ function blockUninspectableImportFile(req: ServerRequest, res: Response): boolea
   return true;
 }
 
+type ImportHandler = (req: ServerRequest, res: Response) => Promise<Response>;
+
 /**
  * `POST /api/skills/import`
  *
@@ -287,7 +299,24 @@ function blockUninspectableImportFile(req: ServerRequest, res: Response): boolea
  * Creates the skill, then processes additional files individually.
  * Grants SKILL_OWNER to the uploader.
  */
-export function createImportHandler(deps: ImportSkillDeps) {
+export function createImportHandler(deps: ImportSkillDeps): ImportHandler {
+  return buildImportHandler(deps);
+}
+
+/**
+ * `PUT /api/skills/import`
+ *
+ * Same pipeline as POST. When the caller already authored a skill with the
+ * imported name, that skill is replaced in place (same `_id`) instead of a new
+ * one being created, so the call is safe to repeat.
+ */
+export function createReplaceImportHandler(
+  deps: ImportSkillDeps & ReplaceSkillDeps,
+): ImportHandler {
+  return buildImportHandler(deps, deps);
+}
+
+function buildImportHandler(deps: ImportSkillDeps, replace?: ReplaceSkillDeps): ImportHandler {
   return async function importSkillHandler(req: ServerRequest, res: Response): Promise<Response> {
     const { file } = req;
     if (!file) {
@@ -298,10 +327,10 @@ export function createImportHandler(deps: ImportSkillDeps) {
 
     try {
       if (ext === '.md') {
-        return await handleMarkdown(req, res, deps, file);
+        return await handleMarkdown(req, res, deps, file, replace);
       }
       if (ext === '.zip' || ext === '.skill') {
-        return await handleZip(req, res, deps, file);
+        return await handleZip(req, res, deps, file, replace);
       }
       return res.status(400).json({ error: `Unsupported file type: ${ext}` });
     } catch (error) {
@@ -388,6 +417,7 @@ async function handleMarkdown(
   res: Response,
   deps: ImportSkillDeps,
   file: Express.Multer.File,
+  replace?: ReplaceSkillDeps,
 ) {
   const limits = getImportLimits(resolveImportLimits(deps.limits, req));
   const skillPii = req.config?.filters?.skills?.pii;
@@ -454,6 +484,21 @@ async function handleMarkdown(
     )
   ) {
     return res;
+  }
+
+  const existing = await replace?.getAuthorSkillByName({
+    name: inferredName,
+    author: authorId,
+    tenantId,
+  });
+  if (replace && existing) {
+    return replaceExisting(req, res, deps, replace, {
+      existing,
+      update: { description: description || inferredName, body: content, alwaysApply },
+      stage: async () => [],
+      authorId,
+      tenantId,
+    });
   }
 
   const result = await deps.createSkill({
@@ -733,6 +778,43 @@ interface ArchivePersistenceContext {
   readonly persisted: PersistedArchiveBlob[];
 }
 
+/**
+ * Write one archive file to storage under a fresh key (`<uuid>__<name>`), so it
+ * can never overwrite an existing blob. Writes no SkillFile row and no upload
+ * intent: a replacement commits rows for these blobs only once every one is staged.
+ */
+async function storeArchiveBlob(
+  req: ServerRequest,
+  deps: ImportSkillDeps,
+  file: ArchiveFileDescriptor,
+  buffer: Buffer,
+  context: Pick<ArchivePersistenceContext, 'userId' | 'tenantId'>,
+): Promise<StagedSkillFile> {
+  const fileId = crypto.randomUUID();
+  const storageFileName = `${fileId}__${file.filename}`;
+  const reserved = await deps.reserveBlob(req, {
+    userId: context.userId,
+    fileName: storageFileName,
+    isImage: file.mimeType.startsWith('image/'),
+    tenantId: context.tenantId,
+  });
+  const saved = await deps.saveBuffer(req, { reservation: reserved, buffer });
+  if (saved.source !== reserved.source) throw new Error('Skill storage changed during upload');
+  assertSavedSkillBlobMatchesReservation(reserved, saved.filepath);
+  return {
+    relativePath: file.relativePath,
+    file_id: fileId,
+    filename: file.filename,
+    filepath: saved.filepath,
+    storageKey: saved.storageKey,
+    storageRegion: saved.storageRegion,
+    source: saved.source,
+    mimeType: file.mimeType,
+    bytes: buffer.length,
+    isExecutable: false,
+  };
+}
+
 async function persistArchiveFile(
   req: ServerRequest,
   deps: ImportSkillDeps,
@@ -809,7 +891,7 @@ async function persistArchiveFile(
 async function cleanupArchiveBlobs(
   req: ServerRequest,
   deps: ImportSkillDeps,
-  context: ArchivePersistenceContext,
+  context: Pick<ArchivePersistenceContext, 'authorId' | 'tenantId'>,
   blobs: PersistedArchiveBlob[],
 ): Promise<boolean> {
   const { deleteFile } = deps;
@@ -940,7 +1022,7 @@ async function persistPreflightedArchiveFiles(
   zip: JSZip,
   files: readonly ArchiveFileDescriptor[],
   limits: ImportLimits,
-  context: ArchivePersistenceContext,
+  persistFile: (file: ArchiveFileDescriptor, buffer: Buffer) => Promise<void>,
   initialDecompressedBytes = 0,
 ): Promise<ImportFileResult[]> {
   const results: ImportFileResult[] = [];
@@ -985,7 +1067,7 @@ async function persistPreflightedArchiveFiles(
       if (buffer.length !== file.bytes) {
         throw new Error('Archive entry changed after content inspection');
       }
-      await persistArchiveFile(req, deps, file, buffer, context);
+      await persistFile(file, buffer);
       results.push({ path: file.relativePath, status: 'ok' });
     } catch (error) {
       logger.error(`[importSkill] Failed to process file ${file.relativePath}:`, error);
@@ -1001,11 +1083,192 @@ async function persistPreflightedArchiveFiles(
   return results;
 }
 
+interface ArchiveSource {
+  readonly zip: JSZip;
+  readonly prefix: string;
+  readonly limits: ImportLimits;
+  readonly preflight: ArchiveScan | null;
+  readonly skillMdBytes: number;
+}
+
+/** Walk the archive's bundled files, handing each one to `persist`. */
+async function runArchiveFiles(
+  req: ServerRequest,
+  deps: ImportSkillDeps,
+  source: ArchiveSource,
+  persist: (file: ArchiveFileDescriptor, buffer: Buffer) => Promise<void>,
+): Promise<ImportFileResult[]> {
+  const { zip, prefix, limits, preflight, skillMdBytes } = source;
+  if (preflight == null) {
+    const processing = await scanArchiveFiles(
+      zip,
+      prefix,
+      limits,
+      {
+        onFile: async (archiveFile, buffer) => {
+          await persist(archiveFile, buffer);
+          return false;
+        },
+      },
+      skillMdBytes,
+    );
+    return processing.results;
+  }
+  const preflightErrors = preflight.results.filter((result) => result.status === 'error');
+  const persisted = await persistPreflightedArchiveFiles(
+    req,
+    deps,
+    zip,
+    preflight.files,
+    limits,
+    persist,
+    skillMdBytes,
+  );
+  return [...preflightErrors, ...persisted];
+}
+
+/** Stage every bundled file in storage only; no SkillFile row is written. */
+function stageArchive(
+  req: ServerRequest,
+  deps: ImportSkillDeps,
+  source: ArchiveSource & { staged: StagedSkillFile[] },
+): Promise<ImportFileResult[]> {
+  const context = { userId: req.user.id, tenantId: resolveRequestTenantId(req) };
+  return runArchiveFiles(req, deps, source, async (file, buffer) => {
+    source.staged.push(await storeArchiveBlob(req, deps, file, buffer, context));
+  });
+}
+
+interface ReplaceRequest {
+  existing: ISkill & { _id: Types.ObjectId };
+  update: UpdateSkillInput;
+  stage: (staged: StagedSkillFile[]) => Promise<ImportFileResult[]>;
+  authorId: Types.ObjectId;
+  tenantId?: string;
+}
+
+type ReplaceFailedResponse = TSkillImportFailedResponse & { consistent: boolean };
+
+/**
+ * Replace the caller's own skill with the archive: validate everything, stage
+ * every blob, then write rows, the skill and finally prune. The existing skill
+ * is never deleted, whatever fails.
+ */
+async function replaceExisting(
+  req: ServerRequest,
+  res: Response,
+  deps: ImportSkillDeps,
+  replace: ReplaceSkillDeps,
+  { existing, update: fields, stage, authorId, tenantId }: ReplaceRequest,
+) {
+  /** A fresh import stores no structured frontmatter, display title or category. */
+  const update: UpdateSkillInput = { ...fields, frontmatter: {}, displayTitle: '', category: '' };
+  const issues = [
+    ...validateSkillDescription(update.description),
+    ...validateSkillBody(update.body),
+  ];
+  const { errors: blocking } = partitionIssues(issues);
+  if (blocking.length > 0) {
+    throw Object.assign(new Error('Skill validation failed'), {
+      code: 'SKILL_VALIDATION_FAILED',
+      issues: blocking,
+    });
+  }
+
+  const staged: StagedSkillFile[] = [];
+  const fileResults = await stage(staged);
+  const blobContext = { authorId, tenantId };
+  const deleteBlobs = (files: StagedSkillFile[]) =>
+    cleanupArchiveBlobs(
+      req,
+      deps,
+      blobContext,
+      files.map((blob) => ({ ...blob, rowPersisted: false })),
+    );
+  const fail = (
+    failedFiles: ReplaceFailedResponse['failedFiles'],
+    consistent: boolean,
+  ): Response => {
+    const failure: ReplaceFailedResponse = {
+      error: 'skill_import_incomplete',
+      message: consistent
+        ? 'Import canceled: the existing skill was left unchanged.'
+        : 'Import failed part-way: the existing skill may hold a mix of old and new files.',
+      failedFiles,
+      consistent,
+    };
+    return res.status(422).json(failure);
+  };
+
+  const fileErrors = fileResults.filter((result) => result.status === 'error');
+  if (fileErrors.length > 0) {
+    logger.warn(
+      `[importSkill] Replace of ${existing._id.toString()} canceled: ${fileErrors.length} of ${fileResults.length} files failed`,
+    );
+    await deleteBlobs(staged);
+    return fail(
+      fileErrors.map((entry) => ({
+        path: entry.path,
+        reason: entry.reason ?? 'persistence_failed',
+        ...(entry.limitMb == null ? {} : { limitMb: entry.limitMb }),
+      })),
+      true,
+    );
+  }
+
+  const outcome = await commitReplacement({
+    deps: { ...deps, ...replace },
+    existing,
+    update,
+    staged,
+    authorId,
+    tenantId,
+    deleteBlobs: async (files) => {
+      await cleanupArchiveBlobs(
+        req,
+        deps,
+        blobContext,
+        files.map((file) => ({ ...file, rowPersisted: true })),
+      );
+    },
+  });
+  if (outcome.status === 'conflict') {
+    if (outcome.consistent) {
+      await deleteBlobs(staged);
+    }
+    return res.status(409).json({
+      error: 'skill_version_conflict',
+      current: outcome.current,
+      consistent: outcome.consistent,
+    });
+  }
+  if (outcome.status === 'failed') {
+    if (outcome.consistent) {
+      await deleteBlobs(staged);
+    }
+    return fail(
+      outcome.failedPaths.map((path) => ({ path, reason: 'persistence_failed' as const })),
+      outcome.consistent,
+    );
+  }
+
+  return res.status(200).json({
+    ...outcome.skill,
+    _importSummary: {
+      filesProcessed: fileResults.length,
+      filesSucceeded: fileResults.length,
+      filesFailed: 0,
+      errors: [],
+    },
+  });
+}
+
 async function handleZip(
   req: ServerRequest,
   res: Response,
   deps: ImportSkillDeps,
   file: Express.Multer.File,
+  replace?: ReplaceSkillDeps,
 ) {
   const userId = req.user.id;
   const limits = getImportLimits(resolveImportLimits(deps.limits, req));
@@ -1187,6 +1450,25 @@ async function handleZip(
   }
 
   const { authorId, authorName, tenantId } = getAuthorInfo(req);
+  const existing = await replace?.getAuthorSkillByName({
+    name: inferredName,
+    author: authorId,
+    tenantId,
+  });
+  if (replace && existing) {
+    return replaceExisting(req, res, deps, replace, {
+      existing,
+      update: {
+        description: description || inferredName,
+        body: skillMdContent,
+        alwaysApply,
+      },
+      stage: (staged) =>
+        stageArchive(req, deps, { zip, prefix, limits, preflight, skillMdBytes, staged }),
+      authorId,
+      tenantId,
+    });
+  }
   const result = await deps.createSkill({
     name: inferredName,
     description: description || inferredName,
@@ -1212,34 +1494,12 @@ async function handleZip(
     tenantId,
     persisted: [],
   };
-  let fileResults: ImportFileResult[];
-  if (preflight == null) {
-    const processing = await scanArchiveFiles(
-      zip,
-      prefix,
-      limits,
-      {
-        onFile: async (archiveFile, buffer) => {
-          await persistArchiveFile(req, deps, archiveFile, buffer, persistenceContext);
-          return false;
-        },
-      },
-      skillMdBytes,
-    );
-    fileResults = processing.results;
-  } else {
-    const preflightErrors = preflight.results.filter((result) => result.status === 'error');
-    const persisted = await persistPreflightedArchiveFiles(
-      req,
-      deps,
-      zip,
-      preflight.files,
-      limits,
-      persistenceContext,
-      skillMdBytes,
-    );
-    fileResults = [...preflightErrors, ...persisted];
-  }
+  const fileResults = await runArchiveFiles(
+    req,
+    deps,
+    { zip, prefix, limits, preflight, skillMdBytes },
+    (archiveFile, buffer) => persistArchiveFile(req, deps, archiveFile, buffer, persistenceContext),
+  );
 
   const errors: typeof fileResults = [];
   let successCount = 0;

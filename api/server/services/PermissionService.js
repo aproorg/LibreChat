@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
-const { AccessControlService, isEnabled, createPrincipalService } = require('@librechat/api');
+const {
+  isEnabled,
+  AccessControlService,
+  ensureOidcSharedGroup,
+  createPrincipalService,
+} = require('@librechat/api');
 const {
   tenantStorage,
   getTenantId,
@@ -311,7 +316,28 @@ const principalService = createPrincipalService({
   logger,
 });
 const ensurePrincipalExists = principalService.ensureUser;
-const ensureGroupPrincipalExists = principalService.ensureGroup;
+/**
+ * Ensures a group principal exists for an ACL grant.
+ * @param {Object} principal - TPrincipal object from the frontend
+ * @param {Object} [authContext] - Directory auth context for Entra ID member lookups
+ * @param {string} [openidGroupsClaim] - librechat.yaml `openidGroupsClaim`; enables 'oidc' groups
+ * @returns {Promise<string|null>} The groupId for database operations
+ */
+const ensureGroupPrincipalExists = async function (
+  principal,
+  authContext = null,
+  openidGroupsClaim = undefined,
+) {
+  /** Only with `openidGroupsClaim` set; name and any body id are ignored, members are never written. */
+  if (principal?.type === PrincipalType.GROUP && principal.source === 'oidc' && openidGroupsClaim) {
+    return await ensureOidcSharedGroup({
+      principal,
+      tenantId: getTenantId(),
+      ensureOidcGroup: db.ensureOidcGroup,
+    });
+  }
+  return principalService.ensureGroup(principal, authContext);
+};
 const preparePermissionPrincipals = principalService.prepare;
 
 /**

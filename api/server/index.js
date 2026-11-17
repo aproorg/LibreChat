@@ -75,6 +75,7 @@ const {
   reportEndpointOverrides,
   bindSearch,
   startSearchBackground,
+  createScopedCors,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const {
@@ -428,7 +429,7 @@ const startServer = async () => {
   });
 
   app.use(createRequestSanitizer(mongoSanitize));
-  app.use(cors());
+  app.use(createScopedCors({ origins: appConfig?.config?.corsOrigins, fallback: cors() }));
   app.use(cookieParser());
 
   if (!isEnabled(DISABLE_COMPRESSION)) {

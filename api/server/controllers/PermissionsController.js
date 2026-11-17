@@ -14,11 +14,13 @@ const {
   getInsightsPrincipalState,
   maskAgentInsightsBit,
   sanitizeInsightsPermissionPrincipals,
+  sanitizeOidcSharePrincipal,
   validateInsightsPermissionUpdates,
 } = require('@librechat/api');
 const {
   bulkUpdateResourcePermissions,
   preparePermissionPrincipals,
+  ensureGroupPrincipalExists,
   getResourcePermissionsMap,
   findAccessibleResources,
   getEffectivePermissions,
@@ -116,8 +118,32 @@ const updateResourcePermissions = async (req, res) => {
           }
         : null;
 
+    /* `oidc` groups resolve to their own record first (only with `openidGroupsClaim` set); the
+     * shared preparation below then validates them like any stored group. */
+    const openidGroupsClaim = req.config?.config?.openidGroupsClaim;
+    const sharePrincipals = [];
+    for (const principal of updatedPrincipals) {
+      const sanitized = sanitizeOidcSharePrincipal(principal, openidGroupsClaim);
+      if (
+        !openidGroupsClaim ||
+        sanitized.type !== PrincipalType.GROUP ||
+        sanitized.source !== 'oidc'
+      ) {
+        sharePrincipals.push(sanitized);
+        continue;
+      }
+      try {
+        const id = await ensureGroupPrincipalExists(sanitized, authContext, openidGroupsClaim);
+        sharePrincipals.push({ ...sanitized, id });
+      } catch (error) {
+        logger.error('Error ensuring principal exists:', {
+          principal: { type: sanitized.type, source: sanitized.source },
+          error: error.message,
+        });
+      }
+    }
     const validatedPrincipals = await preparePermissionPrincipals(
-      updatedPrincipals,
+      sharePrincipals,
       authContext,
       req.config,
     );

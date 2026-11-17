@@ -129,7 +129,14 @@ export const DEFAULT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 /** Sections only librechat.yaml sets: no config document, Base included, can change or remove
  * them. `turnstile` stays here until the server verifies Turnstile tokens: until then a stored
  * site key adds no protection, and a wrong one locks users out of sign-in and registration. */
-export const BASE_ONLY_CONFIG_SECTIONS = ['filters', 'mcpAppSandbox', 'turnstile', 'search'] as const;
+export const BASE_ONLY_CONFIG_SECTIONS = [
+  'filters',
+  'mcpAppSandbox',
+  'turnstile',
+  'search',
+  'corsOrigins',
+  'openidGroupsClaim',
+] as const;
 /** Sections that may be stored in the tenant's base config document but must
  * not be overridden or tombstoned by role, group, or user config documents. */
 export const BASE_PRINCIPAL_CONFIG_SECTIONS = ['langfuse'] as const;
@@ -4975,6 +4982,22 @@ export const persistenceConfigSchema = z
 export const DEFAULT_CONFIG_CACHE_MAX_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 1000;
 
+/** An exact http(s) origin: no path, trailing slash, wildcard or `null`. */
+export const corsOriginSchema = z.string().refine(
+  (value) => {
+    try {
+      const url = new URL(value);
+      return ['http:', 'https:'].includes(url.protocol) && url.origin === value;
+    } catch {
+      return false;
+    }
+  },
+  {
+    message:
+      'Must be an exact http(s) origin such as https://skills.example.com (no path or trailing slash)',
+  },
+);
+
 export const configSchema = z.object({
   persistence: persistenceConfigSchema,
   version: z.string(),
@@ -5040,6 +5063,14 @@ export const configSchema = z.object({
       batchSize: DEFAULT_SKILL_DELETION_BATCH_SIZE,
       recheckIntervalMs: 3_600_000,
     })),
+  /** Origins allowed credentialed CORS on the skills paths. Base config only. */
+  corsOrigins: z.array(corsOriginSchema).default([]),
+  /**
+   * Token claim listing the user's group ids, synced at OpenID login and refresh into 'oidc'
+   * groups. Off when unset. Base config only. Unsetting it later stops the sync but does not
+   * remove memberships already stored: delete the 'oidc' groups to revoke them.
+   */
+  openidGroupsClaim: z.string().min(1).optional(),
   secureImageLinks: z.boolean().optional(),
   imageOutputType: z.nativeEnum(EImageOutputType).default(EImageOutputType.PNG),
   conversationList: conversationListConfigSchema.default(() =>

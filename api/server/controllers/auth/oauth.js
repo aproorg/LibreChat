@@ -4,14 +4,17 @@ const {
   isEnabled,
   getAdminPanelUrl,
   isAdminPanelRedirect,
+  syncOidcGroupsFromConfig,
   generateAdminExchangeCode,
 } = require('@librechat/api');
 const { syncUserEntraGroupMemberships } = require('~/server/services/PermissionService');
+const { getAppConfig } = require('~/server/services/Config');
 const { setAuthTokens } = require('~/server/services/AuthService');
 const { sendOpenIDAuthResponse } = require('~/server/services/OpenIDRefreshRecovery');
 const getLogStores = require('~/cache/getLogStores');
 const { checkBan } = require('~/server/middleware');
-const { generateToken } = require('~/models');
+const db = require('~/models');
+const { generateToken } = db;
 
 const domains = {
   client: process.env.DOMAIN_CLIENT,
@@ -35,6 +38,15 @@ function createOAuthHandler(redirectUri = domains.client) {
       await checkBan(req, res);
       if (req.banned) {
         return;
+      }
+
+      if (req.user?.provider === 'openid') {
+        await syncOidcGroupsFromConfig({
+          getAppConfig,
+          claims: req.user.tokenset?.claims?.(),
+          user: req.user,
+          syncUserOidcGroups: db.syncUserOidcGroups,
+        });
       }
 
       /** Check if this is an admin panel redirect (cross-origin or same-origin subpath) */

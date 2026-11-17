@@ -21,7 +21,9 @@ import { parsePagination } from './pagination';
 
 type GroupListFilter = Pick<GroupFilterOptions, 'source' | 'search'>;
 
-const VALID_GROUP_SOURCES: ReadonlySet<string> = new Set(['local', 'entra']);
+const VALID_GROUP_SOURCES: ReadonlySet<string> = new Set(['local', 'entra', 'oidc']);
+/** 'oidc' groups and their members are created only by the login-time sync and the share path. */
+const CREATABLE_GROUP_SOURCES: ReadonlySet<string> = new Set(['local', 'entra']);
 const MAX_CREATE_MEMBER_IDS = 500;
 /** Member ids per audit entry, so group creation writes a few ordered entries. */
 const AUDIT_MEMBER_CHUNK = 100;
@@ -208,7 +210,7 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           .status(400)
           .json({ error: `name must not exceed ${MAX_NAME_LENGTH} characters` });
       }
-      if (body.source && !VALID_GROUP_SOURCES.has(body.source)) {
+      if (body.source && !CREATABLE_GROUP_SOURCES.has(body.source)) {
         return res.status(400).json({ error: 'Invalid source value' });
       }
       if (body.description && body.description.length > MAX_DESCRIPTION_LENGTH) {
@@ -694,6 +696,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
           .json({ error: 'Only native user ObjectIds can be added via this endpoint' });
       }
 
+      if ((await findGroupById(id, { source: 1 }))?.source === 'oidc') {
+        return res.status(409).json({ error: 'Members of this group come from the sign-in' });
+      }
       const { group, changed } = await addUserToGroup(userId, id);
       if (!group) {
         return res.status(404).json({ error: 'Group not found' });
@@ -746,6 +751,9 @@ export function createAdminGroupsHandlers(deps: AdminGroupsDeps): {
         return res.status(400).json({ error: 'Invalid group ID format' });
       }
 
+      if ((await findGroupById(id, { source: 1 }))?.source === 'oidc') {
+        return res.status(409).json({ error: 'Members of this group come from the sign-in' });
+      }
       const { group, changed } = isValidObjectIdString(userId)
         ? await removeObjectIdMember(id, userId)
         : await removeMemberByIdTracked(id, userId);
