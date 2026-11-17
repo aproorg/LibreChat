@@ -7,6 +7,7 @@ import {
   validateSkillBody,
   validateRelativePath,
   validateSkillDescription,
+  validateSkillFrontmatter,
 } from '@librechat/data-schemas';
 import {
   ResourceType,
@@ -26,7 +27,11 @@ import type {
   UpdateSkillInput,
   UpsertSkillFileInput,
 } from '@librechat/data-schemas';
-import type { SkillImportFailureReason, TSkillImportFailedResponse } from 'librechat-data-provider';
+import type {
+  TSkillWarning,
+  SkillImportFailureReason,
+  TSkillImportFailedResponse,
+} from 'librechat-data-provider';
 import type { Request, Response } from 'express';
 import type { Types } from 'mongoose';
 import type {
@@ -35,6 +40,7 @@ import type {
   SkillContentInput,
 } from '~/protection';
 import type { ReplaceSkillDeps, StagedSkillFile } from './replace';
+import type { ParsedSkillMarkdown } from './parse';
 import type { ImportLimits } from './limits';
 import {
   inspectContent,
@@ -119,6 +125,55 @@ function sendFrontmatterParseError(res: Response, parseError: string) {
       },
     ],
   });
+}
+
+/** YAML loads dates and empty values as `Date`/`null`; the stored frontmatter must be JSON-safe. */
+function toJsonSafe(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item) => item != null).map(toJsonSafe);
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, nested]) => nested != null)
+        .map(([key, nested]) => [key, toJsonSafe(nested)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * The frontmatter an import stores. `name`/`description` live in their own columns, and
+ * `always-apply` is replaced by the boolean the import parser accepted (quoted strings and
+ * empty placeholders are tolerated there), so none of them can fail or contradict validation.
+ */
+function storedFrontmatter({ frontmatter, alwaysApply }: ParsedSkillMarkdown) {
+  const owned = new Set(['name', 'description', 'always-apply', 'alwaysApply']);
+  const entries = Object.entries(frontmatter ?? {}).filter(([key]) => !owned.has(key));
+  const safe = toJsonSafe(Object.fromEntries(entries)) as Record<string, unknown>;
+  if (typeof safe.version === 'number') {
+    safe.version = String(safe.version);
+  }
+  return alwaysApply === undefined ? safe : { ...safe, 'always-apply': alwaysApply };
+}
+
+/** Frontmatter warnings in the `warnings` shape the create API attaches to a skill response. */
+function warningsField(frontmatter?: Record<string, unknown>): { warnings?: TSkillWarning[] } {
+  const { warnings } = partitionIssues(validateSkillFrontmatter(frontmatter));
+  if (warnings.length === 0) {
+    return {};
+  }
+  return {
+    warnings: warnings.map(({ field, code, message }) => ({
+      field,
+      code,
+      message,
+      severity: 'warning' as const,
+    })),
+  };
 }
 
 /** Type guard for validation errors thrown by data-schemas. */
@@ -440,6 +495,7 @@ async function handleMarkdown(
 
   const parsedSkill = parseSkillMarkdown(content);
   const { name, description, alwaysApply, frontmatter, invalidBooleans, parseError } = parsedSkill;
+  const stored = storedFrontmatter(parsedSkill);
   if (parseError) {
     return sendFrontmatterParseError(res, parseError);
   }
@@ -492,7 +548,12 @@ async function handleMarkdown(
   if (replace && existing) {
     return replaceExisting(req, res, deps, replace, {
       existing,
-      update: { description: description || inferredName, body: content, alwaysApply },
+      update: {
+        description: description || inferredName,
+        body: content,
+        alwaysApply,
+        frontmatter: stored,
+      },
       stage: async () => [],
       authorId,
       tenantId,
@@ -503,6 +564,7 @@ async function handleMarkdown(
     name: inferredName,
     description: description || inferredName,
     body: content,
+    frontmatter: stored,
     author: authorId,
     authorName,
     alwaysApply,
@@ -515,7 +577,7 @@ async function handleMarkdown(
     return res.status(500).json({ error: grant.error });
   }
 
-  return res.status(201).json(skill);
+  return res.status(201).json({ ...skill, ...warningsField(stored) });
 }
 
 type ImportFileResult = {
@@ -1132,11 +1194,17 @@ async function replaceExisting(
   replace: ReplaceSkillDeps,
   { existing, update: fields, stage, authorId, tenantId }: ReplaceRequest,
 ) {
-  /** A fresh import stores no structured frontmatter, display title or category. */
-  const update: UpdateSkillInput = { ...fields, frontmatter: {}, displayTitle: '', category: '' };
+  /** A fresh import stores no display title or category; frontmatter comes from the file. */
+  const update: UpdateSkillInput = {
+    ...fields,
+    frontmatter: fields.frontmatter ?? {},
+    displayTitle: '',
+    category: '',
+  };
   const issues = [
     ...validateSkillDescription(update.description),
     ...validateSkillBody(update.body),
+    ...validateSkillFrontmatter(update.frontmatter),
   ];
   const { errors: blocking } = partitionIssues(issues);
   if (blocking.length > 0) {
@@ -1225,6 +1293,7 @@ async function replaceExisting(
 
   return res.status(200).json({
     ...outcome.skill,
+    ...warningsField(update.frontmatter),
     _importSummary: {
       filesProcessed: fileResults.length,
       filesSucceeded: fileResults.length,
@@ -1315,6 +1384,7 @@ async function handleZip(
 
   const parsedSkill = parseSkillMarkdown(skillMdContent);
   const { name, description, alwaysApply, frontmatter, invalidBooleans, parseError } = parsedSkill;
+  const stored = storedFrontmatter(parsedSkill);
   if (parseError) {
     return sendFrontmatterParseError(res, parseError);
   }
@@ -1433,6 +1503,7 @@ async function handleZip(
         description: description || inferredName,
         body: skillMdContent,
         alwaysApply,
+        frontmatter: stored,
       },
       stage: (staged) =>
         stageArchive(req, deps, { zip, prefix, limits, preflight, skillMdBytes, staged }),
@@ -1444,6 +1515,7 @@ async function handleZip(
     name: inferredName,
     description: description || inferredName,
     body: skillMdContent,
+    frontmatter: stored,
     author: authorId,
     authorName,
     alwaysApply,
@@ -1538,6 +1610,7 @@ async function handleZip(
 
   return res.status(201).json({
     ...refreshed,
+    ...warningsField(stored),
     _importSummary: {
       filesProcessed: fileResults.length,
       filesSucceeded: successCount,
