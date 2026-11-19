@@ -31,7 +31,7 @@ const {
   searchEntraIdPrincipals,
 } = require('~/server/services/GraphApiService');
 const db = require('~/models');
-const { invalidateCodeEnvironmentConfigCache } = require('~/server/services/Config');
+const { getAppConfig, invalidateCodeEnvironmentConfigCache } = require('~/server/services/Config');
 
 const matchesCurrentTenant = (principal, tenantId) => {
   if (!tenantId || tenantId === SYSTEM_TENANT_ID) {
@@ -118,6 +118,11 @@ const updateResourcePermissions = async (req, res) => {
           }
         : null;
 
+    // openidGroupsClaim is base-only, so the per-person req.config does not carry it
+    const openidGroupsClaim =
+      (await getAppConfig({ baseOnly: true }))?.config?.openidGroupsClaim ??
+      req.config?.config?.openidGroupsClaim;
+
     // Ensure updated principals exist in the database before processing permissions
     const validatedPrincipals = [];
     for (const principal of updatedPrincipals) {
@@ -132,11 +137,7 @@ const updateResourcePermissions = async (req, res) => {
           principalId = await ensurePrincipalExists(principal);
         } else if (principal.type === PrincipalType.GROUP) {
           // Pass authContext to enable member fetching for Entra ID groups when available
-          principalId = await ensureGroupPrincipalExists(
-            principal,
-            authContext,
-            req.config?.config?.openidGroupsClaim,
-          );
+          principalId = await ensureGroupPrincipalExists(principal, authContext, openidGroupsClaim);
         } else {
           logger.error(`Unsupported principal type: ${principal.type}`);
           continue; // Skip invalid principal types
@@ -144,7 +145,7 @@ const updateResourcePermissions = async (req, res) => {
 
         // Update the principal with the validated ID for ACL operations
         validatedPrincipals.push({
-          ...sanitizeOidcSharePrincipal(principal, req.config?.config?.openidGroupsClaim),
+          ...sanitizeOidcSharePrincipal(principal, openidGroupsClaim),
           id: principalId,
         });
       } catch (error) {
