@@ -27,7 +27,9 @@ jest.mock('@librechat/api', () => {
 });
 
 const mockInvalidateCodeEnvironmentConfigCache = jest.fn().mockResolvedValue(undefined);
+const mockGetAppConfig = jest.fn();
 jest.mock('~/server/services/Config', () => ({
+  getAppConfig: (...args) => mockGetAppConfig(...args),
   invalidateCodeEnvironmentConfigCache: (...args) =>
     mockInvalidateCodeEnvironmentConfigCache(...args),
 }));
@@ -719,6 +721,43 @@ describe('PermissionsController', () => {
 
       expect(mockInvalidateCodeEnvironmentConfigCache).toHaveBeenCalledWith('tenant-a');
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('reads openidGroupsClaim from the base config when sharing with an OIDC group', async () => {
+      const { ensureGroupPrincipalExists } = require('~/server/services/PermissionService');
+      mockGetAppConfig.mockImplementation(async (opts) =>
+        opts?.baseOnly ? { config: { openidGroupsClaim: 'cognito:groups' } } : { config: {} },
+      );
+      ensureGroupPrincipalExists.mockResolvedValue('group-id-1');
+      const req = createMockReq({
+        params: { resourceType: ResourceType.AGENT, resourceId: agentObjectId },
+        body: {
+          updated: [
+            {
+              type: PrincipalType.GROUP,
+              source: 'oidc',
+              idOnTheSource: 'skills-test',
+              accessRoleId: AccessRoleIds.AGENT_VIEWER,
+            },
+          ],
+          removed: [],
+          public: false,
+        },
+        config: { config: {} },
+      });
+      const res = createMockRes();
+
+      await updateResourcePermissions(req, res);
+
+      expect(mockGetAppConfig).toHaveBeenCalledWith({ baseOnly: true });
+      expect(ensureGroupPrincipalExists).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'oidc', idOnTheSource: 'skills-test' }),
+        null,
+        'cognito:groups',
+      );
+      expect(mockBulkUpdateResourcePermissions.mock.calls[0][0].updatedPrincipals).toEqual([
+        expect.objectContaining({ id: 'group-id-1', source: 'oidc' }),
+      ]);
     });
 
     it('keeps the committed ACL response successful when cache invalidation fails', async () => {

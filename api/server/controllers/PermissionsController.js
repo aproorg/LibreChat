@@ -31,7 +31,7 @@ const {
   searchEntraIdPrincipals,
 } = require('~/server/services/GraphApiService');
 const db = require('~/models');
-const { invalidateCodeEnvironmentConfigCache } = require('~/server/services/Config');
+const { getAppConfig, invalidateCodeEnvironmentConfigCache } = require('~/server/services/Config');
 
 const matchesCurrentTenant = (principal, tenantId) => {
   if (!tenantId || tenantId === SYSTEM_TENANT_ID) {
@@ -120,7 +120,13 @@ const updateResourcePermissions = async (req, res) => {
 
     /* `oidc` groups resolve to their own record first (only with `openidGroupsClaim` set); the
      * shared preparation below then validates them like any stored group. */
-    const openidGroupsClaim = req.config?.config?.openidGroupsClaim;
+    // openidGroupsClaim is base-only, so the per-person req.config does not carry it; read it
+    // only when an 'oidc' principal is being shared
+    const sharesOidcGroup = updatedPrincipals.some((principal) => principal?.source === 'oidc');
+    const openidGroupsClaim = sharesOidcGroup
+      ? ((await getAppConfig({ baseOnly: true }))?.config?.openidGroupsClaim ??
+        req.config?.config?.openidGroupsClaim)
+      : undefined;
     const sharePrincipals = [];
     for (const principal of updatedPrincipals) {
       const sanitized = sanitizeOidcSharePrincipal(principal, openidGroupsClaim);
