@@ -137,11 +137,7 @@ const updateResourcePermissions = async (req, res) => {
           principalId = await ensurePrincipalExists(principal);
         } else if (principal.type === PrincipalType.GROUP) {
           // Pass authContext to enable member fetching for Entra ID groups when available
-          principalId = await ensureGroupPrincipalExists(
-            principal,
-            authContext,
-            openidGroupsClaim,
-          );
+          principalId = await ensureGroupPrincipalExists(principal, authContext, openidGroupsClaim);
         } else {
           logger.error(`Unsupported principal type: ${principal.type}`);
           continue; // Skip invalid principal types
