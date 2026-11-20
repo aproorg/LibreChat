@@ -73,6 +73,10 @@
     "packages/api/src/files/documents/libreoffice.spec.ts": ["packages/api/src/files/documents/"],
     "packages/api/src/files/documents/spreadsheet.spec.ts": ["packages/api/src/files/documents/"],
     "packages/api/src/mcp/__tests__/sandbox.test.ts": ["client/public/mcp-sandbox.html"],
+    "packages/api/src/search/config.spec.ts": ["librechat.example.yaml"],
+    "packages/api/src/search/languages/__tests__/notice.spec.ts": [
+      "packages/api/src/search/languages/is/NOTICE.md"
+    ],
     "packages/client/src/components/Progress.spec.tsx": ["packages/client/src/theme/tokens.css"],
     "packages/client/src/components/SegmentedMeter.spec.tsx": [
       "packages/client/src/theme/tokens.css"
@@ -135,6 +139,7 @@
     ]
   },
   "exempt": {
+    "packages/api/misc/search-quality/is.data.spec.ts": "Runs only when SEARCH_LANGUAGE_DATA_DIR is set, and then reads that private directory and the built dist/, neither of which is tracked.",
     "packages/api/src/code/environment.live.spec.ts": "Skips unless LIBRECHAT_CODE_TEST_PACKAGE is set, and then reads only the temp directory it creates.",
     "packages/api/src/plugins/runtime.spec.ts": "Reads only logs it writes under os.tmpdir(); process.cwd() appears inside an inline hook command."
   }

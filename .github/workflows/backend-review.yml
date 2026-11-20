@@ -856,6 +856,7 @@ jobs:
       - test-api
       - test-data-provider
       - test-data-schemas
+      - test-search-language-stub
       - test-packages-api
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

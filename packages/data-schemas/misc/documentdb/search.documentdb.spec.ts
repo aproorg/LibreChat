@@ -1,3 +1,4 @@
+/* eslint-disable jest/expect-expect -- every test asserts through probe(), which holds the expects */
 import mongoose from 'mongoose';
 import { randomUUID } from 'crypto';
 import type { ConnectOptions } from 'mongoose';
