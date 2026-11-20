@@ -15,7 +15,7 @@ import {
   useMessagesInfiniteQuery,
   refetchSinglePage,
 } from '~/data-provider';
-import { SearchErrorState, SearchStopWordHint, SearchLoadMore } from '~/components/Search';
+import { SearchErrorState, SearchStopWordHint, SearchLoadMore } from '~/components/Search/states';
 import { useElementSize, useLocalize, useAuthContext } from '~/hooks';
 import SearchMessage from '~/components/Chat/Messages/SearchMessage';
 import { useFileMapContext } from '~/Providers';

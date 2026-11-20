@@ -27,7 +27,7 @@ import {
   useSharedLinksQuery,
   useDeleteSharedLinkMutation,
 } from '~/data-provider';
-import { SearchErrorState, SearchStopWordHint } from '~/components/Search';
+import { SearchErrorState, SearchStopWordHint } from '~/components/Search/states';
 import { NotificationSeverity } from '~/common';
 import { useLocalize } from '~/hooks';
 import { formatDate } from '~/utils';

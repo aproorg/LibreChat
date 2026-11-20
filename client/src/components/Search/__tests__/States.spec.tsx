@@ -8,7 +8,7 @@ import {
   SearchPartialState,
   SearchStopWordHint,
   SearchCursorRestart,
-} from '..';
+} from '../states';
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
