@@ -70,6 +70,7 @@
     "packages/api/src/code/agent.spec.ts": ["api/", "packages/api/src/"],
     "packages/api/src/code/setup/bridge.spec.ts": ["vendor/code/"],
     "packages/api/src/files/documents/html.spec.ts": ["packages/api/src/files/documents/"],
+    "packages/api/src/files/documents/layout.spec.ts": ["packages/api/src/files/documents/"],
     "packages/api/src/files/documents/libreoffice.spec.ts": ["packages/api/src/files/documents/"],
     "packages/api/src/files/documents/spreadsheet.spec.ts": ["packages/api/src/files/documents/"],
     "packages/api/src/mcp/__tests__/sandbox.test.ts": ["client/public/mcp-sandbox.html"],
