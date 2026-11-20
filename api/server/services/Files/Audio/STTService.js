@@ -23,6 +23,7 @@ const {
   listConfiguredSpeechProviders,
 } = require('librechat-data-provider');
 const { getAppConfig } = require('~/server/services/Config');
+const { speechUserHeaders } = require('./speechUserHeaders');
 
 /**
  * Maps MIME types to their corresponding file extensions for audio files.
@@ -293,6 +294,7 @@ class STTService {
    * @param {Buffer} requestData.audioBuffer - The audio data to be transcribed.
    * @param {Object} requestData.audioFile - The audio file object containing originalname, mimetype, and size.
    * @param {string} requestData.language - The language code for the transcription.
+   * @param {Object} [requestData.user] - The requesting user (`req.user`), named per `speechUserHeaders`.
    * @param {string[]} [allowedAddresses] - Section-level SSRF exemption list of host:port pairs.
    * @param {import('axios').AxiosRequestConfig} [requestOptions] - Timeout and abort options for the request.
    * @returns {Promise<string>} A promise that resolves to the transcribed text.
@@ -301,7 +303,7 @@ class STTService {
   async sttRequest(
     provider,
     sttSchema,
-    { audioBuffer, audioFile, language },
+    { audioBuffer, audioFile, language, user },
     allowedAddresses,
     requestOptions,
   ) {
@@ -322,6 +324,7 @@ class STTService {
       audioFile,
       language,
     );
+    Object.assign(headers, speechUserHeaders(user));
 
     const options = { headers, ...requestOptions };
 
@@ -389,7 +392,7 @@ class STTService {
         text = await this.sttRequest(
           provider,
           sttSchema,
-          { audioBuffer, audioFile, language },
+          { audioBuffer, audioFile, language, user: req.user },
           allowedAddresses,
           configuredRequestBudget(req.config, 'speechMs'),
         );
