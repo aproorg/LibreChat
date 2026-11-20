@@ -25,7 +25,11 @@ import {
   useDeleteConversationMutation,
   useArchiveConvoMutation,
 } from '~/data-provider';
-import { SearchErrorState, SearchPartialState, SearchStopWordHint } from '~/components/Search';
+import {
+  SearchErrorState,
+  SearchPartialState,
+  SearchStopWordHint,
+} from '~/components/Search/states';
 import ConversationEndpointIcon from '~/components/Conversations/ConversationEndpointIcon';
 import { NotificationSeverity } from '~/common';
 import { formatDate, logger } from '~/utils';

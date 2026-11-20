@@ -26,7 +26,11 @@ import {
   useNavScrolling,
   useScrollFade,
 } from '~/hooks';
-import { SearchErrorState, SearchPartialState, SearchStopWordHint } from '~/components/Search';
+import {
+  SearchErrorState,
+  SearchPartialState,
+  SearchStopWordHint,
+} from '~/components/Search/states';
 import { chatFacetParamsAtom, useFreshLocalDay } from '~/components/Conversations/facets';
 import ProjectsSection from '~/components/Conversations/ProjectsSection';
 import ChatFilterMenu from '~/components/Conversations/ChatFilterMenu';
