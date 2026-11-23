@@ -805,6 +805,40 @@ describe('MCPOAuthHandler - Configurable OAuth Metadata', () => {
       expect(startOptions?.clientInformation).not.toHaveProperty('client_secret');
     });
 
+    it('should remove the SDK prompt=consent on the discovered flow when skip_offline_access_consent_prompt is set', async () => {
+      mockDiscoverOAuthProtectedResourceMetadata.mockRejectedValueOnce(
+        new Error('No resource metadata'),
+      );
+      mockDiscoverAuthorizationServerMetadata.mockResolvedValueOnce({
+        issuer: 'https://example.com',
+        authorization_endpoint: 'https://example.com/authorize',
+        token_endpoint: 'https://example.com/token',
+        response_types_supported: ['code'],
+      } as AuthorizationServerMetadata);
+      mockStartAuthorization.mockResolvedValueOnce({
+        authorizationUrl: new URL(
+          'https://example.com/authorize?client_id=public-client-id&scope=read+offline_access&prompt=consent',
+        ),
+        codeVerifier: 'test-code-verifier',
+      });
+
+      const { authorizationUrl } = await MCPOAuthHandler.initiateOAuthFlow(
+        mockServerName,
+        mockServerUrl,
+        mockUserId,
+        {},
+        {
+          client_id: 'public-client-id',
+          scope: 'read offline_access',
+          skip_offline_access_consent_prompt: true,
+        },
+      );
+
+      const params = new URL(authorizationUrl).searchParams;
+      expect(params.has('prompt')).toBe(false);
+      expect(params.get('scope')).toBe('read offline_access');
+    });
+
     it('should reject stored configured client_secret when refresh would auto-discover token endpoint', async () => {
       await expect(
         MCPOAuthHandler.refreshOAuthTokens(

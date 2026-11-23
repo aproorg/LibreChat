@@ -331,3 +331,58 @@ describe('MCP OAuth send_resource_parameter', () => {
     });
   });
 });
+
+/**
+ * The MCP SDK appends `prompt=consent` whenever `scope` contains `offline_access`. In an
+ * Entra tenant with user consent off, that shows "Approval required" even after admin
+ * consent, so `skip_offline_access_consent_prompt` removes it while keeping the scope.
+ */
+describe('MCP OAuth skip_offline_access_consent_prompt', () => {
+  const entraAuthorize = 'https://login.microsoftonline.test/tenant/oauth2/v2.0/authorize';
+  const scope = 'https://org.crm4.dynamics.com/.default offline_access';
+
+  async function authorizeParams(oauth: Record<string, unknown>): Promise<URLSearchParams> {
+    const { serverUrl, close } = await startProtectedResourceServer();
+    try {
+      const { authorizationUrl } = await MCPOAuthHandler.initiateOAuthFlow(
+        'dataverse',
+        serverUrl,
+        'user-1',
+        {},
+        {
+          authorization_url: entraAuthorize,
+          token_url: 'https://login.microsoftonline.test/tenant/oauth2/v2.0/token',
+          client_id: 'test-client',
+          client_secret: 'test-secret',
+          scope,
+          token_exchange_method: TokenExchangeMethodEnum.DefaultPost,
+          send_resource_parameter: false,
+          ...oauth,
+        },
+      );
+      return new URL(authorizationUrl).searchParams;
+    } finally {
+      await close();
+    }
+  }
+
+  it('keeps the SDK prompt=consent by default', async () => {
+    const params = await authorizeParams({});
+    expect(params.getAll('prompt')).toEqual(['consent']);
+  });
+
+  it('removes prompt=consent but still requests offline_access when set', async () => {
+    const params = await authorizeParams({ skip_offline_access_consent_prompt: true });
+    expect(params.has('prompt')).toBe(false);
+    expect(params.get('scope')).toBe(scope);
+    expect(params.get('state')).toBeTruthy();
+  });
+
+  it('keeps another prompt value carried by authorization_url', async () => {
+    const params = await authorizeParams({
+      authorization_url: `${entraAuthorize}?prompt=select_account`,
+      skip_offline_access_consent_prompt: true,
+    });
+    expect(params.getAll('prompt')).toEqual(['select_account']);
+  });
+});
