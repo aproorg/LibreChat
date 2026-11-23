@@ -4444,8 +4444,63 @@ describe('createGitHubSkillSyncRunner with an s3 source', () => {
 
     expect(result.status).toBe('failed');
     expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ errorCode: 'S3_INVALID_ARCHIVE' }),
+    );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+  });
+
+  it('fails without deleting when the marketplace lists no plugins', async () => {
+    const deps = await s3Deps(
+      { [KEY]: marketplace([]) },
+      { listSkillsBySource: jest.fn(async () => [existingMirror()]) },
+    );
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ errorCode: 'S3_EMPTY_FEED' }),
     );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing mirrors when one plugin archive loses all its skills', async () => {
+    const good = await makeZip({ 'skills/research/SKILL.md': skillMd });
+    const empty = await makeZip({ 'README.md': 'x' });
+    const h = (b: Uint8Array) => crypto.createHash('sha256').update(b).digest('hex');
+    const deps = await s3Deps(
+      {
+        [KEY]: marketplace([
+          { name: 'acme', url: 'plugins/acme.zip', sha256: h(good) },
+          { name: 'gone', url: 'plugins/gone.zip', sha256: h(empty) },
+        ]),
+        'catalogue/company/plugins/acme.zip': good,
+        'catalogue/company/plugins/gone.zip': empty,
+      },
+      { listSkillsBySource: jest.fn(async () => [existingMirror()]) },
+    );
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ errorCode: 'S3_INVALID_ARCHIVE' }),
+    );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+  });
+
+  it('does not read the feed when server credentials are disabled', async () => {
+    const createS3Adapter = jest.fn();
+    const deps = await s3Deps(null, { allowServerCredentials: false, createS3Adapter });
+    const runner = createGitHubSkillSyncRunner(deps);
+    const status = await runner.getStatus();
+    const result = await runner.runOnce();
+
+    expect(status.sources[0]).toEqual(expect.objectContaining({ credentialPresent: false }));
+    expect(result.status).toBe('skipped');
+    expect(createS3Adapter).not.toHaveBeenCalled();
+    expect(deps.upsertStatus).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
     expect(deps.deleteSkill).not.toHaveBeenCalled();
   });
 
