@@ -137,16 +137,18 @@ describe('createS3PluginAdapter', () => {
     function mockEntrySizes(declared: number, inflated: number) {
       const asyncSpy = jest.fn(async () => new Uint8Array(inflated));
       const original = JSZip.loadAsync.bind(JSZip);
-      jest.spyOn(JSZip, 'loadAsync').mockImplementation(async (data: never) => {
-        const zip = await original(data);
-        for (const entry of Object.values(zip.files)) {
-          (entry as unknown as { _data: { uncompressedSize: number } })._data = {
-            uncompressedSize: declared,
-          };
-          (entry as unknown as { async: unknown }).async = asyncSpy;
-        }
-        return zip;
-      });
+      jest
+        .spyOn(JSZip, 'loadAsync')
+        .mockImplementation(async (data: Parameters<typeof JSZip.loadAsync>[0]) => {
+          const zip = await original(data);
+          for (const entry of Object.values(zip.files)) {
+            (entry as unknown as { _data: { uncompressedSize: number } })._data = {
+              uncompressedSize: declared,
+            };
+            (entry as unknown as { async: unknown }).async = asyncSpy;
+          }
+          return zip;
+        });
       return asyncSpy;
     }
 
