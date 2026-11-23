@@ -882,3 +882,59 @@ describe('PDF Validation with fileConfig.endpoints.*.fileSizeLimit', () => {
     });
   });
 });
+
+describe("validatePdf - Claude's 100-page limit on every route", () => {
+  /** A PDF whose body holds `pages` page objects, as the page estimate counts them */
+  const pdfWithPages = (pages: number): Buffer =>
+    Buffer.from(`%PDF-1.4\n${'<< /Type /Page /Parent 2 0 R >>\n'.repeat(pages)}%%EOF`);
+
+  it.each([
+    ['an OpenAI-compatible gateway', Providers.OPENAI, 'claude-opus-4-5'],
+    ['Bedrock', Providers.BEDROCK, 'us.anthropic.claude-sonnet-4-6'],
+  ])('rejects a 101-page PDF for Claude behind %s', async (_route, provider, model) => {
+    const pdf = pdfWithPages(101);
+    const result = await validatePdf(pdf, pdf.length, provider, undefined, model);
+
+    expect(result.isValid).toBe(false);
+    expect(result.error).toContain("Claude's 100-page limit");
+    expect(result.pageLimit).toEqual({ pages: 101, limit: 100 });
+  });
+
+  it('accepts exactly 100 pages for Claude behind a gateway', async () => {
+    const pdf = pdfWithPages(100);
+    const result = await validatePdf(
+      pdf,
+      pdf.length,
+      Providers.OPENAI,
+      undefined,
+      'claude-opus-4-5',
+    );
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it.each([
+    [Providers.OPENAI, 'gpt-4o'],
+    [Providers.BEDROCK, 'amazon.nova-pro-v1:0'],
+    [Providers.OPENAI, undefined],
+  ])('leaves %s %s without a page limit', async (provider, model) => {
+    const pdf = pdfWithPages(150);
+    const result = await validatePdf(pdf, pdf.length, provider, undefined, model);
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it('applies the limit on the direct Bedrock document path too', async () => {
+    const pdf = pdfWithPages(101);
+    const result = await validateBedrockDocument(
+      pdf.length,
+      'application/pdf',
+      pdf,
+      undefined,
+      'global.anthropic.claude-opus-4-5-20251101-v1:0',
+    );
+
+    expect(result.isValid).toBe(false);
+    expect(result.error).toContain('101 pages');
+  });
+});

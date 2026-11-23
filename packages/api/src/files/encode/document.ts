@@ -1,5 +1,6 @@
 import { Providers } from '@librechat/agents';
 import {
+  ErrorTypes,
   isOpenAILikeProvider,
   isBedrockDocumentType,
   bedrockDocumentFormats,
@@ -15,6 +16,7 @@ import type {
   DocumentResult,
   ServerRequest,
 } from '~/types';
+import type { ValidationResult } from '~/files/validation';
 import type { ReachableAgent } from '~/agents/traversal';
 import type { MissingAttachmentHandler } from './utils';
 import {
@@ -26,6 +28,20 @@ import { getFileStream, getConfiguredFileSizeLimit, skipMissingAttachment } from
 import { validatePdf, validateBedrockDocument } from '~/files/validation';
 import { someReachableAgent } from '~/agents/traversal';
 import { runGuardedEncode } from './memoryGuard';
+
+/**
+ * The error for a document that failed validation. Too many pages is a typed payload, which the
+ * run publishes even under a content policy and the client maps to its own copy; the rest keep
+ * their text.
+ */
+function documentValidationError(prefix: string, validation: ValidationResult): Error {
+  if (validation.pageLimit) {
+    return new Error(
+      JSON.stringify({ type: ErrorTypes.DOCUMENT_PAGE_LIMIT, ...validation.pageLimit }),
+    );
+  }
+  return new Error(`${prefix}: ${validation.error}`);
+}
 
 /** The longest document name LibreChat sends to Bedrock. */
 const BEDROCK_DOCUMENT_NAME_LIMIT = 200;
@@ -389,7 +405,7 @@ export async function encodeAndFormatDocuments(
       );
 
       if (!validation.isValid) {
-        throw new Error(`Document validation failed: ${validation.error}`);
+        throw documentValidationError('Document validation failed', validation);
       }
 
       const sanitizedName = (file.filename || 'document')
@@ -418,7 +434,7 @@ export async function encodeAndFormatDocuments(
       );
 
       if (!validation.isValid) {
-        throw new Error(`PDF validation failed: ${validation.error}`);
+        throw documentValidationError('PDF validation failed', validation);
       }
 
       const block = formatDocumentBlock(

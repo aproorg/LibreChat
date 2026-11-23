@@ -19,6 +19,7 @@ import { extractJson, isJson } from '~/utils/json';
 const attachmentErrorPatterns: RegExp[] = [
   /code environment file/i,
   new RegExp(ErrorTypes.RESOURCE_RECOVERY_REQUIRED, 'i'),
+  new RegExp(ErrorTypes.DOCUMENT_PAGE_LIMIT, 'i'),
   new RegExp(`"(${ErrorTypes.INPUT_LENGTH}|${ErrorTypes.FINAL_CONTEXT_OVERFLOW})"`, 'i'),
   /prompt is too long|input is too long|context_length_exceeded|maximum context length/i,
   /request_too_large|request entity too large|payload too large/i,
