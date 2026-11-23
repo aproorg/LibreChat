@@ -219,6 +219,13 @@ describe('Error — reader-facing provider and fallback copy', () => {
     expectReadable();
   });
 
+  it('renders the localized copy for a PDF over the page limit', () => {
+    renderError({ type: ErrorTypes.DOCUMENT_PAGE_LIMIT, pages: 150, limit: 100 });
+
+    expect(screen.getByText(catalog.com_error_document_page_limit)).toBeInTheDocument();
+    expectReadable();
+  });
+
   it('renders the localized copy for a refused send', () => {
     renderError({ type: ErrorTypes.ACCESS_REFUSED, kind: 'spec', message: 'raw server text' });
 

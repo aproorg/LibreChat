@@ -22,6 +22,10 @@ describe('isAttachmentError', () => {
       }),
     ],
     ['an unrestorable file', JSON.stringify({ type: ErrorTypes.RESOURCE_RECOVERY_REQUIRED })],
+    [
+      'a PDF over the page limit',
+      JSON.stringify({ type: ErrorTypes.DOCUMENT_PAGE_LIMIT, pages: 150, limit: 100 }),
+    ],
     ['an over-long prompt', 'An error occurred while processing the request: prompt is too long'],
     ['a typed input length error', JSON.stringify({ type: ErrorTypes.INPUT_LENGTH, info: '9/5' })],
     [

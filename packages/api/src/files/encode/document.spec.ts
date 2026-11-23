@@ -358,6 +358,34 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
       ).rejects.toThrow('PDF validation failed: PDF file size (12MB) exceeds the 10MB limit');
     });
 
+    it('throws a typed page-limit payload the client maps to its own copy', async () => {
+      const req = createMockRequest(10) as ServerRequest;
+      const file = createMockFile(1);
+      mockedGetFileStream.mockResolvedValue({
+        file,
+        content: Buffer.from('test-pdf-content').toString('base64'),
+        metadata: file,
+      });
+      mockedValidatePdf.mockResolvedValue({
+        isValid: false,
+        error: "PDF has approximately 150 pages, which exceeds Claude's 100-page limit",
+        pageLimit: { pages: 150, limit: 100 },
+      });
+
+      const error = await encodeAndFormatDocuments(
+        req,
+        [file],
+        { provider: Providers.OPENAI, model: 'claude-opus-4-5' },
+        mockStrategyFunctions,
+      ).catch((e: Error) => e);
+
+      expect(JSON.parse((error as Error).message)).toEqual({
+        type: 'document_page_limit',
+        pages: 150,
+        limit: 100,
+      });
+    });
+
     it('should not call validatePdf for non-PDF files', async () => {
       const req = createMockRequest(10) as ServerRequest;
       const file: IMongoFile = {

@@ -1,14 +1,22 @@
 import { Providers } from '@librechat/agents';
 import { mbToBytes, isOpenAILikeProvider } from 'librechat-data-provider';
 
+/** Set when a PDF fails only for its page count, so the caller can raise the typed error. */
+export interface PageLimitExceeded {
+  pages: number;
+  limit: number;
+}
+
 export interface ValidationResult {
   isValid: boolean;
   error?: string;
+  pageLimit?: PageLimitExceeded;
 }
 
 export interface PDFValidationResult {
   isValid: boolean;
   error?: string;
+  pageLimit?: PageLimitExceeded;
 }
 
 export interface VideoValidationResult {
@@ -48,7 +56,8 @@ export async function validatePdf(
   }
 
   if (isOpenAILikeProvider(provider)) {
-    return validateOpenAIPdf(fileSize, configuredFileSizeLimit);
+    const result = await validateOpenAIPdf(fileSize, configuredFileSizeLimit);
+    return result.isValid && isClaudeModel(model) ? validateClaudePdfPages(pdfBuffer) : result;
   }
 
   if (provider === Providers.GOOGLE || provider === Providers.VERTEXAI) {
@@ -109,17 +118,7 @@ async function validateAnthropicPdf(
       };
     }
 
-    const pageMatches = pdfContent.match(/\/Type[\s]*\/Page[^s]/g);
-    const estimatedPages = pageMatches ? pageMatches.length : 1;
-
-    if (estimatedPages > 100) {
-      return {
-        isValid: false,
-        error: `PDF has approximately ${estimatedPages} pages, exceeding Anthropic's 100-page limit`,
-      };
-    }
-
-    return { isValid: true };
+    return validateClaudePdfPages(pdfBuffer);
   } catch (error) {
     console.error('PDF validation error:', error);
     return {
@@ -127,6 +126,38 @@ async function validateAnthropicPdf(
       error: 'Failed to validate PDF file',
     };
   }
+}
+
+/** Claude reads at most this many PDF pages per document, on every route to it. */
+const CLAUDE_PDF_PAGE_LIMIT = 100;
+
+/**
+ * Claude behind Bedrock or an OpenAI-compatible gateway (LiteLLM) keeps the page limit of the
+ * Anthropic API; the same rule as `usesAnthropicDocumentCapabilities` in encode/document.ts.
+ */
+function isClaudeModel(model?: string): boolean {
+  return model?.toLowerCase().includes('claude') ?? false;
+}
+
+/**
+ * Rejects a PDF over Claude's page limit before it is sent: past it, the provider answers
+ * every attempt (and every fallback model) with a 400 the user only sees as an upstream error.
+ * ponytail: counts `/Type /Page` objects, so pages inside compressed object streams are missed
+ * and such a PDF still reaches the provider; parse with pdf.js if that turns out to matter.
+ */
+function validateClaudePdfPages(pdfBuffer: Buffer): PDFValidationResult {
+  const pageMatches = pdfBuffer.toString('binary').match(/\/Type[\s]*\/Page[^s]/g);
+  const estimatedPages = pageMatches ? pageMatches.length : 1;
+
+  if (estimatedPages > CLAUDE_PDF_PAGE_LIMIT) {
+    return {
+      isValid: false,
+      error: `PDF has approximately ${estimatedPages} pages, which exceeds Claude's ${CLAUDE_PDF_PAGE_LIMIT}-page limit`,
+      pageLimit: { pages: estimatedPages, limit: CLAUDE_PDF_PAGE_LIMIT },
+    };
+  }
+
+  return { isValid: true };
 }
 
 /**
@@ -227,6 +258,10 @@ export async function validateBedrockDocument(
           isValid: false,
           error: 'Invalid PDF file: missing PDF header',
         };
+      }
+
+      if (isClaudeModel(model)) {
+        return validateClaudePdfPages(fileBuffer);
       }
     }
 

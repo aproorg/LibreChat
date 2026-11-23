@@ -6034,6 +6034,10 @@ export enum ErrorTypes {
    */
   GOOGLE_VIDEO_UNPROCESSABLE = 'google_video_unprocessable',
   /**
+   * An attached PDF has more pages than the model reads (Claude: 100); carries `pages` and `limit`
+   */
+  DOCUMENT_PAGE_LIMIT = 'document_page_limit',
+  /**
    * Required CodeAPI resources could not be restored before model invocation.
    */
   RESOURCE_RECOVERY_REQUIRED = 'resource_recovery_required',

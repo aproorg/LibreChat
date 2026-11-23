@@ -145,6 +145,13 @@ const ERROR_CASES = [
     type: ErrorTypes.GOOGLE_VIDEO_UNPROCESSABLE,
   }),
 
+  /* ---------- attachments ---------- */
+  payloadCase('PDF over the model page limit', {
+    type: ErrorTypes.DOCUMENT_PAGE_LIMIT,
+    pages: 150,
+    limit: 100,
+  }),
+
   /* ---------- code execution and workspaces ---------- */
   payloadCase('Attached resources could not be restored', {
     type: ErrorTypes.RESOURCE_RECOVERY_REQUIRED,
