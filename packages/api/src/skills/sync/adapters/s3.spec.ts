@@ -112,4 +112,87 @@ describe('createS3PluginAdapter', () => {
     const adapter = createS3PluginAdapter({ source, s3: fakeS3({ [KEY]: '{"plugins":"no"}' }) });
     await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_INVALID_MARKETPLACE' });
   });
+
+  it('rejects a plugin archive with no files under skills/', async () => {
+    const { s3 } = await feed(await makeZip({ 'README.md': 'x' }));
+    const adapter = createS3PluginAdapter({ source, s3 });
+    await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_INVALID_ARCHIVE' });
+  });
+
+  it('rejects duplicate plugin names in the marketplace', async () => {
+    const bytes = await makeZip(pluginFiles);
+    const entry = { name: 'p', url: 'plugins/p-1.zip', sha256: sha(bytes) };
+    const s3 = fakeS3({
+      [KEY]: marketplace([entry, entry]),
+      'catalogue/company/plugins/p-1.zip': bytes,
+    });
+    const adapter = createS3PluginAdapter({ source, s3 });
+    await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_INVALID_MARKETPLACE' });
+  });
+
+  describe('size bounds', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    /** Makes every entry of every loaded zip declare `declared` bytes and inflate to `inflated`. */
+    function mockEntrySizes(declared: number, inflated: number) {
+      const asyncSpy = jest.fn(async () => new Uint8Array(inflated));
+      const original = JSZip.loadAsync.bind(JSZip);
+      jest.spyOn(JSZip, 'loadAsync').mockImplementation(async (data: never) => {
+        const zip = await original(data);
+        for (const entry of Object.values(zip.files)) {
+          (entry as unknown as { _data: { uncompressedSize: number } })._data = {
+            uncompressedSize: declared,
+          };
+          (entry as unknown as { async: unknown }).async = asyncSpy;
+        }
+        return zip;
+      });
+      return asyncSpy;
+    }
+
+    it('rejects an entry whose declared size exceeds the budget before inflating it', async () => {
+      const { s3 } = await feed();
+      const asyncSpy = mockEntrySizes(101 * 1024 * 1024, 1);
+      const adapter = createS3PluginAdapter({ source, s3 });
+      await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_INVALID_ARCHIVE' });
+      expect(asyncSpy).not.toHaveBeenCalled();
+    });
+
+    it('shares the inflated-bytes budget across plugins', async () => {
+      const a = await makeZip({ 'skills/a/SKILL.md': 'a' });
+      const b = await makeZip({ 'skills/b/SKILL.md': 'b' });
+      const s3 = fakeS3({
+        [KEY]: marketplace([
+          { name: 'a', url: 'plugins/a.zip', sha256: sha(a) },
+          { name: 'b', url: 'plugins/b.zip', sha256: sha(b) },
+        ]),
+        'catalogue/company/plugins/a.zip': a,
+        'catalogue/company/plugins/b.zip': b,
+      });
+      const asyncSpy = mockEntrySizes(60 * 1024 * 1024, 60 * 1024 * 1024);
+      const adapter = createS3PluginAdapter({ source, s3 });
+      await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_INVALID_ARCHIVE' });
+      // The second plugin is refused on its declared size, so only the first inflates.
+      expect(asyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an object whose ContentLength exceeds the cap', async () => {
+      const bytes = await makeZip(pluginFiles);
+      const s3 = fakeS3(
+        {
+          [KEY]: marketplace([{ name: 'p', url: 'plugins/p-1.zip', sha256: sha(bytes) }]),
+          'catalogue/company/plugins/p-1.zip': bytes,
+        },
+        (key, size) => (key === KEY ? 2 * 1024 * 1024 : size),
+      );
+      const adapter = createS3PluginAdapter({ source, s3 });
+      await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_READ_FAILED' });
+    });
+
+    it('stops streaming past the cap when ContentLength is missing', async () => {
+      const s3 = fakeS3({ [KEY]: 'x'.repeat(1024 * 1024 + 1) }, () => null);
+      const adapter = createS3PluginAdapter({ source, s3 });
+      await expect(adapter.resolveCommit()).rejects.toMatchObject({ code: 'S3_READ_FAILED' });
+    });
+  });
 });

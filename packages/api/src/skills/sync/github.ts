@@ -1460,6 +1460,7 @@ async function resolveGitHubToken(
   deps: GitHubSkillSyncDeps,
   source: SkillSyncSourceConfig,
 ): Promise<string | null> {
+  // s3 sources carry no token; their gate is allowServerCredentials in syncSource.
   if (deps.allowServerCredentials === false || source.type === 's3') {
     return null;
   }
@@ -1512,7 +1513,8 @@ async function syncSource(params: {
     const allowServerCredentials = deps.allowServerCredentials !== false;
     const token = await resolveGitHubToken(deps, source);
     assertNotCancelled();
-    if (source.type !== 's3' && !token) {
+    // The s3 feed is read with the server's ambient role, so it needs the same gate as a token.
+    if (source.type === 's3' ? !allowServerCredentials : !token) {
       throw new SkillSyncError(
         'MISSING_CREDENTIAL',
         getMissingCredentialMessage(source, allowServerCredentials),
@@ -2089,7 +2091,10 @@ export function createGitHubSkillSyncRunner(deps: GitHubSkillSyncDeps): GitHubSk
         sourceId: source.id,
         tenantId: source.tenantId,
         status: stored?.status ?? 'idle',
-        credentialPresent: source.type === 's3' || envTokenPresent || Boolean(credential),
+        credentialPresent:
+          (source.type === 's3' && allowServerCredentials) ||
+          envTokenPresent ||
+          Boolean(credential),
         ...getSourceStatusFields(source),
         startedAt: stored?.startedAt,
         finishedAt: stored?.finishedAt,

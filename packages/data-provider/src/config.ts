@@ -523,15 +523,17 @@ export const skillSyncGitHubSourceSchema = z
 export const skillSyncS3SourceSchema = z.object({
   type: z.literal('s3'),
   id: skillSyncIdentifierSchema,
-  bucket: z.string().min(1).max(255),
+  bucket: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/),
   key: z
     .string()
     .min(1)
     .max(1024)
-    .refine((value) => !value.startsWith('/') && !value.split('/').includes('..'), {
-      message: 'must be a relative key without ".." segments',
-    }),
-  region: z.string().min(1).max(64),
+    .refine(
+      (value) =>
+        !value.includes('\\') && value.split('/').every((segment) => segment && segment !== '..'),
+      { message: 'must be a relative key with no empty or ".." segments and no backslashes' },
+    ),
+  region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/),
   tenantId: skillSyncTenantIdSchema.optional(),
 });
 
