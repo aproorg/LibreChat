@@ -25,7 +25,7 @@ import type {
   SkillSyncStatusInput,
   DeleteSkillResult,
 } from '@librechat/data-schemas';
-import type { SkillSyncConfig, SkillSyncGitHubSourceConfig } from 'librechat-data-provider';
+import type { SkillSyncConfig, SkillSyncSourceConfig } from 'librechat-data-provider';
 import type {
   RepoCommit,
   RepoTreeEntry,
@@ -33,11 +33,13 @@ import type {
   AssertNotCancelled,
 } from './adapters/types';
 import type { GitHubRepoAdapterConfig } from './adapters/github';
+import type { S3PluginAdapterConfig } from './adapters/s3';
 import {
   GITHUB_FINE_GRAINED_TOKEN_RECOMMENDATION,
   createGitHubRepoAdapter,
 } from './adapters/github';
 import { DEFAULT_SKILL_IMPORT_LIMITS } from '../limits';
+import { createS3PluginAdapter } from './adapters/s3';
 import { parseSkillMarkdown } from '../parse';
 import { normalizeRepoPath } from './path';
 import { SkillSyncError } from './errors';
@@ -239,6 +241,8 @@ export type GitHubSkillSyncDeps = {
    * fake repository without standing up provider HTTP responses.
    */
   createAdapter?: (config: GitHubRepoAdapterConfig) => GitRepoAdapter;
+  /** Same seam as `createAdapter`, for `type: "s3"` sources. */
+  createS3Adapter?: (config: S3PluginAdapterConfig) => GitRepoAdapter;
   lockOwner?: string;
   allowServerCredentials?: boolean;
 };
@@ -263,6 +267,14 @@ export type GitHubSkillSyncRunner = {
   runOnce: () => Promise<GitHubSkillSyncRunResult>;
 };
 
+/** An s3 feed has no configured paths: skills are discovered across the whole feed. */
+function getSourcePaths(source: SkillSyncSourceConfig): string[] {
+  return source.type === 's3' ? [''] : source.paths;
+}
+
+/** `<plugin>/skills/<skill>` is three segments deep. */
+const S3_DISCOVERY_DEPTH = 3;
+
 function isSafeRelativePath(value: string): boolean {
   if (!value || value.startsWith('/') || value.startsWith('\\')) {
     return false;
@@ -273,7 +285,7 @@ function isSafeRelativePath(value: string): boolean {
   return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
-function makeUpstreamId(source: SkillSyncGitHubSourceConfig, rootPath: string): string {
+function makeUpstreamId(source: SkillSyncSourceConfig, rootPath: string): string {
   // Identity is keyed on the stable, admin-controlled source id and the skill's
   // root path only — never owner/repo/ref. Repointing a source to a renamed or
   // replacement repository (or rotating its ref) keeps the same upstream id, so
@@ -282,7 +294,7 @@ function makeUpstreamId(source: SkillSyncGitHubSourceConfig, rootPath: string): 
   return `${source.id}:${rootPath}`;
 }
 
-function makeSourceAuthorId(source: SkillSyncGitHubSourceConfig): Types.ObjectId {
+function makeSourceAuthorId(source: SkillSyncSourceConfig): Types.ObjectId {
   // Fold the tenant into the synthetic author so the same source mirrored into
   // different tenants gets distinct author ids (clearer audits, no cross-tenant
   // author collisions). The tenant suffix is omitted when absent so single-tenant
@@ -623,11 +635,11 @@ function truncateSkipName(name: string | undefined): string | undefined {
 async function fetchConfiguredTreeEntries(params: {
   adapter: GitRepoAdapter;
   commit: RepoCommit;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   assertNotCancelled: AssertNotCancelled;
 }): Promise<RepoTreeEntry[]> {
   const entriesByPath = new Map<string, RepoTreeEntry>();
-  for (const repoPath of params.source.paths) {
+  for (const repoPath of getSourcePaths(params.source)) {
     const entries = await params.adapter.fetchTreeEntries(params.commit, {
       pathPrefix: repoPath,
       assertNotCancelled: params.assertNotCancelled,
@@ -658,12 +670,12 @@ function isSkillRootWithinDiscoveryDepth(
   return relative.split('/').length <= maxDepth;
 }
 
-function discoverSkills(
-  tree: RepoTreeEntry[],
-  source: SkillSyncGitHubSourceConfig,
-): DiscoveredSkill[] {
-  const basePaths = source.paths.map(normalizeRepoPath);
-  const skillDiscoveryDepth = source.skillDiscoveryDepth ?? SKILL_SYNC_DEFAULT_DISCOVERY_DEPTH;
+function discoverSkills(tree: RepoTreeEntry[], source: SkillSyncSourceConfig): DiscoveredSkill[] {
+  const basePaths = getSourcePaths(source).map(normalizeRepoPath);
+  const skillDiscoveryDepth =
+    source.type === 's3'
+      ? S3_DISCOVERY_DEPTH
+      : (source.skillDiscoveryDepth ?? SKILL_SYNC_DEFAULT_DISCOVERY_DEPTH);
   const skillMdByRoot = new Map<string, RepoTreeEntry>();
   for (const entry of tree) {
     if (entry.type !== 'blob') {
@@ -718,11 +730,8 @@ function discoverSkills(
   });
 }
 
-function assertConfiguredPathsExist(
-  tree: RepoTreeEntry[],
-  source: SkillSyncGitHubSourceConfig,
-): void {
-  for (const configuredPath of source.paths.map(normalizeRepoPath)) {
+function assertConfiguredPathsExist(tree: RepoTreeEntry[], source: SkillSyncSourceConfig): void {
+  for (const configuredPath of getSourcePaths(source).map(normalizeRepoPath)) {
     if (configuredPath === '') {
       continue;
     }
@@ -739,8 +748,21 @@ function assertConfiguredPathsExist(
   }
 }
 
+function getSourceStatusFields(source: SkillSyncSourceConfig) {
+  if (source.type === 's3') {
+    return { paths: [`s3://${source.bucket}/${source.key}`] };
+  }
+  return {
+    credentialKey: source.credentialKey,
+    owner: source.owner,
+    repo: source.repo,
+    ref: source.ref,
+    paths: source.paths,
+  };
+}
+
 function makeStatusInput(params: {
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   status: SkillSyncStatusInput['status'];
   startedAt?: Date;
   finishedAt?: Date;
@@ -755,11 +777,7 @@ function makeStatusInput(params: {
     sourceId: params.source.id,
     tenantId: params.source.tenantId,
     status: params.status,
-    credentialKey: params.source.credentialKey,
-    owner: params.source.owner,
-    repo: params.source.repo,
-    ref: params.source.ref,
-    paths: params.source.paths,
+    ...getSourceStatusFields(params.source),
     startedAt: params.startedAt,
     finishedAt: params.finishedAt,
     errorCode: params.errorCode,
@@ -795,7 +813,7 @@ async function ensurePublicViewer(
 
 async function prepareRemoteSkill(params: {
   deps: GitHubSkillSyncDeps;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   discovered: DiscoveredSkill;
   skillMdContent: string;
   commitSha: string;
@@ -821,9 +839,9 @@ async function prepareRemoteSkill(params: {
     provider: PROVIDER,
     sourceId: source.id,
     upstreamId,
-    owner: source.owner,
-    repo: source.repo,
-    ref: source.ref,
+    ...(source.type === 's3'
+      ? { bucket: source.bucket, key: source.key, zipSha: commitSha }
+      : { owner: source.owner, repo: source.repo, ref: source.ref }),
     skillPath: discovered.rootPath,
     commitSha,
     skillBlobSha: discovered.skillMd.id,
@@ -1136,7 +1154,7 @@ function hasRemoteSkillDefinitionChanged(update: UpdateSkillInput, existing: ISk
 }
 
 function findMovedSourceSkill(params: {
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   prepared: PreparedRemoteSkill;
   existingSyncedSkills: Array<ISkill & { _id: Types.ObjectId }>;
   excludedUpstreamIds: Set<string>;
@@ -1163,7 +1181,7 @@ function findMovedSourceSkill(params: {
 }
 
 function hasNameConflictingStaleSkill(params: {
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   prepared: PreparedDiscoveredSkill;
   existingSyncedSkills: Array<ISkill & { _id: Types.ObjectId }>;
   discoveredUpstreamIds: Set<string>;
@@ -1179,7 +1197,7 @@ function hasNameConflictingStaleSkill(params: {
 }
 
 function orderPreparedSkillsForSafeStaleDeletes(params: {
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   preparedSkills: PreparedDiscoveredSkill[];
   existingSyncedSkills: Array<ISkill & { _id: Types.ObjectId }>;
   discoveredUpstreamIds: Set<string>;
@@ -1219,7 +1237,7 @@ function getMirrorNameKey(params: {
  * unaffected: one bad pair no longer costs the rest of the repository.
  */
 function partitionDuplicatePreparedSkillNames(
-  source: SkillSyncGitHubSourceConfig,
+  source: SkillSyncSourceConfig,
   preparedSkills: PreparedDiscoveredSkill[],
 ): { unique: PreparedDiscoveredSkill[]; duplicates: PreparedDiscoveredSkill[] } {
   const sourceTenantId = source.tenantId ?? undefined;
@@ -1250,7 +1268,7 @@ function partitionDuplicatePreparedSkillNames(
 }
 
 function makeDuplicateNameError(
-  source: SkillSyncGitHubSourceConfig,
+  source: SkillSyncSourceConfig,
   name: string | undefined,
 ): SkillSyncError {
   return new SkillSyncError(
@@ -1261,7 +1279,7 @@ function makeDuplicateNameError(
 
 async function deleteNameConflictingStaleSkill(params: {
   deps: GitHubSkillSyncDeps;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   prepared: PreparedRemoteSkill;
   existingSyncedSkills: Array<ISkill & { _id: Types.ObjectId }>;
   discoveredUpstreamIds: Set<string>;
@@ -1311,7 +1329,7 @@ async function syncSkillFiles(params: {
   deps: GitHubSkillSyncDeps;
   adapter: GitRepoAdapter;
   commit: RepoCommit;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   skill: ISkill & { _id: Types.ObjectId };
   discovered: DiscoveredSkill;
   assertNotCancelled: AssertNotCancelled;
@@ -1440,9 +1458,10 @@ function getTokenEnvVarName(tokenReference: string | undefined): string | null {
 
 async function resolveGitHubToken(
   deps: GitHubSkillSyncDeps,
-  source: SkillSyncGitHubSourceConfig,
+  source: SkillSyncSourceConfig,
 ): Promise<string | null> {
-  if (deps.allowServerCredentials === false) {
+  // s3 sources carry no token; their gate is allowServerCredentials in syncSource.
+  if (deps.allowServerCredentials === false || source.type === 's3') {
     return null;
   }
   const tokenEnvVar = getTokenEnvVarName(source.token);
@@ -1456,22 +1475,22 @@ async function resolveGitHubToken(
 }
 
 function getMissingCredentialMessage(
-  source: SkillSyncGitHubSourceConfig,
+  source: SkillSyncSourceConfig,
   allowServerCredentials: boolean,
 ): string {
   if (!allowServerCredentials) {
     return 'Server GitHub credentials are not available for this skill sync config';
   }
-  const tokenEnvVar = getTokenEnvVarName(source.token);
+  const tokenEnvVar = getTokenEnvVarName(source.type === 's3' ? undefined : source.token);
   if (tokenEnvVar) {
     return `Missing GitHub token environment variable "${tokenEnvVar}"`;
   }
-  return `Missing GitHub credential "${source.credentialKey ?? source.id}"`;
+  return `Missing GitHub credential "${(source.type === 's3' ? undefined : source.credentialKey) ?? source.id}"`;
 }
 
 async function syncSource(params: {
   deps: GitHubSkillSyncDeps;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   fetchFn: FetchFn;
   assertNotCancelled: AssertNotCancelled;
 }): Promise<ISkillSyncStatus> {
@@ -1494,13 +1513,17 @@ async function syncSource(params: {
     const allowServerCredentials = deps.allowServerCredentials !== false;
     const token = await resolveGitHubToken(deps, source);
     assertNotCancelled();
-    if (!token) {
+    // The s3 feed is read with the server's ambient role, so it needs the same gate as a token.
+    if (source.type === 's3' ? !allowServerCredentials : !token) {
       throw new SkillSyncError(
         'MISSING_CREDENTIAL',
         getMissingCredentialMessage(source, allowServerCredentials),
       );
     }
-    const adapter = createAdapter({ source, token, fetchFn });
+    const adapter =
+      source.type === 's3'
+        ? (deps.createS3Adapter ?? createS3PluginAdapter)({ source })
+        : createAdapter({ source, token: token as string, fetchFn });
     const commit = await adapter.resolveCommit();
     assertNotCancelled();
     const treeEntries = await fetchConfiguredTreeEntries({
@@ -1509,8 +1532,15 @@ async function syncSource(params: {
       source,
       assertNotCancelled,
     });
-    assertConfiguredPathsExist(treeEntries, source);
     const discoveredSkills = discoverSkills(treeEntries, source);
+    if (source.type === 's3') {
+      // A feed that yields nothing must fail the run, never empty the mirror.
+      if (discoveredSkills.length === 0) {
+        throw new SkillSyncError('S3_EMPTY_FEED', 'The s3 plugin feed contains no skills');
+      }
+    } else {
+      assertConfiguredPathsExist(treeEntries, source);
+    }
     const seenUpstreamIds = new Set<string>();
     let existingSyncedSkills: Array<ISkill & { _id: Types.ObjectId }> | null = null;
     const getExistingSyncedSkills = async () => {
@@ -1999,7 +2029,7 @@ async function syncSource(params: {
  */
 function syncSourceInTenantContext(params: {
   deps: GitHubSkillSyncDeps;
-  source: SkillSyncGitHubSourceConfig;
+  source: SkillSyncSourceConfig;
   fetchFn: FetchFn;
   assertNotCancelled: AssertNotCancelled;
 }): Promise<ISkillSyncStatus> {
@@ -2013,17 +2043,21 @@ function getGithubConfig(config: SkillSyncConfig | undefined): {
   enabled: boolean;
   intervalMinutes: number;
   runOnStartup: boolean;
-  sources: SkillSyncGitHubSourceConfig[];
+  sources: SkillSyncSourceConfig[];
 } {
   return {
     enabled: config?.github?.enabled ?? false,
     intervalMinutes: config?.github?.intervalMinutes ?? 60,
     runOnStartup: config?.github?.runOnStartup ?? false,
     sources:
-      config?.github?.sources.map((source) => ({
-        ...source,
-        skillDiscoveryDepth: source.skillDiscoveryDepth ?? SKILL_SYNC_DEFAULT_DISCOVERY_DEPTH,
-      })) ?? [],
+      config?.github?.sources.map((source) =>
+        source.type === 's3'
+          ? source
+          : {
+              ...source,
+              skillDiscoveryDepth: source.skillDiscoveryDepth ?? SKILL_SYNC_DEFAULT_DISCOVERY_DEPTH,
+            },
+      ) ?? [],
   };
 }
 
@@ -2046,11 +2080,10 @@ export function createGitHubSkillSyncRunner(deps: GitHubSkillSyncDeps): GitHubSk
     );
     const sources = github.sources.map((source) => {
       const stored = statusBySourceId.get(makeStatusKey(source.id, source.tenantId));
+      const credentialKey = source.type === 's3' ? undefined : source.credentialKey;
       const credential =
-        allowServerCredentials && source.credentialKey
-          ? credentialByKey.get(source.credentialKey)
-          : null;
-      const tokenEnvVar = getTokenEnvVarName(source.token);
+        allowServerCredentials && credentialKey ? credentialByKey.get(credentialKey) : null;
+      const tokenEnvVar = getTokenEnvVarName(source.type === 's3' ? undefined : source.token);
       const envTokenPresent =
         allowServerCredentials && tokenEnvVar ? Boolean(process.env[tokenEnvVar]?.trim()) : false;
       return {
@@ -2058,12 +2091,11 @@ export function createGitHubSkillSyncRunner(deps: GitHubSkillSyncDeps): GitHubSk
         sourceId: source.id,
         tenantId: source.tenantId,
         status: stored?.status ?? 'idle',
-        credentialKey: source.credentialKey,
-        credentialPresent: envTokenPresent || Boolean(credential),
-        owner: source.owner,
-        repo: source.repo,
-        ref: source.ref,
-        paths: source.paths,
+        credentialPresent:
+          (source.type === 's3' && allowServerCredentials) ||
+          envTokenPresent ||
+          Boolean(credential),
+        ...getSourceStatusFields(source),
         startedAt: stored?.startedAt,
         finishedAt: stored?.finishedAt,
         lastSuccessAt: stored?.lastSuccessAt,

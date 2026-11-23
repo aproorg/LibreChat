@@ -488,6 +488,7 @@ const skillSyncTenantIdSchema = z
 
 export const skillSyncGitHubSourceSchema = z
   .object({
+    type: z.literal('github').optional(),
     id: skillSyncIdentifierSchema,
     owner: skillSyncGitHubOwnerSchema,
     repo: skillSyncGitHubRepoSchema,
@@ -515,6 +516,32 @@ export const skillSyncGitHubSourceSchema = z
     }
   });
 
+/**
+ * A company plugin feed published to S3 (marketplace.json plus plugin zips).
+ * Read with the task role's default credentials, so it carries no token.
+ */
+export const skillSyncS3SourceSchema = z.object({
+  type: z.literal('s3'),
+  id: skillSyncIdentifierSchema,
+  bucket: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/),
+  key: z
+    .string()
+    .min(1)
+    .max(1024)
+    .refine(
+      (value) =>
+        !value.includes('\\') && value.split('/').every((segment) => segment && segment !== '..'),
+      { message: 'must be a relative key with no empty or ".." segments and no backslashes' },
+    ),
+  region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/),
+  tenantId: skillSyncTenantIdSchema.optional(),
+});
+
+export const skillSyncSourceSchema = z.union([
+  skillSyncS3SourceSchema,
+  skillSyncGitHubSourceSchema,
+]);
+
 export const skillSyncConfigSchema = z
   .object({
     github: z
@@ -527,7 +554,7 @@ export const skillSyncConfigSchema = z
           .max(SKILL_SYNC_MAX_INTERVAL_MINUTES)
           .default(60),
         runOnStartup: z.boolean().default(false),
-        sources: z.array(skillSyncGitHubSourceSchema).default([]),
+        sources: z.array(skillSyncSourceSchema).default([]),
       })
       .superRefine((github, ctx) => {
         if (github.enabled && github.sources.length === 0) {
@@ -555,6 +582,8 @@ export const skillSyncConfigSchema = z
 
 export type SkillSyncConfig = z.infer<typeof skillSyncConfigSchema>;
 export type SkillSyncGitHubSourceConfig = z.infer<typeof skillSyncGitHubSourceSchema>;
+export type SkillSyncS3SourceConfig = z.infer<typeof skillSyncS3SourceSchema>;
+export type SkillSyncSourceConfig = SkillSyncGitHubSourceConfig | SkillSyncS3SourceConfig;
 
 // Helper type to extract the shape of the Zod object schema
 type SchemaShape<T> = T extends z.ZodObject<infer U> ? U : never;
