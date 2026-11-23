@@ -660,6 +660,30 @@ export class MCPOAuthHandler {
   }
 
   /**
+   * Drops the `prompt=consent` that {@link startAuthorization} appends for `offline_access`
+   * when `skip_offline_access_consent_prompt` is set. Other `prompt` values, such as one an
+   * admin put in `authorization_url`, are kept.
+   * See `OAuthOptionsSchema.skip_offline_access_consent_prompt`.
+   */
+  private static stripConsentPrompt(
+    authorizationUrl: URL,
+    config: MCPOptions['oauth'] | undefined,
+    serverName: string,
+  ): void {
+    const prompts = authorizationUrl.searchParams.getAll('prompt');
+    if (!config?.skip_offline_access_consent_prompt || !prompts.includes('consent')) {
+      return;
+    }
+    authorizationUrl.searchParams.delete('prompt');
+    for (const prompt of prompts.filter((value) => value !== 'consent')) {
+      authorizationUrl.searchParams.append('prompt', prompt);
+    }
+    logger.debug(
+      `[MCPOAuth] Removed prompt=consent from the authorization URL for ${serverName}; skip_offline_access_consent_prompt is set`,
+    );
+  }
+
+  /**
    * Whether a pending flow's captured RFC 8707 decision still matches the live config.
    *
    * {@link assertStoredClientBinding} deliberately ignores this setting so that flipping it
@@ -975,6 +999,7 @@ export class MCPOAuthHandler {
         /** Add cryptographic state parameter to the authorization URL */
         authorizationUrl.searchParams.set('state', state);
         logger.debug(`[MCPOAuth] Added state parameter to authorization URL`);
+        this.stripConsentPrompt(authorizationUrl, config, serverName);
 
         if (!sendResourceParameter) {
           this.stripInheritedResourceParameter(authorizationUrl, serverName);
@@ -1166,6 +1191,7 @@ export class MCPOAuthHandler {
         /** Add cryptographic state parameter to the authorization URL */
         authorizationUrl.searchParams.set('state', state);
         logger.debug(`[MCPOAuth] Added state parameter to authorization URL`);
+        this.stripConsentPrompt(authorizationUrl, config, serverName);
 
         if (!sendResourceParameter) {
           this.stripInheritedResourceParameter(authorizationUrl, serverName);
