@@ -23,9 +23,11 @@ import type {
 } from '@librechat/data-schemas';
 import type { RepoTreeEntry, GitRepoAdapter } from './adapters/types';
 import type { GitHubSkillSyncDeps } from './github';
+import { fakeS3, makeZip, marketplace } from './adapters/s3.testing';
 import { createSkillDeletionService } from '../deletionService';
 import { DEFAULT_SKILL_IMPORT_LIMITS } from '../limits';
 import { createGitHubSkillSyncRunner } from './github';
+import { createS3PluginAdapter } from './adapters/s3';
 import { runSkillDeletion } from '../deletion';
 
 function response(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -4277,5 +4279,237 @@ describe('steady-state sync of an unchanged source', () => {
     );
     expect(deps.findSkillBySourceIdentity).not.toHaveBeenCalled();
     expect(repo.fetchFileContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('createGitHubSkillSyncRunner with an s3 source', () => {
+  const KEY = 'catalogue/company/marketplace.json';
+  const skillMd = '---\nname: research\ndescription: Research things\n---\nBody';
+
+  async function s3Deps(
+    objects: Record<string, Uint8Array | string> | null,
+    overrides: Partial<GitHubSkillSyncDeps> = {},
+  ) {
+    const bucket =
+      objects ??
+      (await (async () => {
+        const zip = await makeZip({
+          '.claude-plugin/plugin.json': '{}',
+          'skills/research/SKILL.md': skillMd,
+          'skills/research/scripts/run.sh': 'echo hi',
+        });
+        const sha = crypto.createHash('sha256').update(zip).digest('hex');
+        return {
+          [KEY]: marketplace([{ name: 'acme', url: 'plugins/acme.zip', sha256: sha }]),
+          'catalogue/company/plugins/acme.zip': zip,
+        };
+      })());
+    return createDeps({
+      getConfig: () => ({
+        github: {
+          enabled: true,
+          intervalMinutes: 60,
+          runOnStartup: false,
+          sources: [{ type: 's3', id: 'company', bucket: 'b', key: KEY, region: 'eu-west-1' }],
+        },
+      }),
+      getCredentialToken: jest.fn(async () => null),
+      createS3Adapter: (config) => createS3PluginAdapter({ ...config, s3: fakeS3(bucket) }),
+      ...overrides,
+    });
+  }
+
+  const existingMirror = () => {
+    const skill = makeSkill({
+      name: 'old',
+      description: 'old',
+      author: new Types.ObjectId(),
+      authorName: 'GitHub Sync',
+      source: 'github',
+      sourceMetadata: {
+        provider: 'github',
+        sourceId: 'company',
+        upstreamId: 'company:old/skills/old',
+      },
+    });
+    return skill;
+  };
+
+  it('mirrors plugin skills with a deterministic upstream id and a public viewer grant', async () => {
+    const deps = await s3Deps(null);
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('completed');
+    expect(deps.createSkill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'research',
+        source: 'github',
+        sourceMetadata: expect.objectContaining({
+          sourceId: 'company',
+          upstreamId: 'company:acme/skills/research',
+          bucket: 'b',
+          key: KEY,
+          zipSha: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      }),
+    );
+    const metadata = (deps.createSkill as jest.Mock).mock.calls[0][0].sourceMetadata;
+    expect(metadata.owner).toBeUndefined();
+    expect(metadata.repo).toBeUndefined();
+    expect(deps.upsertSkillFile).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: 'scripts/run.sh' }),
+    );
+    expect(deps.grantPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ principalType: 'public', accessRoleId: 'skill_viewer' }),
+    );
+    expect(deps.getCredentialToken).not.toHaveBeenCalled();
+  });
+
+  it('reports credentialPresent for s3 sources', async () => {
+    const status = await createGitHubSkillSyncRunner(await s3Deps(null)).getStatus();
+    expect(status.sources[0]).toEqual(
+      expect.objectContaining({ sourceId: 'company', credentialPresent: true }),
+    );
+  });
+
+  it('is idempotent: unchanged input updates the existing mirror in place', async () => {
+    const first = await s3Deps(null);
+    await createGitHubSkillSyncRunner(first).runOnce();
+    const created = (first.createSkill as jest.Mock).mock.results[0].value;
+    const { skill } = await created;
+    const second = await s3Deps(null, {
+      findSkillBySourceIdentity: jest.fn(async () => skill),
+      listSkillsBySource: jest.fn(async () => [skill]),
+      getSkillById: jest.fn(async () => skill),
+      updateSkill: jest.fn(async () => ({ status: 'updated', skill, warnings: [] }) as never),
+    });
+    const result = await createGitHubSkillSyncRunner(second).runOnce();
+
+    expect(result.status).toBe('completed');
+    expect(second.createSkill).not.toHaveBeenCalled();
+    expect(second.deleteSkill).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the marketplace is missing', {}],
+    ['the plugin list is empty', { [KEY]: marketplace([]) }],
+    ['a plugin sha does not match', null],
+    ['a plugin zip is corrupt', null],
+    ['an archive url traverses', null],
+  ])('records failed and deletes nothing when %s', async (label, objects) => {
+    let bucket = objects;
+    if (!bucket) {
+      const zip =
+        label === 'a plugin zip is corrupt'
+          ? Buffer.from('nope')
+          : await makeZip({ 'skills/s/SKILL.md': skillMd });
+      const sha =
+        label === 'a plugin sha does not match'
+          ? 'a'.repeat(64)
+          : crypto.createHash('sha256').update(zip).digest('hex');
+      bucket = {
+        [KEY]: marketplace([
+          {
+            name: 'acme',
+            url: label === 'an archive url traverses' ? '../x.zip' : 'plugins/acme.zip',
+            sha256: sha,
+          },
+        ]),
+        'catalogue/company/plugins/acme.zip': zip,
+      };
+    }
+    const mirror = existingMirror();
+    const deps = await s3Deps(bucket, { listSkillsBySource: jest.fn(async () => [mirror]) });
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'failed' }),
+    );
+  });
+
+  it('fails without deleting when plugins contain no skills', async () => {
+    const zip = await makeZip({ '.claude-plugin/plugin.json': '{}' });
+    const sha = crypto.createHash('sha256').update(zip).digest('hex');
+    const deps = await s3Deps(
+      {
+        [KEY]: marketplace([{ name: 'acme', url: 'plugins/acme.zip', sha256: sha }]),
+        'catalogue/company/plugins/acme.zip': zip,
+      },
+      { listSkillsBySource: jest.fn(async () => [existingMirror()]) },
+    );
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ errorCode: 'S3_INVALID_ARCHIVE' }),
+    );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+  });
+
+  it('fails without deleting when the marketplace lists no plugins', async () => {
+    const deps = await s3Deps(
+      { [KEY]: marketplace([]) },
+      { listSkillsBySource: jest.fn(async () => [existingMirror()]) },
+    );
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ errorCode: 'S3_EMPTY_FEED' }),
+    );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing mirrors when one plugin archive loses all its skills', async () => {
+    const good = await makeZip({ 'skills/research/SKILL.md': skillMd });
+    const empty = await makeZip({ 'README.md': 'x' });
+    const h = (b: Uint8Array) => crypto.createHash('sha256').update(b).digest('hex');
+    const deps = await s3Deps(
+      {
+        [KEY]: marketplace([
+          { name: 'acme', url: 'plugins/acme.zip', sha256: h(good) },
+          { name: 'gone', url: 'plugins/gone.zip', sha256: h(empty) },
+        ]),
+        'catalogue/company/plugins/acme.zip': good,
+        'catalogue/company/plugins/gone.zip': empty,
+      },
+      { listSkillsBySource: jest.fn(async () => [existingMirror()]) },
+    );
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('failed');
+    expect(deps.upsertStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ errorCode: 'S3_INVALID_ARCHIVE' }),
+    );
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+  });
+
+  it('does not read the feed when server credentials are disabled', async () => {
+    const createS3Adapter = jest.fn();
+    const deps = await s3Deps(null, { allowServerCredentials: false, createS3Adapter });
+    const runner = createGitHubSkillSyncRunner(deps);
+    const status = await runner.getStatus();
+    const result = await runner.runOnce();
+
+    expect(status.sources[0]).toEqual(expect.objectContaining({ credentialPresent: false }));
+    expect(result.status).toBe('skipped');
+    expect(createS3Adapter).not.toHaveBeenCalled();
+    expect(deps.upsertStatus).not.toHaveBeenCalled();
+    expect(deps.createSkill).not.toHaveBeenCalled();
+    expect(deps.deleteSkill).not.toHaveBeenCalled();
+  });
+
+  it('deletes a mirror that left the feed once the feed is healthy', async () => {
+    const stale = existingMirror();
+    const deps = await s3Deps(null, { listSkillsBySource: jest.fn(async () => [stale]) });
+    const result = await createGitHubSkillSyncRunner(deps).runOnce();
+
+    expect(result.status).toBe('completed');
+    expect(deps.deleteSkill).toHaveBeenCalledWith(stale._id.toString());
   });
 });

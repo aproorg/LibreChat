@@ -1,4 +1,4 @@
-import type { SkillSyncConfig } from 'librechat-data-provider';
+import type { SkillSyncConfig, SkillSyncGitHubSourceConfig } from 'librechat-data-provider';
 import type { SkillSyncTriggerRunnerFactoryInput } from './orchestrator';
 import type { GitHubSkillSyncRunner } from './github';
 import { createSkillSyncTriggerOrchestrator } from './orchestrator';
@@ -40,34 +40,37 @@ function statusFromConfig(
     intervalMinutes: github?.intervalMinutes ?? 60,
     runOnStartup: github?.runOnStartup ?? false,
     sources:
-      github?.sources.map((configuredSource) => ({
-        provider: 'github',
-        sourceId: configuredSource.id,
-        tenantId: configuredSource.tenantId,
-        status: 'idle',
-        credentialKey: configuredSource.credentialKey,
-        credentialPresent:
-          allowServerCredentials &&
-          Boolean(configuredSource.credentialKey || configuredSource.token),
-        owner: configuredSource.owner,
-        repo: configuredSource.repo,
-        ref: configuredSource.ref,
-        paths: configuredSource.paths,
-        syncedSkillCount: 0,
-        syncedFileCount: 0,
-        deletedSkillCount: 0,
-        deletedFileCount: 0,
-        skippedSkillCount: 0,
-        skippedFileCount: 0,
-        errorCode: undefined,
-        errorMessage: undefined,
-        startedAt: undefined,
-        finishedAt: undefined,
-        lastSuccessAt: undefined,
-        lastFailureAt: undefined,
-        createdAt: undefined,
-        updatedAt: undefined,
-      })) ?? [],
+      // These tests configure GitHub sources only.
+      github?.sources
+        .filter((s): s is SkillSyncGitHubSourceConfig => s.type !== 's3')
+        .map((configuredSource) => ({
+          provider: 'github',
+          sourceId: configuredSource.id,
+          tenantId: configuredSource.tenantId,
+          status: 'idle',
+          credentialKey: configuredSource.credentialKey,
+          credentialPresent:
+            allowServerCredentials &&
+            Boolean(configuredSource.credentialKey || configuredSource.token),
+          owner: configuredSource.owner,
+          repo: configuredSource.repo,
+          ref: configuredSource.ref,
+          paths: configuredSource.paths,
+          syncedSkillCount: 0,
+          syncedFileCount: 0,
+          deletedSkillCount: 0,
+          deletedFileCount: 0,
+          skippedSkillCount: 0,
+          skippedFileCount: 0,
+          errorCode: undefined,
+          errorMessage: undefined,
+          startedAt: undefined,
+          finishedAt: undefined,
+          lastSuccessAt: undefined,
+          lastFailureAt: undefined,
+          createdAt: undefined,
+          updatedAt: undefined,
+        })) ?? [],
     credentials: [],
     fineGrainedTokenRecommendation: 'Use a GitHub fine-grained personal access token.',
   };
