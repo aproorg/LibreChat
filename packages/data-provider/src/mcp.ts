@@ -133,6 +133,21 @@ const OAuthOptionsBaseSchema = z.object({
    * from user-managed servers.
    */
   send_resource_parameter: z.boolean().optional(),
+  /**
+   * Remove the `prompt=consent` the MCP SDK adds to the authorization URL whenever
+   * `scope` contains `offline_access`. `offline_access` stays in `scope`, so refresh
+   * tokens are still requested.
+   *
+   * Default: `false`. `prompt=consent` forces the consent screen even when an admin
+   * has already granted consent. In a Microsoft Entra ID tenant with user consent
+   * turned off, users then get "Approval required" (`AADSTS90094`/`AADSTS90095`) on
+   * every sign-in however often the admin approves. Set to `true` once consent has
+   * been granted out of band. Mirrors `skipOfflineAccessConsentPrompt` in MCP SDK v2.
+   *
+   * This field is only accepted from trusted/admin MCP configuration and is rejected
+   * from user-managed servers.
+   */
+  skip_offline_access_consent_prompt: z.boolean().optional(),
   /** OAuth revocation endpoint (optional - can be auto-discovered) */
   revocation_endpoint: z
     .string()
@@ -170,6 +185,7 @@ const UserOAuthOptionsSchema = OAuthOptionsBaseSchema.omit({
   audience: true,
   forward_audience_on_refresh: true,
   send_resource_parameter: true,
+  skip_offline_access_consent_prompt: true,
 })
   .extend({
     authorization_url: userOAuthEndpointUrlSchema.optional(),
@@ -179,6 +195,7 @@ const UserOAuthOptionsSchema = OAuthOptionsBaseSchema.omit({
     audience: z.never().optional(),
     forward_audience_on_refresh: z.never().optional(),
     send_resource_parameter: z.never().optional(),
+    skip_offline_access_consent_prompt: z.never().optional(),
   })
   .superRefine(validateOAuthClientCredentials);
 

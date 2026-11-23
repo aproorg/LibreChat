@@ -2330,6 +2330,7 @@ describe('ServerConfigsDB', () => {
           $set: {
             'config.oauth.audience': 'https://api.example.com',
             'config.oauth.forward_audience_on_refresh': false,
+            'config.oauth.skip_offline_access_consent_prompt': true,
             'config.oauth.authorization_url':
               'https://auth.example.com/authorize?audience=https%3A%2F%2Fapi.example.com&client=ok',
             'config.oauth.token_url':
@@ -2344,6 +2345,7 @@ describe('ServerConfigsDB', () => {
       expect(result?.oauth?.token_url).toBe('https://auth.example.com/token?foo=bar');
       expect(result?.oauth?.audience).toBeUndefined();
       expect(result?.oauth?.forward_audience_on_refresh).toBeUndefined();
+      expect(result?.oauth?.skip_offline_access_consent_prompt).toBeUndefined();
     });
   });
 
